@@ -1,0 +1,201 @@
+package com.aegis.apa.agent
+
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+
+data class CloudProviderConfig(
+    val name: String,
+    val shortLabel: String,
+    val model: String,
+    val endpoint: String,
+    val protocol: String
+)
+
+object CloudProviderCatalog {
+    val providers = listOf(
+        CloudProviderConfig(
+            name = "DeepSeek",
+            shortLabel = "DS",
+            model = "deepseek-v4-flash",
+            endpoint = "https://api.deepseek.com/chat/completions",
+            protocol = "openai"
+        ),
+        CloudProviderConfig(
+            name = "OpenAI · GPT",
+            shortLabel = "GPT",
+            model = "gpt-5.6-terra",
+            endpoint = "https://api.openai.com/v1/chat/completions",
+            protocol = "openai"
+        ),
+        CloudProviderConfig(
+            name = "Anthropic · Claude",
+            shortLabel = "Claude",
+            model = "claude-sonnet-5",
+            endpoint = "https://api.anthropic.com/v1/messages",
+            protocol = "anthropic"
+        ),
+        CloudProviderConfig(
+            name = "Xiaomi · MiMo",
+            shortLabel = "MiMo",
+            model = "mimo-v2.5",
+            endpoint = "https://api.xiaomimimo.com/v1/chat/completions",
+            protocol = "openai"
+        ),
+        CloudProviderConfig(
+            name = "Moonshot · Kimi",
+            shortLabel = "Kimi",
+            model = "kimi-k3",
+            endpoint = "https://api.moonshot.cn/v1/chat/completions",
+            protocol = "openai"
+        )
+    )
+
+    fun find(name: String): CloudProviderConfig? = providers.firstOrNull { it.name == name }
+}
+
+object CloudLlmProvider {
+    fun analyze(
+        context: DeviceContext,
+        userQuestion: String,
+        selectedLevel: String,
+        levelReport: String,
+        appReport: String?,
+        sceneReport: String?,
+        conversationHistory: List<AgentConversationMessage>
+    ): AgentReport {
+        val config = requireNotNull(CloudProviderCatalog.find(ApiSession.provider)) {
+            "不支持的模型服务：${ApiSession.provider}"
+        }
+        require(ApiSession.apiKey.isNotBlank()) { "请先在设置中保存 ${config.shortLabel} API Key" }
+        require(userQuestion.isNotBlank()) { "问题不能为空" }
+
+        val systemPrompt = """
+            你是 APA（Android Personal Agent）的设备分析助手。
+
+            工作规则：
+            1. 优先直接回答用户的问题，不要擅自把所有问题都改写成健康报告。
+            2. 只能依据请求中提供的数据作答；缺少数据时明确说“当前报告未提供”，不得猜测或编造。
+            3. 严格区分数据来源：Level 0 是普通 Android API；Level 1 是 Shizuku；Level 2 是 Root。
+            4. 用户没有附带应用报告或 Scene 报告时，不得推断其中的内容。
+            5. 不要声称已经执行清理、授权、修改设置等操作；你当前只负责分析与建议。
+            6. 使用简洁、自然的中文。涉及诊断时按“结论、依据、风险、建议”组织；普通问答不必套固定模板。
+            7. 数值必须保留单位并解释含义；不能从单次快照推断长期趋势。
+        """.trimIndent()
+
+        val prompt = buildString {
+            appendLine("【用户问题】")
+            appendLine(userQuestion)
+            appendLine()
+            appendLine("【本次选择】")
+            appendLine(selectedLevel)
+            appendLine()
+            appendLine("【基础设备快照】")
+            appendLine("设备：${context.deviceModel}")
+            appendLine("系统：${context.androidVersion}")
+            appendLine("电量：${context.batteryLevel}%")
+            appendLine("RAM：可用 ${context.availableRamBytes} B / 总计 ${context.totalRamBytes} B")
+            appendLine("存储：可用 ${context.availableStorageBytes} B / 总计 ${context.totalStorageBytes} B")
+            appendLine("可启动应用数量：${context.launchableAppCount}")
+            appendLine()
+            appendLine("【Level 报告】")
+            appendLine(levelReport)
+            appendLine()
+            appendLine("【应用报告】")
+            appendLine(appReport ?: "本次未附带")
+            appendLine()
+            appendLine("【Scene 一天续航报告】")
+            appendLine(sceneReport ?: "本次未附带")
+        }
+
+        val historyMessages = JSONArray()
+        conversationHistory
+            .filter { it.role == "user" || it.role == "assistant" }
+            .takeLast(12)
+            .forEach { message ->
+                historyMessages.put(
+                    JSONObject()
+                        .put("role", message.role)
+                        .put("content", message.content)
+                )
+            }
+        historyMessages.put(JSONObject().put("role", "user").put("content", prompt))
+
+        val body = if (config.protocol == "anthropic") {
+            JSONObject()
+                .put("model", config.model)
+                .put("max_tokens", 4096)
+                .put("system", systemPrompt)
+                .put("messages", historyMessages)
+        } else {
+            val messages = JSONArray()
+                .put(JSONObject().put("role", "system").put("content", systemPrompt))
+            for (index in 0 until historyMessages.length()) {
+                messages.put(historyMessages.getJSONObject(index))
+            }
+            JSONObject()
+                .put("model", config.model)
+                .put("messages", messages)
+                .apply {
+                    if (config.name == "DeepSeek") {
+                        put("thinking", JSONObject().put("type", "disabled"))
+                    }
+                }
+        }
+
+        val connection = (URL(config.endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            setRequestProperty("Content-Type", "application/json")
+            if (config.protocol == "anthropic") {
+                setRequestProperty("x-api-key", ApiSession.apiKey)
+                setRequestProperty("anthropic-version", "2023-06-01")
+            } else {
+                setRequestProperty("Authorization", "Bearer ${ApiSession.apiKey}")
+            }
+            connectTimeout = 15_000
+            readTimeout = 60_000
+            doOutput = true
+        }
+
+        try {
+            connection.outputStream.bufferedWriter(Charsets.UTF_8).use { it.write(body.toString()) }
+            val statusCode = connection.responseCode
+            val stream = if (statusCode in 200..299) connection.inputStream else connection.errorStream
+            val response = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+            if (statusCode !in 200..299) {
+                val providerMessage = runCatching {
+                    JSONObject(response).getJSONObject("error").optString("message")
+                }.getOrNull().orEmpty()
+                error("${config.shortLabel} 请求失败（$statusCode）：${providerMessage.ifBlank { "请检查 API Key、余额和网络" }}")
+            }
+
+            val json = JSONObject(response)
+            val content = if (config.protocol == "anthropic") {
+                val blocks = json.optJSONArray("content") ?: JSONArray()
+                buildString {
+                    for (index in 0 until blocks.length()) {
+                        val block = blocks.optJSONObject(index) ?: continue
+                        if (block.optString("type") == "text") {
+                            if (isNotEmpty()) appendLine()
+                            append(block.optString("text"))
+                        }
+                    }
+                }
+            } else {
+                json.getJSONArray("choices")
+                    .getJSONObject(0)
+                    .getJSONObject("message")
+                    .optString("content")
+            }
+            require(content.isNotBlank()) { "${config.shortLabel} 返回了空内容" }
+            return AgentReport(
+                summary = content,
+                findings = emptyList(),
+                source = "${config.shortLabel} · ${config.model}"
+            )
+        } finally {
+            connection.disconnect()
+        }
+    }
+}
