@@ -58,6 +58,9 @@ import com.aegis.apa.tool.DetectedApp
 import com.aegis.apa.tool.BatteryInfo
 import com.aegis.apa.tool.BatteryTool
 import com.aegis.apa.tool.DeviceInfo
+import com.aegis.apa.tool.DeviceProfileAccess
+import com.aegis.apa.tool.DeviceProfileCollector
+import com.aegis.apa.tool.DeviceProfileSnapshot
 import com.aegis.apa.tool.DeviceInfoTool
 import com.aegis.apa.tool.InstalledApp
 import com.aegis.apa.tool.RamInfo
@@ -101,6 +104,8 @@ class MainActivity : ComponentActivity() {
                 var selectedAppDetails by remember { mutableStateOf<AppDetails?>(null) }
                 var rootBatteryInfo by remember { mutableStateOf<RootBatteryInfo?>(null) }
                 var isRootBatteryReading by remember { mutableStateOf(false) }
+                var deviceProfile by remember { mutableStateOf<DeviceProfileSnapshot?>(null) }
+                var isDeviceProfileReading by remember { mutableStateOf(false) }
                 var chatMessages by remember { mutableStateOf<List<AgentConversationMessage>>(emptyList()) }
                 var isOnlineAnalyzing by remember { mutableStateOf(false) }
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
@@ -179,6 +184,8 @@ class MainActivity : ComponentActivity() {
                                 rootStatus = snapshot.rootStatus,
                                 rootBatteryInfo = rootBatteryInfo,
                                 isRootBatteryReading = isRootBatteryReading,
+                                deviceProfile = deviceProfile,
+                                isDeviceProfileReading = isDeviceProfileReading,
                                 onOpenShizuku = { openShizuku() },
                                 onOpenRootManager = {
                                     val rootManagerPackage = if (snapshot.rootStatus.isKernelSuManagerInstalled) {
@@ -195,6 +202,18 @@ class MainActivity : ComponentActivity() {
                                         this@MainActivity.runOnUiThread {
                                             rootBatteryInfo = result
                                             isRootBatteryReading = false
+                                        }
+                                    }.start()
+                                },
+                                onReadDeviceProfile = {
+                                    isDeviceProfileReading = true
+                                    Thread {
+                                        val result = DeviceProfileCollector.read(
+                                            preferRoot = snapshot.rootStatus.hasSuBinary
+                                        )
+                                        this@MainActivity.runOnUiThread {
+                                            deviceProfile = result
+                                            isDeviceProfileReading = false
                                         }
                                     }.start()
                                 },
@@ -231,7 +250,11 @@ class MainActivity : ComponentActivity() {
                                                 context = snapshot.toDeviceContext(),
                                                 userQuestion = question,
                                                 selectedLevel = selectedLevel,
-                                                levelReport = snapshot.buildLevelReport(selectedLevel, rootBatteryInfo),
+                                                levelReport = snapshot.buildLevelReport(
+                                                    selectedLevel = selectedLevel,
+                                                    rootBatteryInfo = rootBatteryInfo,
+                                                    deviceProfile = deviceProfile
+                                                ),
                                                 appReport = snapshot.buildAppReport().takeIf { includeAppReport },
                                                 sceneReport = if (includeSceneReport) {
                                                     "用户选择了 Scene 一天续航报告，但当前尚未上传报告文件；不得推断其内容。"
@@ -349,7 +372,8 @@ private fun AgentReport.toChatContent(): String = buildString {
 
 private fun DeviceSnapshot.buildLevelReport(
     selectedLevel: String,
-    rootBatteryInfo: RootBatteryInfo?
+    rootBatteryInfo: RootBatteryInfo?,
+    deviceProfile: DeviceProfileSnapshot?
 ): String = when (selectedLevel) {
     "Level 0" -> buildString {
         appendLine("采样时间：$sampledAt")
@@ -389,6 +413,12 @@ private fun DeviceSnapshot.buildLevelReport(
                 appendLine("电压：${rootBatteryInfo.voltageMilliVolt?.let { "$it mV" } ?: "设备未提供"}")
                 appendLine("温度：${rootBatteryInfo.temperatureCelsius?.let { "$it°C" } ?: "设备未提供"}")
             }
+        }
+        if (deviceProfile == null) {
+            appendLine("调度档案：本次尚未读取；当前保持 V8 原厂调度")
+        } else {
+            appendLine()
+            append(deviceProfile.toReportText())
         }
     }
 
@@ -626,10 +656,13 @@ fun CapabilitySectionsScreen(
     rootStatus: RootStatus,
     rootBatteryInfo: RootBatteryInfo?,
     isRootBatteryReading: Boolean,
+    deviceProfile: DeviceProfileSnapshot?,
+    isDeviceProfileReading: Boolean,
     onOpenUsageAccessSettings: () -> Unit,
     onOpenShizuku: () -> Unit,
     onOpenRootManager: () -> Unit,
     onReadRootBattery: () -> Unit,
+    onReadDeviceProfile: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -714,6 +747,40 @@ fun CapabilitySectionsScreen(
                 }
                 rootBatteryInfo?.let { info ->
                     Text(text = info.error ?: "循环次数：${info.cycleCount ?: "未知"} · 满充容量：${info.fullChargeCapacityMah ?: "未知"} mAh")
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(text = "调度实验 · 只读档案")
+                Text(text = "当前模式：V8 原厂调度")
+                Text(text = "只读取设备与CPU信息，不会修改频率、温控或线程亲和性。")
+                Button(
+                    onClick = onReadDeviceProfile,
+                    enabled = !isDeviceProfileReading
+                ) {
+                    Text(
+                        text = if (isDeviceProfileReading) {
+                            "正在读取调度档案…"
+                        } else {
+                            "读取调度档案"
+                        }
+                    )
+                }
+                deviceProfile?.let { profile ->
+                    val accessLabel = if (profile.access == DeviceProfileAccess.ROOT) {
+                        "Root 只读"
+                    } else {
+                        "标准权限"
+                    }
+                    Text(text = "设备：${profile.model ?: "未知"} · ${profile.soc ?: "SoC未知"}")
+                    Text(text = "读取方式：$accessLabel · CPU：${profile.cpuPresent ?: "未知"}")
+                    profile.cpuPolicies.forEach { policy ->
+                        Text(
+                            text = "${policy.name}：CPU ${policy.cpus.joinToString(",")} · " +
+                                "最高 ${policy.maxFrequencyKhz?.div(1_000) ?: "未知"} MHz"
+                        )
+                    }
+                    Text(text = "温度节点：${profile.thermalSensors.size} 个")
+                    profile.error?.let { Text(text = "提示：$it") }
                 }
             }
         }

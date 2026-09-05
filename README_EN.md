@@ -42,6 +42,7 @@ Do not publish API keys, phone numbers, QQ accounts, device serial numbers, or o
 - Lists launchable applications and basic application details
 - Lets the user select Level 0, Level 1, or Level 2 reports for each Agent request
 - Reads selected low-level battery data after Root authorization
+- Experimentally collects a read-only device profile with SoC, kernel, CPU topology, frequency policies, and relevant thermal nodes without changing system scheduling
 - Supports multi-turn Agent conversations and per-message report labels
 - Stores API keys independently for each provider, encrypted for seven days by default
 
@@ -51,7 +52,7 @@ Do not publish API keys, phone numbers, QQ accounts, device serial numbers, or o
 | --- | --- | --- |
 | Level 0 | Standard Android APIs | Device, battery, memory, storage, and basic application data are implemented |
 | Level 1 | Shizuku | Installation detection and navigation are implemented; service state, permission state, and advanced APIs are still in development |
-| Level 2 | Root | `su`, KernelSU/Magisk detection, and selected low-level battery data are implemented |
+| Level 2 | Root | `su`, KernelSU/Magisk detection, selected low-level battery data, and read-only scheduling profile collection are implemented |
 
 Level 0 works independently when no advanced permission is available.
 

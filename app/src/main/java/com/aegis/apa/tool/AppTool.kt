@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.os.Build
 
 data class InstalledApp(
     val name: String,
@@ -99,7 +100,11 @@ object AppTool {
             name = applicationInfo.loadLabel(packageManager).toString(),
             packageName = packageName,
             versionName = packageInfo.versionName ?: "Unknown",
-            versionCode = packageInfo.longVersionCode,
+            versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                packageInfo.longVersionCode
+            } else {
+                @Suppress("DEPRECATION") packageInfo.versionCode.toLong()
+            },
             firstInstallTime = packageInfo.firstInstallTime,
             lastUpdateTime = packageInfo.lastUpdateTime,
             isSystemApp = applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM != 0
