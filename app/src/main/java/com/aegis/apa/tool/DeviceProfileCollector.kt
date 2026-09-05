@@ -41,8 +41,7 @@ data class DeviceProfileSnapshot(
         appendLine(
             "读取权限：${if (access == DeviceProfileAccess.ROOT) "Root 只读" else "标准权限"}"
         )
-        appendLine("设备型号：${model ?: "设备未提供"}")
-        appendLine("设备代号：${device ?: "设备未提供"}")
+        appendLine("设备名称：${publicDeviceName(manufacturer = null, modelCode = model)}")
         appendLine("SoC：${soc ?: "设备未提供"}")
         appendLine("Android：${androidVersion ?: "设备未提供"}")
         appendLine("系统版本：${buildVersion ?: "设备未提供"}")

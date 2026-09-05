@@ -50,6 +50,9 @@ class DeviceProfileParserTest {
         assertEquals(32.0, profile.thermalSensors[1].temperatureCelsius, 0.001)
         assertFalse(profile.toReportText().contains("must-not-be-retained"))
         assertFalse(profile.toReportText().contains("SERIAL"))
+        assertTrue(profile.toReportText().contains("设备名称：Xiaomi 17 Pro Max"))
+        assertFalse(profile.toReportText().contains("2509FPN0BC"))
+        assertFalse(profile.toReportText().contains("popsicle"))
     }
 
     @Test
