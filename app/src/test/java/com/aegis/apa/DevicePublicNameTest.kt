@@ -14,9 +14,17 @@ class DevicePublicNameTest {
     }
 
     @Test
-    fun hidesUnknownOpaqueModelCodeInsteadOfDisplayingIt() {
+    fun resolvesKnownSamsungModelToItsRetailNameFromOfflineDatabase() {
         assertEquals(
-            "Xiaomi 未识别机型",
+            "Samsung Galaxy S20",
+            publicDeviceName(manufacturer = "Samsung", modelCode = "SM-G980F")
+        )
+    }
+
+    @Test
+    fun keepsSystemModelWhenOfflineDatabaseDoesNotKnowTheDevice() {
+        assertEquals(
+            "Xiaomi · 系统型号 ABC123XYZ",
             publicDeviceName(manufacturer = "Xiaomi", modelCode = "ABC123XYZ")
         )
     }
