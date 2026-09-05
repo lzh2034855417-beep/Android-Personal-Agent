@@ -62,6 +62,7 @@ import com.aegis.apa.tool.DeviceInfo
 import com.aegis.apa.tool.DeviceProfileAccess
 import com.aegis.apa.tool.DeviceProfileCollector
 import com.aegis.apa.tool.DeviceProfileSnapshot
+import com.aegis.apa.tool.HardwareExperienceEvaluator
 import com.aegis.apa.tool.DeviceInfoTool
 import com.aegis.apa.tool.toChipSchedulingDetails
 import com.aegis.apa.tool.InstalledApp
@@ -492,6 +493,18 @@ fun DeviceReportScreen(
                 DetailLine("📱", "设备型号", deviceInfo.model)
                 InfoLine("🤖", "Android", deviceInfo.androidVersion)
                 val chipDetails = deviceProfile?.toChipSchedulingDetails()
+                val hardwareGrade = HardwareExperienceEvaluator.evaluate(
+                    totalRamBytes = ramInfo.totalBytes,
+                    totalStorageBytes = storageInfo.totalBytes,
+                    maxCpuFrequencyKhz = deviceProfile
+                        ?.cpuPolicies
+                        ?.mapNotNull { it.maxFrequencyKhz }
+                        ?.maxOrNull()
+                )
+                InfoLine("🏅", "硬件等级", "${hardwareGrade.label} · ${hardwareGrade.summary}")
+                hardwareGrade.reasons.forEach { reason ->
+                    InfoLine("", "依据", reason)
+                }
                 Text(text = "芯片：${chipDetails?.chipset ?: "未读取"}")
                 Row(
                     modifier = Modifier.fillMaxWidth(),

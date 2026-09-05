@@ -71,18 +71,7 @@ object CloudLlmProvider {
         require(ApiSession.apiKey.isNotBlank()) { "请先在设置中保存 ${config.shortLabel} API Key" }
         require(userQuestion.isNotBlank()) { "问题不能为空" }
 
-        val systemPrompt = """
-            你是 APA（Android Personal Agent）的设备分析助手。
-
-            工作规则：
-            1. 优先直接回答用户的问题，不要擅自把所有问题都改写成健康报告。
-            2. 只能依据请求中提供的数据作答；缺少数据时明确说“当前报告未提供”，不得猜测或编造。
-            3. 严格区分数据来源：Level 0 是普通 Android API；Level 1 是 Shizuku；Level 2 是 Root。
-            4. 用户没有附带应用报告或 Scene 报告时，不得推断其中的内容。
-            5. 不要声称已经执行清理、授权、修改设置等操作；你当前只负责分析与建议。
-            6. 使用简洁、自然的中文。涉及诊断时按“结论、依据、风险、建议”组织；普通问答不必套固定模板。
-            7. 数值必须保留单位并解释含义；不能从单次快照推断长期趋势。
-        """.trimIndent()
+        val systemPrompt = AgentPromptPolicy.systemPrompt()
 
         val prompt = buildString {
             appendLine("【用户问题】")
