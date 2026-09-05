@@ -2,6 +2,7 @@ package com.aegis.apa
 
 import com.aegis.apa.tool.DeviceProfileAccess
 import com.aegis.apa.tool.DeviceProfileParser
+import com.aegis.apa.tool.toChipSchedulingDetails
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -91,5 +92,37 @@ class DeviceProfileParserTest {
         assertTrue(report.contains("标准权限"))
         assertTrue(report.contains("CPU 策略：设备未提供"))
         assertTrue(report.contains("温度节点：设备未提供"))
+    }
+
+    @Test
+    fun createsCompactChipSchedulingDetailsForExpandableDeviceCard() {
+        val profile = DeviceProfileParser.parse(
+            raw = """
+                SOC=SM8850
+                KERNEL=6.12.69-android16-6
+                CPU_PRESENT=0-7
+                POLICY=policy0|0 1 2 3 4 5|384000|3628800|schedutil
+                POLICY=policy6|6 7|768000|4608000|walt
+                THERMAL=cpu-0-0-usr|42123
+                THERMAL=battery|32000
+            """.trimIndent(),
+            access = DeviceProfileAccess.ROOT
+        )
+
+        val details = profile.toChipSchedulingDetails()
+
+        assertEquals("SM8850", details.chipset)
+        assertEquals("V8 原厂调度", details.scheduler)
+        assertEquals("Root 只读", details.access)
+        assertEquals("CPU 0-7", details.cpuTopology)
+        assertEquals(
+            listOf(
+                "policy0 · CPU 0,1,2,3,4,5 · 最高 3628 MHz",
+                "policy6 · CPU 6,7 · 最高 4608 MHz"
+            ),
+            details.policySummaries
+        )
+        assertEquals("相关温度节点：2 个", details.thermalSummary)
+        assertEquals("内核：6.12.69-android16-6", details.kernelSummary)
     }
 }

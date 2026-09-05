@@ -27,6 +27,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -62,6 +63,7 @@ import com.aegis.apa.tool.DeviceProfileAccess
 import com.aegis.apa.tool.DeviceProfileCollector
 import com.aegis.apa.tool.DeviceProfileSnapshot
 import com.aegis.apa.tool.DeviceInfoTool
+import com.aegis.apa.tool.toChipSchedulingDetails
 import com.aegis.apa.tool.InstalledApp
 import com.aegis.apa.tool.RamInfo
 import com.aegis.apa.tool.RamTool
@@ -108,6 +110,20 @@ class MainActivity : ComponentActivity() {
                 var isDeviceProfileReading by remember { mutableStateOf(false) }
                 var chatMessages by remember { mutableStateOf<List<AgentConversationMessage>>(emptyList()) }
                 var isOnlineAnalyzing by remember { mutableStateOf(false) }
+                val onReadDeviceProfile = {
+                    if (!isDeviceProfileReading) {
+                        isDeviceProfileReading = true
+                        Thread {
+                            val result = DeviceProfileCollector.read(
+                                preferRoot = snapshot.rootStatus.hasSuBinary
+                            )
+                            this@MainActivity.runOnUiThread {
+                                deviceProfile = result
+                                isDeviceProfileReading = false
+                            }
+                        }.start()
+                    }
+                }
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     Row(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
                         NavigationRail {
@@ -155,6 +171,9 @@ class MainActivity : ComponentActivity() {
                                 storageInfo = snapshot.storageInfo,
                                 rootBatteryInfo = rootBatteryInfo,
                                 sampledAt = snapshot.sampledAt,
+                                deviceProfile = deviceProfile,
+                                isDeviceProfileReading = isDeviceProfileReading,
+                                onReadDeviceProfile = onReadDeviceProfile,
                                 onRefresh = { snapshot = readDeviceSnapshot() },
                                 modifier = Modifier.padding(24.dp)
                             )
@@ -205,18 +224,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                     }.start()
                                 },
-                                onReadDeviceProfile = {
-                                    isDeviceProfileReading = true
-                                    Thread {
-                                        val result = DeviceProfileCollector.read(
-                                            preferRoot = snapshot.rootStatus.hasSuBinary
-                                        )
-                                        this@MainActivity.runOnUiThread {
-                                            deviceProfile = result
-                                            isDeviceProfileReading = false
-                                        }
-                                    }.start()
-                                },
+                                onReadDeviceProfile = onReadDeviceProfile,
                                 modifier = Modifier.padding(24.dp)
                             )
                             3 -> AgentChatScreen(
@@ -446,9 +454,13 @@ fun DeviceReportScreen(
     storageInfo: StorageInfo,
     rootBatteryInfo: RootBatteryInfo?,
     sampledAt: String,
+    deviceProfile: DeviceProfileSnapshot?,
+    isDeviceProfileReading: Boolean,
+    onReadDeviceProfile: () -> Unit,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var isChipDetailsExpanded by rememberSaveable { mutableStateOf(false) }
     Column(
         modifier = modifier.verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -458,33 +470,97 @@ fun DeviceReportScreen(
         Button(onClick = onRefresh) {
             Text(text = "REFRESH · 刷新")
         }
-        InfoLine("⚡", "Current · 电流", batteryInfo.currentMilliAmp?.let { "$it mA" } ?: "N/A · Battery HAL 未上报")
-        InfoLine("🔋", "Charge · 剩余电量", batteryInfo.remainingMilliAmpHour?.let { "$it mAh" } ?: "N/A · Battery HAL 未上报")
-        InfoLine("⚙", "Energy · 剩余能量", batteryInfo.remainingMilliWattHour?.let { "$it mWh" } ?: "N/A · Battery HAL 未上报")
-        DetailLine("📱", "Device · 设备型号", deviceInfo.model)
-        InfoLine("🤖", "Android · 系统版本", deviceInfo.androidVersion)
-        InfoLine("🔋", "Battery · 电池状态", "${batteryInfo.level}%（${batteryInfo.status}）")
-        DetailLine("💾", "RAM", "${formatSize(ramInfo.availableBytes)} 可用 / ${formatSize(ramInfo.totalBytes)} 总量")
-        InfoLine("", "RAM STATUS", if (ramInfo.isLowMemory) "LOW MEMORY · 内存不足" else "NORMAL · 正常")
-        DetailLine("🗄", "Storage · 内置存储", "${formatSize(storageInfo.usedBytes)} 已用 / ${formatSize(storageInfo.totalBytes)} 总量")
-        InfoLine("", "Storage Free · 可用空间", formatSize(storageInfo.availableBytes))
-        Text(text = "── ADVANCED METRICS · 进阶信息 ──")
-        when {
-            rootBatteryInfo == null -> {
-                DetailLine("🔒", "Design Capacity · 设计容量", "LOCKED · 需要 Shizuku / Root")
-                DetailLine("🔒", "Cycle Count · 循环次数", "LOCKED · 需要 Shizuku / Root")
-                DetailLine("🔒", "Battery Health · 健康度", "LOCKED · 需要 Shizuku / Root")
+        Card {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(text = "实时状态")
+                InfoLine("🔋", "电池", "${batteryInfo.level}%（${batteryInfo.status}）")
+                InfoLine("⚡", "电流", batteryInfo.currentMilliAmp?.let { "$it mA" } ?: "设备未上报")
+                InfoLine("🔋", "剩余电量", batteryInfo.remainingMilliAmpHour?.let { "$it mAh" } ?: "设备未上报")
+                InfoLine("⚙", "剩余能量", batteryInfo.remainingMilliWattHour?.let { "$it mWh" } ?: "设备未上报")
             }
-            rootBatteryInfo.error != null -> {
-                DetailLine("⚠", "Advanced Battery · 进阶读取", rootBatteryInfo.error)
+        }
+
+        Card {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(text = "设备与系统")
+                DetailLine("📱", "设备型号", deviceInfo.model)
+                InfoLine("🤖", "Android", deviceInfo.androidVersion)
+                val chipDetails = deviceProfile?.toChipSchedulingDetails()
+                Text(text = "芯片：${chipDetails?.chipset ?: "未读取"}")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "调度：${chipDetails?.scheduler ?: "V8 原厂调度"}",
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(
+                        onClick = {
+                            if (chipDetails == null) onReadDeviceProfile() else {
+                                isChipDetailsExpanded = !isChipDetailsExpanded
+                            }
+                        },
+                        enabled = !isDeviceProfileReading
+                    ) {
+                        Text(
+                            text = when {
+                                isDeviceProfileReading -> "读取中…"
+                                chipDetails == null -> "读取⌄"
+                                isChipDetailsExpanded -> "收起⌃"
+                                else -> "详细⌄"
+                            }
+                        )
+                    }
+                }
+                if (isChipDetailsExpanded && chipDetails != null) {
+                    InfoLine("", "读取方式", chipDetails.access)
+                    InfoLine("", "核心", chipDetails.cpuTopology)
+                    chipDetails.policySummaries.forEach { Text(text = it) }
+                    InfoLine("", "温度", chipDetails.thermalSummary)
+                    InfoLine("", "系统", chipDetails.kernelSummary)
+                    deviceProfile.error?.let { InfoLine("⚠", "采集提示", it) }
+                }
             }
-            else -> {
-                DetailLine("🔋", "Design Capacity · 设计容量", "${rootBatteryInfo.designCapacityMah ?: "N/A"} mAh")
-                DetailLine("", "Full Charge · 满充容量", "${rootBatteryInfo.fullChargeCapacityMah ?: "N/A"} mAh")
-                DetailLine("", "Cycle Count · 循环次数", rootBatteryInfo.cycleCount ?: "N/A")
-                DetailLine("⚡", "Battery Current · 电池电流", "${rootBatteryInfo.currentMilliAmp ?: "N/A"} mA")
-                DetailLine("⚙", "Battery Voltage · 电池电压", "${rootBatteryInfo.voltageMilliVolt ?: "N/A"} mV")
-                DetailLine("🌡", "Battery Temp · 电池温度", "${rootBatteryInfo.temperatureCelsius ?: "N/A"} °C")
+        }
+
+        Card {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(text = "内存与存储")
+                DetailLine("💾", "内存", "${formatSize(ramInfo.availableBytes)} 可用 / ${formatSize(ramInfo.totalBytes)} 总量")
+                InfoLine("", "内存状态", if (ramInfo.isLowMemory) "内存不足" else "正常")
+                DetailLine("🗄", "内置存储", "${formatSize(storageInfo.usedBytes)} 已用 / ${formatSize(storageInfo.totalBytes)} 总量")
+                InfoLine("", "可用空间", formatSize(storageInfo.availableBytes))
+            }
+        }
+
+        Card {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(text = "进阶电池")
+                when {
+                    rootBatteryInfo == null -> Text(text = "尚未读取 · 需要 Root 授权")
+                    rootBatteryInfo.error != null -> InfoLine("⚠", "读取结果", rootBatteryInfo.error)
+                    else -> {
+                        InfoLine("🔋", "设计容量", "${rootBatteryInfo.designCapacityMah ?: "N/A"} mAh")
+                        InfoLine("", "满充容量", "${rootBatteryInfo.fullChargeCapacityMah ?: "N/A"} mAh")
+                        InfoLine("", "循环次数", rootBatteryInfo.cycleCount ?: "N/A")
+                        InfoLine("⚡", "电池电流", "${rootBatteryInfo.currentMilliAmp ?: "N/A"} mA")
+                        InfoLine("⚙", "电池电压", "${rootBatteryInfo.voltageMilliVolt ?: "N/A"} mV")
+                        InfoLine("🌡", "电池温度", "${rootBatteryInfo.temperatureCelsius ?: "N/A"} °C")
+                    }
+                }
             }
         }
     }
@@ -1149,6 +1225,9 @@ fun DeviceReportPreview() {
             ),
             rootBatteryInfo = null,
             sampledAt = "12:48:03",
+            deviceProfile = null,
+            isDeviceProfileReading = false,
+            onReadDeviceProfile = {},
             onRefresh = {}
         )
     }

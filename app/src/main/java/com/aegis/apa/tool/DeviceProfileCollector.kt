@@ -78,6 +78,29 @@ data class DeviceProfileSnapshot(
         valueKhz?.let { String.format(Locale.US, "%.0f MHz", it / 1_000.0) } ?: "未知"
 }
 
+data class ChipSchedulingDetails(
+    val chipset: String,
+    val scheduler: String,
+    val access: String,
+    val cpuTopology: String,
+    val policySummaries: List<String>,
+    val thermalSummary: String,
+    val kernelSummary: String
+)
+
+fun DeviceProfileSnapshot.toChipSchedulingDetails(): ChipSchedulingDetails = ChipSchedulingDetails(
+    chipset = soc ?: "未读取",
+    scheduler = "V8 原厂调度",
+    access = if (access == DeviceProfileAccess.ROOT) "Root 只读" else "标准权限",
+    cpuTopology = cpuPresent?.let { "CPU $it" } ?: "CPU 未读取",
+    policySummaries = cpuPolicies.map { policy ->
+        "${policy.name} · CPU ${policy.cpus.joinToString(",")} · " +
+            "最高 ${policy.maxFrequencyKhz?.div(1_000) ?: "未知"} MHz"
+    },
+    thermalSummary = "相关温度节点：${thermalSensors.size} 个",
+    kernelSummary = "内核：${kernelVersion ?: "未读取"}"
+)
+
 object DeviceProfileParser {
     private val retainedKeys = setOf(
         "MODEL",
