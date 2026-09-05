@@ -10,8 +10,36 @@ data class BatteryInfo(
     val status: String,
     val currentMilliAmp: Int? = null,
     val remainingMilliAmpHour: Int? = null,
-    val remainingMilliWattHour: Long? = null
+    val remainingMilliWattHour: Long? = null,
+    val temperatureCelsius: Double? = null,
+    val voltageMilliVolt: Int? = null,
+    val health: String? = null,
+    val plugged: String? = null,
+    val technology: String? = null,
+    val isPresent: Boolean? = null
 )
+
+object BatteryReportText {
+    fun format(info: BatteryInfo): String = buildString {
+        appendLine("电池温度：${info.temperatureCelsius?.let { "$it°C" } ?: "设备未提供"}")
+        appendLine("电池电压：${info.voltageMilliVolt?.let { "$it mV" } ?: "设备未提供"}")
+        appendLine("电池健康：${info.health ?: "设备未提供"}")
+        appendLine("充电方式：${info.plugged ?: "设备未提供"}")
+        appendLine("电池技术：${info.technology ?: "设备未提供"}")
+    }
+}
+
+object BatteryPlugText {
+    fun fromFlags(flags: Int): String? {
+        if (flags == 0) return "未外接电源"
+        val sources = buildList {
+            if (flags and BatteryManager.BATTERY_PLUGGED_AC != 0) add("交流电")
+            if (flags and BatteryManager.BATTERY_PLUGGED_USB != 0) add("USB")
+            if (flags and BatteryManager.BATTERY_PLUGGED_WIRELESS != 0) add("无线充电")
+        }
+        return sources.takeIf { it.isNotEmpty() }?.joinToString(" + ")
+    }
+}
 
 object BatteryTool {
     fun read(context: Context): BatteryInfo {
@@ -42,12 +70,37 @@ object BatteryTool {
             BatteryManager.BATTERY_STATUS_FULL -> "已充满"
             else -> "未充电"
         }
+        val health = when (batteryIntent?.getIntExtra(BatteryManager.EXTRA_HEALTH, -1)) {
+            BatteryManager.BATTERY_HEALTH_GOOD -> "良好"
+            BatteryManager.BATTERY_HEALTH_OVERHEAT -> "过热"
+            BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE -> "电压异常"
+            BatteryManager.BATTERY_HEALTH_DEAD -> "无响应"
+            BatteryManager.BATTERY_HEALTH_COLD -> "温度过低"
+            BatteryManager.BATTERY_HEALTH_UNSPECIFIED_FAILURE -> "状态异常"
+            else -> null
+        }
+        val plugged = batteryIntent
+            ?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0)
+            ?.let(BatteryPlugText::fromFlags)
+        val temperatureCelsius = batteryIntent
+            ?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
+            ?.takeIf { it != Int.MIN_VALUE }
+            ?.div(10.0)
+        val voltageMilliVolt = batteryIntent
+            ?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, Int.MIN_VALUE)
+            ?.takeIf { it != Int.MIN_VALUE }
         return BatteryInfo(
             level = percentage,
             status = status,
             currentMilliAmp = currentMilliAmp,
             remainingMilliAmpHour = remainingMilliAmpHour,
-            remainingMilliWattHour = remainingMilliWattHour
+            remainingMilliWattHour = remainingMilliWattHour,
+            temperatureCelsius = temperatureCelsius,
+            voltageMilliVolt = voltageMilliVolt,
+            health = health,
+            plugged = plugged,
+            technology = batteryIntent?.getStringExtra(BatteryManager.EXTRA_TECHNOLOGY)?.ifBlank { null },
+            isPresent = batteryIntent?.getBooleanExtra(BatteryManager.EXTRA_PRESENT, true)
         )
     }
 }

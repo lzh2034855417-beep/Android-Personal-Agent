@@ -50,7 +50,7 @@ Do not publish API keys, phone numbers, QQ accounts, device serial numbers, or o
 
 | Level | Data source | Current status |
 | --- | --- | --- |
-| Level 0 | Standard Android APIs | Device, battery, memory, storage, and basic application data are implemented |
+| Level 0 | Standard Android APIs | Device, display, instantaneous battery, memory, storage, and basic app data are implemented; Usage Access can optionally summarize today's app foreground time |
 | Level 1 | Shizuku | Installation detection and navigation are implemented; service state, permission state, and advanced APIs are still in development |
 | Level 2 | Root | `su`, KernelSU/Magisk detection, selected low-level battery data, and read-only scheduling profile collection are implemented |
 
@@ -79,6 +79,7 @@ Providers other than DeepSeek still need broader testing across accounts and dev
 - APA does not operate a proxy server. Cloud requests are sent directly to the provider selected by the user.
 
 When a cloud model is used, the selected report is subject to that provider's privacy policy and data-processing terms. Review the report scope before sending it.
+Usage Access is entirely optional. It reads Android's aggregate foreground-time statistics for the current day, not exact screen-on time; declining it does not limit the Level 0 base report.
 
 ## Requirements
 

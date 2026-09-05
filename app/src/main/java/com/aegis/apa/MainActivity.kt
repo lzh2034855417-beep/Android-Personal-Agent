@@ -1,5 +1,6 @@
 package com.aegis.apa
 
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -51,6 +52,7 @@ import com.aegis.apa.agent.CloudProviderCatalog
 import com.aegis.apa.agent.ApiKeyStore
 import com.aegis.apa.agent.ApiSession
 import com.aegis.apa.agent.DeviceContext
+import com.aegis.apa.agent.Level0ReportBuilder
 import com.aegis.apa.agent.LocalDeviceAnalyzer
 import com.aegis.apa.tool.AppTool
 import com.aegis.apa.tool.AppDetails
@@ -64,6 +66,9 @@ import com.aegis.apa.tool.DeviceProfileCollector
 import com.aegis.apa.tool.DeviceProfileSnapshot
 import com.aegis.apa.tool.HardwareExperienceEvaluator
 import com.aegis.apa.tool.DeviceInfoTool
+import com.aegis.apa.tool.DisplayInfo
+import com.aegis.apa.tool.DisplayInfoTool
+import com.aegis.apa.tool.DisplayReportText
 import com.aegis.apa.tool.toChipSchedulingDetails
 import com.aegis.apa.tool.InstalledApp
 import com.aegis.apa.tool.RamInfo
@@ -74,6 +79,8 @@ import com.aegis.apa.tool.RootBatteryInfo
 import com.aegis.apa.tool.RootBatteryTool
 import com.aegis.apa.tool.StorageInfo
 import com.aegis.apa.tool.StorageTool
+import com.aegis.apa.tool.UsageStatsTool
+import com.aegis.apa.tool.UsageSummary
 import com.aegis.apa.ui.theme.AndroidPersonalAgentTheme
 import java.util.Locale
 import java.time.LocalTime
@@ -84,8 +91,10 @@ import kotlinx.coroutines.delay
 data class DeviceSnapshot(
     val deviceInfo: DeviceInfo,
     val batteryInfo: BatteryInfo,
+    val displayInfo: DisplayInfo,
     val ramInfo: RamInfo,
     val storageInfo: StorageInfo,
+    val usageSummary: UsageSummary,
     val installedApps: List<InstalledApp>,
     val detectedApps: List<DetectedApp>,
     val rootStatus: RootStatus,
@@ -168,13 +177,16 @@ class MainActivity : ComponentActivity() {
                             0 -> DeviceReportScreen(
                                 deviceInfo = snapshot.deviceInfo,
                                 batteryInfo = snapshot.batteryInfo,
+                                displayInfo = snapshot.displayInfo,
                                 ramInfo = snapshot.ramInfo,
                                 storageInfo = snapshot.storageInfo,
+                                usageSummary = snapshot.usageSummary,
                                 rootBatteryInfo = rootBatteryInfo,
                                 sampledAt = snapshot.sampledAt,
                                 deviceProfile = deviceProfile,
                                 isDeviceProfileReading = isDeviceProfileReading,
                                 onReadDeviceProfile = onReadDeviceProfile,
+                                onOpenUsageAccessSettings = ::openUsageAccessSettings,
                                 onRefresh = { snapshot = readDeviceSnapshot() },
                                 modifier = Modifier.padding(24.dp)
                             )
@@ -320,8 +332,10 @@ class MainActivity : ComponentActivity() {
         return DeviceSnapshot(
             deviceInfo = DeviceInfoTool.read(),
             batteryInfo = BatteryTool.read(this),
+            displayInfo = DisplayInfoTool.read(this),
             ramInfo = RamTool.read(this),
             storageInfo = StorageTool.read(),
+            usageSummary = UsageStatsTool.read(this),
             installedApps = AppTool.readLaunchableApps(this),
             detectedApps = AppTool.detectKnownApps(this),
             rootStatus = RootTool.read(this),
@@ -384,19 +398,25 @@ private fun DeviceSnapshot.buildLevelReport(
     rootBatteryInfo: RootBatteryInfo?,
     deviceProfile: DeviceProfileSnapshot?
 ): String = when (selectedLevel) {
-    "Level 0" -> buildString {
-        appendLine("采样时间：$sampledAt")
-        appendLine("设备：${deviceInfo.model}")
-        appendLine("Android：${deviceInfo.androidVersion}")
-        appendLine("电量：${batteryInfo.level}%")
-        appendLine("充电状态：${batteryInfo.status}")
-        appendLine("瞬时电流：${batteryInfo.currentMilliAmp?.let { "$it mA" } ?: "设备未提供"}")
-        appendLine("剩余电量：${batteryInfo.remainingMilliAmpHour?.let { "$it mAh" } ?: "设备未提供"}")
-        appendLine("剩余能量：${batteryInfo.remainingMilliWattHour?.let { "$it mWh" } ?: "设备未提供"}")
-        appendLine("可用内存：${formatSize(ramInfo.availableBytes)} / ${formatSize(ramInfo.totalBytes)}")
-        appendLine("系统低内存标记：${if (ramInfo.isLowMemory) "是" else "否"}")
-        appendLine("可用存储：${formatSize(storageInfo.availableBytes)} / ${formatSize(storageInfo.totalBytes)}")
-    }
+    "Level 0" -> Level0ReportBuilder.build(
+        sampledAt = sampledAt,
+        deviceInfo = deviceInfo,
+        batteryInfo = batteryInfo,
+        displayInfo = displayInfo,
+        ramInfo = ramInfo,
+        storageInfo = storageInfo,
+        usageSummary = usageSummary,
+        hardwareGrade = HardwareExperienceEvaluator.evaluate(
+            totalRamBytes = ramInfo.totalBytes,
+            totalStorageBytes = storageInfo.totalBytes,
+            maxCpuFrequencyKhz = deviceProfile?.cpuPolicies?.mapNotNull { it.maxFrequencyKhz }?.maxOrNull()
+        ),
+        securityPatch = Build.VERSION.SECURITY_PATCH,
+        socName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            listOf(Build.SOC_MANUFACTURER, Build.SOC_MODEL).filter { it.isNotBlank() }.joinToString(" ")
+        } else null,
+        supportedAbis = Build.SUPPORTED_ABIS.toList()
+    )
 
     "Level 1" -> buildString {
         appendLine("采样时间：$sampledAt")
@@ -451,13 +471,16 @@ private fun DeviceSnapshot.buildAppReport(): String = buildString {
 fun DeviceReportScreen(
     deviceInfo: DeviceInfo,
     batteryInfo: BatteryInfo,
+    displayInfo: DisplayInfo,
     ramInfo: RamInfo,
     storageInfo: StorageInfo,
+    usageSummary: UsageSummary,
     rootBatteryInfo: RootBatteryInfo?,
     sampledAt: String,
     deviceProfile: DeviceProfileSnapshot?,
     isDeviceProfileReading: Boolean,
     onReadDeviceProfile: () -> Unit,
+    onOpenUsageAccessSettings: () -> Unit,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -481,6 +504,42 @@ fun DeviceReportScreen(
                 InfoLine("⚡", "电流", batteryInfo.currentMilliAmp?.let { "$it mA" } ?: "设备未上报")
                 InfoLine("🔋", "剩余电量", batteryInfo.remainingMilliAmpHour?.let { "$it mAh" } ?: "设备未上报")
                 InfoLine("⚙", "剩余能量", batteryInfo.remainingMilliWattHour?.let { "$it mWh" } ?: "设备未上报")
+                InfoLine("🌡", "电池温度", batteryInfo.temperatureCelsius?.let { "$it°C" } ?: "设备未上报")
+                InfoLine("⚙", "电池电压", batteryInfo.voltageMilliVolt?.let { "$it mV" } ?: "设备未上报")
+                InfoLine("", "电池健康", batteryInfo.health ?: "设备未上报")
+                InfoLine("", "充电方式", batteryInfo.plugged ?: "设备未上报")
+            }
+        }
+
+        Card {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(text = "屏幕体验")
+                DisplayReportText.format(displayInfo).trim().lines().forEach { line -> Text(text = line) }
+            }
+        }
+
+        Card {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(text = "使用习惯（可选）")
+                if (!usageSummary.accessGranted) {
+                    Text(text = "未授权，不影响基础报告")
+                    Text(text = "授权后可汇总当天应用前台使用时长；这不是精确亮屏时长。")
+                    Text(text = "开启后返回 APA，请点页面顶部“刷新”更新数据。")
+                    Button(onClick = onOpenUsageAccessSettings) { Text(text = "授权使用情况") }
+                } else {
+                    val total = usageSummary.foregroundTimeMillis ?: 0L
+                    InfoLine("⏱", "当天应用前台使用", "${total / 3_600_000} 小时 ${(total / 60_000) % 60} 分")
+                    usageSummary.topApps.forEach { app ->
+                        InfoLine("", app.label, "${app.foregroundTimeMillis / 60_000} 分")
+                    }
+                    if (usageSummary.topApps.isEmpty()) Text(text = "系统暂未返回今天的应用使用数据")
+                }
             }
         }
 
@@ -1227,6 +1286,7 @@ fun DeviceReportPreview() {
                 androidVersion = "Android 16（API 36）"
             ),
             batteryInfo = BatteryInfo(level = 80, status = "正在充电"),
+            displayInfo = DisplayInfo(1220, 2712, 480, 120f, 120f),
             ramInfo = RamInfo(
                 totalBytes = 16L * 1024 * 1024 * 1024,
                 availableBytes = 8L * 1024 * 1024 * 1024,
@@ -1236,11 +1296,13 @@ fun DeviceReportPreview() {
                 totalBytes = 512L * 1024 * 1024 * 1024,
                 availableBytes = 256L * 1024 * 1024 * 1024
             ),
+            usageSummary = UsageSummary(false, null, emptyList()),
             rootBatteryInfo = null,
             sampledAt = "12:48:03",
             deviceProfile = null,
             isDeviceProfileReading = false,
             onReadDeviceProfile = {},
+            onOpenUsageAccessSettings = {},
             onRefresh = {}
         )
     }

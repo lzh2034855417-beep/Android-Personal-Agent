@@ -28,4 +28,21 @@ class AgentPromptPolicyTest {
         assertTrue(prompt.contains("结论、依据、建议"))
         assertTrue(prompt.contains("还需要哪些数据"))
     }
+
+    @Test
+    fun guidesUsageAnswersToAvoidMistakingForegroundTimeForBatteryLife() {
+        val prompt = AgentPromptPolicy.systemPrompt()
+
+        assertTrue(prompt.contains("同一天的使用线索"))
+        assertTrue(prompt.contains("不等同于亮屏时长"))
+        assertTrue(prompt.contains("不得推断应用内容或后台行为"))
+    }
+
+    @Test
+    fun guidesBatteryAnswersToTrustSystemChargingStatusOverCurrentSign() {
+        val prompt = AgentPromptPolicy.systemPrompt()
+
+        assertTrue(prompt.contains("电流正负方向可能受厂商实现影响"))
+        assertTrue(prompt.contains("以系统充电状态为主"))
+    }
 }
