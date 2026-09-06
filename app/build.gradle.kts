@@ -38,6 +38,10 @@ android {
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix = ".preview"
+            versionNameSuffix = "-preview"
+        }
         release {
             signingProperties.getProperty("storeFile")?.let { storeFilePath ->
                 signingConfig = signingConfigs.create("release") {

@@ -12,13 +12,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 
 private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
+    primary = androidx.compose.ui.graphics.Color(0xFF56D5FF),
+    onPrimary = androidx.compose.ui.graphics.Color(0xFF003546),
+    background = androidx.compose.ui.graphics.Color(0xFF101418),
+    surface = androidx.compose.ui.graphics.Color(0xFF101418),
+    surfaceContainer = androidx.compose.ui.graphics.Color(0xFF1C232B),
+    surfaceContainerHigh = androidx.compose.ui.graphics.Color(0xFF242D36),
     secondary = PurpleGrey80,
     tertiary = Pink80
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
+    primary = androidx.compose.ui.graphics.Color(0xFF006782),
     secondary = PurpleGrey40,
     tertiary = Pink40
 
@@ -37,7 +42,7 @@ private val LightColorScheme = lightColorScheme(
 fun AndroidPersonalAgentTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {
@@ -53,6 +58,10 @@ fun AndroidPersonalAgentTheme(
     MaterialTheme(
         colorScheme = colorScheme,
         typography = Typography,
+        shapes = androidx.compose.material3.Shapes(
+            medium = androidx.compose.foundation.shape.RoundedCornerShape(androidx.compose.ui.unit.Dp(20f)),
+            large = androidx.compose.foundation.shape.RoundedCornerShape(androidx.compose.ui.unit.Dp(24f))
+        ),
         content = content
     )
 }

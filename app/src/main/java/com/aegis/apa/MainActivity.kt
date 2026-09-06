@@ -25,6 +25,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Card
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedTextField
@@ -219,41 +220,22 @@ class MainActivity : ComponentActivity() {
                         }.start()
                     }
                 }
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Row(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-                        NavigationRail {
-                            NavigationRailItem(
-                                selected = selectedPage == 0,
-                                onClick = { selectedPage = 0 },
-                                icon = { Text("◉") },
-                                label = { Text("设备") }
-                            )
-                            NavigationRailItem(
-                                selected = selectedPage == 3,
-                                onClick = { selectedPage = 3 },
-                                icon = { Text("AI") },
-                                label = { Text("Agent") }
-                            )
-                            NavigationRailItem(
-                                selected = selectedPage == 2,
-                                onClick = { selectedPage = 2 },
-                                icon = { Text("⚿") },
-                                label = { Text("能力") }
-                            )
-                            NavigationRailItem(
-                                selected = selectedPage == 1,
-                                onClick = { selectedPage = 1 },
-                                icon = { Text("▣") },
-                                label = { Text("应用") }
-                            )
-                            NavigationRailItem(
-                                selected = selectedPage == 4,
-                                onClick = { selectedPage = 4 },
-                                icon = { Text("⚙") },
-                                label = { Text("设置") }
-                            )
+                Scaffold(
+                    modifier = Modifier.fillMaxSize(),
+                    bottomBar = {
+                        androidx.compose.material3.NavigationBar {
+                            listOf(0 to "设备", 3 to "Agent", 2 to "能力", 1 to "应用", 4 to "设置").forEach { (page, title) ->
+                                NavigationBarItem(
+                                    selected = selectedPage == page,
+                                    onClick = { selectedPage = page },
+                                    icon = { Text(listOf("◉", "▦", "◇", "AI", "⚙")[page]) },
+                                    label = { Text(title) }
+                                )
+                            }
                         }
-
+                    }
+                ) { innerPadding ->
+                    Row(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -421,15 +403,7 @@ class MainActivity : ComponentActivity() {
                             )
                                 else -> SettingsPrivacyScreen(modifier = Modifier.padding(24.dp))
                             }
-                            if (selectedPage != 3) {
-                                Text(
-                                    text = "writen by Mr.Lu with gpt in 2026.7",
-                                    modifier = Modifier
-                                        .align(Alignment.BottomEnd)
-                                        .padding(12.dp),
-                                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall
-                                )
-                            }
+
                         }
                     }
                 }
@@ -601,18 +575,24 @@ fun DeviceReportScreen(
         modifier = modifier.verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(text = "DEVICE STATUS · 设备状态")
+        Text(text = "设备概览", style = androidx.compose.material3.MaterialTheme.typography.headlineMedium)
+        QuickReportPanel(deviceInfo.model, sampledAt, batteryInfo,
+            "Android ${deviceInfo.androidVersion}\n" +
+                "当前刷新率：${displayInfo.currentRefreshRate?.let { "${it.toInt()} Hz" } ?: "未获取到"}\n" +
+                "可用内存：${formatSize(ramInfo.availableBytes)} / ${formatSize(ramInfo.totalBytes)}\n" +
+                "可用存储：${formatSize(storageInfo.availableBytes)} / ${formatSize(storageInfo.totalBytes)}\n\n" +
+                "内存和存储是当前快照，不能单独用来确定卡顿原因。")
         Text(text = "LAST SAMPLE · 最近采样：$sampledAt")
         refreshError?.let { Text(text = it) }
         Button(onClick = onRefresh, enabled = !isRefreshing) {
             Text(text = if (isRefreshing) "正在刷新…" else "REFRESH · 刷新")
         }
-        Card {
+        Card(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(text = "实时状态")
+                Text(text = "实时状态", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
                 InfoLine("🔋", "电池", "${batteryInfo.levelText}（${batteryInfo.status}）")
                 InfoLine("⚡", "电流", batteryInfo.currentMilliAmp?.let { "$it mA" } ?: "设备未上报")
                 InfoLine("🔋", "剩余电量", batteryInfo.remainingMilliAmpHour?.let { "$it mAh" } ?: "设备未上报")
@@ -624,22 +604,22 @@ fun DeviceReportScreen(
             }
         }
 
-        Card {
+        Card(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(text = "屏幕体验")
+                Text(text = "屏幕体验", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
                 DisplayReportText.format(displayInfo).trim().lines().forEach { line -> Text(text = line) }
             }
         }
 
-        Card {
+        Card(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(text = "使用习惯（可选）")
+                Text(text = "使用习惯（可选）", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
                 if (!usageSummary.accessGranted) {
                     Text(text = "未授权，不影响基础报告")
                     Text(text = "授权后可汇总当天应用前台使用时长；这不是精确亮屏时长。")
@@ -661,12 +641,12 @@ fun DeviceReportScreen(
             }
         }
 
-        Card {
+        Card(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(text = "设备与系统")
+                Text(text = "设备与系统", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
                 DetailLine("📱", "设备型号", deviceInfo.model)
                 InfoLine("🤖", "Android", deviceInfo.androidVersion)
                 val chipDetails = deviceProfile?.toChipSchedulingDetails()
@@ -720,12 +700,12 @@ fun DeviceReportScreen(
             }
         }
 
-        Card {
+        Card(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(text = "内存与存储")
+                Text(text = "内存与存储", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
                 DetailLine("💾", "内存", "${formatSize(ramInfo.availableBytes)} 可用 / ${formatSize(ramInfo.totalBytes)} 总量")
                 InfoLine("", "内存状态", if (ramInfo.isLowMemory) "内存不足" else "正常")
                 DetailLine("🗄", "内置存储", "${formatSize(storageInfo.usedBytes)} 已用 / ${formatSize(storageInfo.totalBytes)} 总量")
@@ -733,12 +713,12 @@ fun DeviceReportScreen(
             }
         }
 
-        Card {
+        Card(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(text = "进阶电池")
+                Text(text = "进阶电池", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
                 when {
                     rootBatteryInfo == null -> Text(text = "尚未读取 · 需要 Root 授权")
                     rootBatteryInfo.error != null -> InfoLine("⚠", "读取结果", rootBatteryInfo.error)
@@ -768,13 +748,13 @@ fun AppPerceptionScreen(
         modifier = modifier.verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(text = "应用检测")
+        Text(text = "应用检测", style = androidx.compose.material3.MaterialTheme.typography.headlineMedium)
         Text(text = "检测常见 Root、框架与应用生态工具")
         Button(onClick = onRefresh) {
             Text(text = "重新扫描应用")
         }
         detectedApps.groupBy { it.category }.forEach { (category, apps) ->
-            Card {
+            Card(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -800,7 +780,7 @@ fun AppPerceptionScreen(
                 }
             }
         }
-        Text(text = "全部可启动应用")
+        Text(text = "全部可启动应用", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
         Text(text = "应用概览")
         Text(text = "已识别可启动应用：${installedApps.size}")
         Text(text = "点击应用查看详情")
@@ -825,7 +805,7 @@ fun AppDetailScreen(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(text = "应用详情")
+        Text(text = "应用详情", style = androidx.compose.material3.MaterialTheme.typography.headlineMedium)
         Text(text = "名称：${appDetails.name}")
         Text(text = "包名：${appDetails.packageName}")
         Text(text = "版本：${appDetails.versionName} (${appDetails.versionCode})")
@@ -935,14 +915,14 @@ fun CapabilitySectionsScreen(
         modifier = modifier.verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(text = "能力中心")
+        Text(text = "能力中心", style = androidx.compose.material3.MaterialTheme.typography.headlineMedium)
 
-        Card {
+        Card(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(text = "Level 0 · Android API")
+                Text(text = "Level 0 · Android API", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
                 Text(text = "本机基础感知：设备、电池、内存、存储与应用列表。")
                 Text(text = "当前已读取可启动应用：$launchableAppCount 个")
                 Text(text = "亮屏时间、近期使用等数据需要你在系统设置中授予“使用情况访问”。")
@@ -952,12 +932,12 @@ fun CapabilitySectionsScreen(
             }
         }
 
-        Card {
+        Card(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(text = "Level 1 · Shizuku")
+                Text(text = "Level 1 · Shizuku", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
                 Text(
                     text = if (rootStatus.isShizukuInstalled) {
                         "已检测到 Shizuku。打开后启动服务，并在 Shizuku 中授权 APA。"
@@ -971,12 +951,12 @@ fun CapabilitySectionsScreen(
             }
         }
 
-        Card {
+        Card(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(text = "Level 2 · Root 授权接口")
+                Text(text = "Level 2 · Root 授权接口", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
                 Text(
                     text = if (rootStatus.isKernelSuManagerInstalled) {
                         "Root 管理器：KernelSU"
@@ -1136,7 +1116,7 @@ fun AgentChatScreen(
                     ) {
                         Text("今天想了解手机什么？", style = androidx.compose.material3.MaterialTheme.typography.titleLarge)
                         Text("选择报告并提问；我只会根据本次附带的数据回答。", color = colors.onSurfaceVariant)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column {
                             listOf("电池是否该换？", "为什么发热？", "今天耗电快吗？").forEach { question ->
                                 TextButton(onClick = { userMessage = question }) { Text(question) }
                             }
@@ -1339,9 +1319,9 @@ fun SettingsPrivacyScreen(modifier: Modifier = Modifier) {
             .imePadding(),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(text = "设置与隐私")
+        Text(text = "设置与隐私", style = androidx.compose.material3.MaterialTheme.typography.headlineMedium)
         Text(text = "APA ${BuildConfig.VERSION_NAME} · ${BuildConfig.BUILD_TYPE}")
-        Text(text = "模型服务")
+        Text(text = "模型服务", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
         CloudProviderCatalog.providers.forEach { option ->
             val optionHasKey = ApiKeyStore.load(context, option.name) != null
             Button(
@@ -1410,7 +1390,7 @@ fun SettingsPrivacyScreen(modifier: Modifier = Modifier) {
         ) {
             Text(text = "删除 $provider 的 API Key")
         }
-        Text(text = "Device data：LOCAL ONLY")
+        Text(text = "设备数据在本机采集；在线提问会发送本次附带的报告。")
         Text(
             text = if (storedApiKey != null) {
                 "云端分析：${CloudProviderCatalog.find(requireNotNull(storedApiKey).provider)?.shortLabel ?: "MODEL"} 已配置"
@@ -1418,14 +1398,17 @@ fun SettingsPrivacyScreen(modifier: Modifier = Modifier) {
                 "云端分析：未配置"
             }
         )
-        Spacer(modifier = Modifier.height(180.dp))
+        Spacer(modifier = Modifier.height(24.dp))
     }
 }
 
 @Composable
 private fun InfoLine(icon: String, label: String, value: String) {
     val prefix = listOf(icon, label).filter { it.isNotBlank() }.joinToString(" ")
-    Text(text = "$prefix：$value")
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(text = label, modifier = Modifier.weight(1f), color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(text = value, modifier = Modifier.weight(1.2f), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+    }
 }
 
 @Composable
