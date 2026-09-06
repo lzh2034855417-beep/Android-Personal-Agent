@@ -129,7 +129,7 @@ Each provider uses an independent key. Switching providers does not reuse anothe
 - Conversation history is kept only in the current application process.
 - Cloud requests do not yet support streaming, cancellation, or automatic retry.
 - Application detection relies on known package names and Android package visibility.
-- Official Release APK signing must be configured by the project maintainer.
+- GitHub Releases provide Release APKs signed with APA's release key; verify the SHA-256 published on the release page before installation.
 
 ## Risk Notice
 

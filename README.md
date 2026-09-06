@@ -129,7 +129,7 @@ app/build/outputs/apk/debug/APA-v0.1.1-debug.apk
 - 对话记录只保存在当前应用进程中，重启后会清空。
 - 云端请求暂未提供流式输出、取消请求和自动重试。
 - 应用检测依赖已知包名与系统可见性，不保证覆盖所有修改版或隐藏版应用。
-- Release APK 的正式签名需要由项目维护者自行配置。
+- GitHub Releases 提供由 APA 发布密钥签名的 Release APK；安装前请核对发布页给出的 SHA-256。
 
 ## 风险提示
 

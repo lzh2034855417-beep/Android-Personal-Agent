@@ -57,6 +57,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import com.aegis.apa.agent.AgentReport
 import com.aegis.apa.agent.AgentConversationMessage
+import com.aegis.apa.agent.AgentErrorMessage
 import com.aegis.apa.agent.CloudLlmProvider
 import com.aegis.apa.agent.CloudProviderCatalog
 import com.aegis.apa.agent.ApiKeyStore
@@ -353,7 +354,7 @@ class MainActivity : ComponentActivity() {
                                             throw cancelled
                                         } catch (error: Exception) {
                                             chatMessages = chatMessages + AgentConversationMessage(
-                                                role = "error", content = error.message ?: "在线分析失败，请重试", source = "MODEL · ERROR"
+                                                role = "error", content = AgentErrorMessage.from(error), source = "MODEL · ERROR"
                                             )
                                         } finally { isOnlineAnalyzing = false }
                                     }
