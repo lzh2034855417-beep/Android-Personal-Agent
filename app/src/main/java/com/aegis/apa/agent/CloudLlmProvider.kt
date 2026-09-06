@@ -63,12 +63,13 @@ object CloudLlmProvider {
         levelReport: String,
         appReport: String?,
         sceneReport: String?,
-        conversationHistory: List<AgentConversationMessage>
+        conversationHistory: List<AgentConversationMessage>,
+        credentials: StoredApiKey
     ): AgentReport {
-        val config = requireNotNull(CloudProviderCatalog.find(ApiSession.provider)) {
-            "不支持的模型服务：${ApiSession.provider}"
+        val config = requireNotNull(CloudProviderCatalog.find(credentials.provider)) {
+            "不支持的模型服务：${credentials.provider}"
         }
-        require(ApiSession.apiKey.isNotBlank()) { "请先在设置中保存 ${config.shortLabel} API Key" }
+        require(credentials.apiKey.isNotBlank()) { "请先在设置中保存 ${config.shortLabel} API Key" }
         require(userQuestion.isNotBlank()) { "问题不能为空" }
 
         val systemPrompt = AgentPromptPolicy.systemPrompt()
@@ -83,7 +84,7 @@ object CloudLlmProvider {
             appendLine("【基础设备快照】")
             appendLine("设备：${context.deviceModel}")
             appendLine("系统：${context.androidVersion}")
-            appendLine("电量：${context.batteryLevel}%")
+            appendLine("电量：${context.batteryLevel?.let { "$it%" } ?: "未获取到"}")
             appendLine("RAM：可用 ${context.availableRamBytes} B / 总计 ${context.totalRamBytes} B")
             appendLine("存储：可用 ${context.availableStorageBytes} B / 总计 ${context.totalStorageBytes} B")
             appendLine("可启动应用数量：${context.launchableAppCount}")
@@ -133,14 +134,17 @@ object CloudLlmProvider {
                 }
         }
 
+        check(credentials.expiresAt > System.currentTimeMillis()) {
+            "API Key 的本机保存期限已到，请在设置中重新保存"
+        }
         val connection = (URL(config.endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             setRequestProperty("Content-Type", "application/json")
             if (config.protocol == "anthropic") {
-                setRequestProperty("x-api-key", ApiSession.apiKey)
+                setRequestProperty("x-api-key", credentials.apiKey)
                 setRequestProperty("anthropic-version", "2023-06-01")
             } else {
-                setRequestProperty("Authorization", "Bearer ${ApiSession.apiKey}")
+                setRequestProperty("Authorization", "Bearer ${credentials.apiKey}")
             }
             connectTimeout = 15_000
             readTimeout = 60_000

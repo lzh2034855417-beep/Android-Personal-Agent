@@ -1,9 +1,17 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
 
-val apaVersionName = "0.1.0"
+val apaVersionName = "0.1.1"
+val signingProperties = Properties()
+val signingPropertiesFile = rootProject.file("keystore.properties")
+
+if (signingPropertiesFile.isFile) {
+    signingPropertiesFile.inputStream().use(signingProperties::load)
+}
 
 android {
     namespace = "com.aegis.apa"
@@ -17,7 +25,7 @@ android {
         applicationId = "com.aegis.apa"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
+        versionCode = 2
         versionName = apaVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -25,6 +33,14 @@ android {
 
     buildTypes {
         release {
+            val storeFilePath = signingProperties.getProperty("storeFile")
+                ?: throw GradleException("Release signing requires a local keystore.properties file")
+            signingConfig = signingConfigs.create("release") {
+                storeFile = file(storeFilePath)
+                storePassword = signingProperties.getProperty("storePassword")
+                keyAlias = signingProperties.getProperty("keyAlias")
+                keyPassword = signingProperties.getProperty("keyPassword")
+            }
             optimization {
                 enable = false
             }
@@ -36,13 +52,14 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
 androidComponents {
     onVariants(selector().all()) { variant ->
         variant.outputs.forEach { output ->
-            output.outputFileName.set("APA-v$apaVersionName.apk")
+            output.outputFileName.set("APA-v$apaVersionName-${variant.name}.apk")
         }
     }
 }

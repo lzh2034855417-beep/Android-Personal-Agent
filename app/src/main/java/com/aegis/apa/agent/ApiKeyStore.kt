@@ -101,8 +101,7 @@ object ApiKeyStore {
             .edit()
             .clear()
             .apply()
-        ApiSession.provider = ""
-        ApiSession.apiKey = ""
+        ApiSession.update(null)
     }
 
     fun clear(context: Context, provider: String) {
@@ -123,8 +122,7 @@ object ApiKeyStore {
         }
         editor.apply()
         if (ApiSession.provider == provider) {
-            ApiSession.provider = ""
-            ApiSession.apiKey = ""
+            ApiSession.update(null)
         }
     }
 

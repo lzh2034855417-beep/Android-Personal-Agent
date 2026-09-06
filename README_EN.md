@@ -4,11 +4,11 @@ An experimental open-source personal agent for Android devices.
 
 [中文](README.md) | [English](README_EN.md)
 
-![Version](https://img.shields.io/badge/version-v0.1.0-blue)
+![Version](https://img.shields.io/badge/version-v0.1.1-blue)
 ![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84)
 ![License](https://img.shields.io/badge/license-MIT-yellow)
 
-> Current version: `v0.1.0`
+> Current public release: `v0.1.1`
 >
 > APA is currently in early public testing. AI-generated output is for reference only and should not be the sole basis for device repair, health assessment, or system modification.
 
@@ -79,7 +79,9 @@ Providers other than DeepSeek still need broader testing across accounts and dev
 - APA does not operate a proxy server. Cloud requests are sent directly to the provider selected by the user.
 
 When a cloud model is used, the selected report is subject to that provider's privacy policy and data-processing terms. Review the report scope before sending it.
-Usage Access is entirely optional. It reads Android's aggregate foreground-time statistics for the current day, not exact screen-on time; declining it does not limit the Level 0 base report.
+Usage Access is entirely optional. APA reads activity events from today and yesterday to recover sessions crossing midnight, then clips their durations to today's midnight through the sampling time. Missing or delayed events and overlapping multi-window apps limit accuracy: these are estimates, not exact screen-on time. No records means unavailable, not zero. Returning from permission settings refreshes the data automatically.
+
+Local and cloud analysis collect a fresh basic snapshot on a background thread before each request. Root battery and device profiles retain their own timestamps and require manual rereading. Each cloud request checks the key's local expiration. Settings display the installed version and build type.
 
 ## Requirements
 
@@ -107,7 +109,7 @@ macOS / Linux:
 The Debug APK is generated at:
 
 ```text
-app/build/outputs/apk/debug/APA-v0.1.0.apk
+app/build/outputs/apk/debug/APA-v0.1.1-debug.apk
 ```
 
 ## Model Configuration

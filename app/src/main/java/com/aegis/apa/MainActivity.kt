@@ -31,6 +31,16 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -83,7 +93,7 @@ import com.aegis.apa.tool.UsageStatsTool
 import com.aegis.apa.tool.UsageSummary
 import com.aegis.apa.ui.theme.AndroidPersonalAgentTheme
 import java.util.Locale
-import java.time.LocalTime
+import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.text.SimpleDateFormat
 import kotlinx.coroutines.delay
@@ -104,15 +114,42 @@ data class DeviceSnapshot(
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        ApiKeyStore.load(this)?.let { savedApiKey ->
-            ApiSession.provider = savedApiKey.provider
-            ApiSession.apiKey = savedApiKey.apiKey
-        }
+        ApiSession.update(ApiKeyStore.load(this))
         enableEdgeToEdge()
         setContent {
             AndroidPersonalAgentTheme {
                 var selectedPage by rememberSaveable { mutableIntStateOf(0) }
-                var snapshot by remember { mutableStateOf(readDeviceSnapshot()) }
+                var snapshot by remember { mutableStateOf<DeviceSnapshot?>(null) }
+                var isSnapshotRefreshing by remember { mutableStateOf(false) }
+                var snapshotError by remember { mutableStateOf<String?>(null) }
+                val scope = rememberCoroutineScope()
+                val snapshotMutex = remember { Mutex() }
+                suspend fun refreshSnapshot(): DeviceSnapshot = snapshotMutex.withLock {
+                    isSnapshotRefreshing = true
+                    try {
+                        withContext(Dispatchers.IO) { readDeviceSnapshot() }.also {
+                            snapshot = it
+                            snapshotError = null
+                        }
+                    } finally {
+                        isSnapshotRefreshing = false
+                    }
+                }
+                val onRefresh: () -> Unit = {
+                    scope.launch {
+                        try { refreshSnapshot() }
+                        catch (cancelled: CancellationException) { throw cancelled }
+                        catch (_: Exception) { snapshotError = "读取失败，请重试；当前显示的是上次采样。" }
+                    }
+                }
+                DisposableEffect(Unit) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        if (event == Lifecycle.Event.ON_RESUME) onRefresh()
+                    }
+                    lifecycle.addObserver(observer)
+                    if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) onRefresh()
+                    onDispose { lifecycle.removeObserver(observer) }
+                }
                 var selectedAppDetails by remember { mutableStateOf<AppDetails?>(null) }
                 var rootBatteryInfo by remember { mutableStateOf<RootBatteryInfo?>(null) }
                 var isRootBatteryReading by remember { mutableStateOf(false) }
@@ -120,12 +157,20 @@ class MainActivity : ComponentActivity() {
                 var isDeviceProfileReading by remember { mutableStateOf(false) }
                 var chatMessages by remember { mutableStateOf<List<AgentConversationMessage>>(emptyList()) }
                 var isOnlineAnalyzing by remember { mutableStateOf(false) }
+                val currentSnapshot = snapshot
+                if (currentSnapshot == null) {
+                    Column(modifier = Modifier.fillMaxSize().padding(32.dp)) {
+                        Text(text = if (snapshotError == null) "正在读取设备信息…" else "设备信息读取失败，请重试。")
+                        if (snapshotError != null) Button(onClick = onRefresh) { Text("重试") }
+                    }
+                    return@AndroidPersonalAgentTheme
+                }
                 val onReadDeviceProfile = {
                     if (!isDeviceProfileReading) {
                         isDeviceProfileReading = true
                         Thread {
                             val result = DeviceProfileCollector.read(
-                                preferRoot = snapshot.rootStatus.hasSuBinary
+                                preferRoot = currentSnapshot.rootStatus.hasSuBinary
                             )
                             this@MainActivity.runOnUiThread {
                                 deviceProfile = result
@@ -175,30 +220,36 @@ class MainActivity : ComponentActivity() {
                         ) {
                             when (selectedPage) {
                             0 -> DeviceReportScreen(
-                                deviceInfo = snapshot.deviceInfo,
-                                batteryInfo = snapshot.batteryInfo,
-                                displayInfo = snapshot.displayInfo,
-                                ramInfo = snapshot.ramInfo,
-                                storageInfo = snapshot.storageInfo,
-                                usageSummary = snapshot.usageSummary,
+                                deviceInfo = currentSnapshot.deviceInfo,
+                                batteryInfo = currentSnapshot.batteryInfo,
+                                displayInfo = currentSnapshot.displayInfo,
+                                ramInfo = currentSnapshot.ramInfo,
+                                storageInfo = currentSnapshot.storageInfo,
+                                usageSummary = currentSnapshot.usageSummary,
                                 rootBatteryInfo = rootBatteryInfo,
-                                sampledAt = snapshot.sampledAt,
+                                sampledAt = currentSnapshot.sampledAt,
                                 deviceProfile = deviceProfile,
                                 isDeviceProfileReading = isDeviceProfileReading,
                                 onReadDeviceProfile = onReadDeviceProfile,
                                 onOpenUsageAccessSettings = ::openUsageAccessSettings,
-                                onRefresh = { snapshot = readDeviceSnapshot() },
+                                onRefresh = onRefresh,
+                                isRefreshing = isSnapshotRefreshing,
+                                refreshError = snapshotError,
                                 modifier = Modifier.padding(24.dp)
                             )
                             1 -> {
                                 val appDetails = selectedAppDetails
                                 if (appDetails == null) {
                                     AppPerceptionScreen(
-                                        installedApps = snapshot.installedApps,
-                                        detectedApps = snapshot.detectedApps,
-                                        onRefresh = { snapshot = readDeviceSnapshot() },
+                                        installedApps = currentSnapshot.installedApps,
+                                        detectedApps = currentSnapshot.detectedApps,
+                                        onRefresh = onRefresh,
                                         onAppSelected = { app ->
-                                            selectedAppDetails = AppTool.readDetails(this@MainActivity, app.packageName)
+                                            scope.launch {
+                                                selectedAppDetails = withContext(Dispatchers.IO) {
+                                                    AppTool.readDetails(this@MainActivity, app.packageName)
+                                                }
+                                            }
                                         },
                                         modifier = Modifier.padding(24.dp)
                                     )
@@ -211,16 +262,16 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                             2 -> CapabilitySectionsScreen(
-                                launchableAppCount = snapshot.installedApps.size,
+                                launchableAppCount = currentSnapshot.installedApps.size,
                                 onOpenUsageAccessSettings = { openUsageAccessSettings() },
-                                rootStatus = snapshot.rootStatus,
+                                rootStatus = currentSnapshot.rootStatus,
                                 rootBatteryInfo = rootBatteryInfo,
                                 isRootBatteryReading = isRootBatteryReading,
                                 deviceProfile = deviceProfile,
                                 isDeviceProfileReading = isDeviceProfileReading,
                                 onOpenShizuku = { openShizuku() },
                                 onOpenRootManager = {
-                                    val rootManagerPackage = if (snapshot.rootStatus.isKernelSuManagerInstalled) {
+                                    val rootManagerPackage = if (currentSnapshot.rootStatus.isKernelSuManagerInstalled) {
                                         "me.weishu.kernelsu"
                                     } else {
                                         "com.topjohnwu.magisk"
@@ -243,68 +294,69 @@ class MainActivity : ComponentActivity() {
                             3 -> AgentChatScreen(
                                 messages = chatMessages,
                                 onAnalyze = { question, attachedReportLabel ->
-                                    val localReport = LocalDeviceAnalyzer.analyze(snapshot.toDeviceContext())
-                                    chatMessages = chatMessages +
-                                        AgentConversationMessage(
-                                            role = "user",
-                                            content = question,
-                                            attachedReportLabel = attachedReportLabel
-                                        ) +
-                                        AgentConversationMessage(
-                                            role = "assistant",
-                                            content = localReport.toChatContent(),
-                                            source = localReport.source
-                                        )
-                                },
-                                isOnlineAnalyzing = isOnlineAnalyzing,
-                                onOnlineAnalyze = { question, selectedLevel, includeAppReport, includeSceneReport, attachedReportLabel ->
-                                    val previousMessages = chatMessages
                                     chatMessages = chatMessages + AgentConversationMessage(
-                                        role = "user",
-                                        content = question,
-                                        attachedReportLabel = attachedReportLabel
+                                        role = "user", content = question, attachedReportLabel = attachedReportLabel
                                     )
                                     isOnlineAnalyzing = true
-                                    Thread {
-                                        val result = runCatching {
-                                            CloudLlmProvider.analyze(
-                                                context = snapshot.toDeviceContext(),
-                                                userQuestion = question,
-                                                selectedLevel = selectedLevel,
-                                                levelReport = snapshot.buildLevelReport(
-                                                    selectedLevel = selectedLevel,
-                                                    rootBatteryInfo = rootBatteryInfo,
-                                                    deviceProfile = deviceProfile
-                                                ),
-                                                appReport = snapshot.buildAppReport().takeIf { includeAppReport },
-                                                sceneReport = if (includeSceneReport) {
-                                                    "用户选择了 Scene 一天续航报告，但当前尚未上传报告文件；不得推断其内容。"
-                                                } else {
-                                                    null
-                                                },
-                                                conversationHistory = previousMessages
+                                    scope.launch {
+                                        try {
+                                            val fresh = refreshSnapshot()
+                                            val report = LocalDeviceAnalyzer.analyze(fresh.toDeviceContext())
+                                            chatMessages = chatMessages + AgentConversationMessage(
+                                                role = "assistant",
+                                                content = "采样时间：${fresh.sampledAt}\n${report.toChatContent()}",
+                                                source = report.source
                                             )
-                                        }
-                                        this@MainActivity.runOnUiThread {
-                                            result.fold(
-                                                onSuccess = { report ->
-                                                    chatMessages = chatMessages + AgentConversationMessage(
-                                                        role = "assistant",
-                                                        content = report.toChatContent(),
-                                                        source = report.source
-                                                    )
-                                                },
-                                                onFailure = { error ->
-                                                    chatMessages = chatMessages + AgentConversationMessage(
-                                                        role = "error",
-                                                        content = error.message ?: "在线分析失败",
-                                                        source = "${CloudProviderCatalog.find(ApiSession.provider)?.shortLabel ?: "MODEL"} · ERROR"
-                                                    )
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (_: Exception) {
+                                            chatMessages = chatMessages + AgentConversationMessage(
+                                                role = "error", content = "设备数据刷新失败，请重试。", source = "LOCAL · ERROR"
+                                            )
+                                        } finally { isOnlineAnalyzing = false }
+                                    }
+                                },
+                                isOnlineAnalyzing = isOnlineAnalyzing,
+                                onOnlineAnalyze = { question, selectedLevel, includeAppReport, _, attachedReportLabel ->
+                                    val previousMessages = chatMessages
+                                    val attachedRootBattery = rootBatteryInfo
+                                    val attachedDeviceProfile = deviceProfile
+                                    chatMessages = chatMessages + AgentConversationMessage(
+                                        role = "user", content = question, attachedReportLabel = attachedReportLabel
+                                    )
+                                    isOnlineAnalyzing = true
+                                    scope.launch {
+                                        try {
+                                            val requested = ApiSession.requireValid()
+                                            val fresh = refreshSnapshot()
+                                            val result = withContext(Dispatchers.IO) {
+                                                val credentials = checkNotNull(ApiKeyStore.load(this@MainActivity, requested.provider)) {
+                                                    "API Key 已过期或无法读取，请在设置中重新保存"
                                                 }
+                                                CloudLlmProvider.analyze(
+                                                    context = fresh.toDeviceContext(),
+                                                    userQuestion = question,
+                                                    selectedLevel = selectedLevel,
+                                                    levelReport = fresh.buildLevelReport(
+                                                        selectedLevel, attachedRootBattery, attachedDeviceProfile
+                                                    ),
+                                                    appReport = fresh.buildAppReport().takeIf { includeAppReport },
+                                                    sceneReport = null,
+                                                    conversationHistory = previousMessages,
+                                                    credentials = credentials
+                                                )
+                                            }
+                                            chatMessages = chatMessages + AgentConversationMessage(
+                                                role = "assistant", content = result.toChatContent(), source = result.source
                                             )
-                                            isOnlineAnalyzing = false
-                                        }
-                                    }.start()
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (error: Exception) {
+                                            chatMessages = chatMessages + AgentConversationMessage(
+                                                role = "error", content = error.message ?: "在线分析失败，请重试", source = "MODEL · ERROR"
+                                            )
+                                        } finally { isOnlineAnalyzing = false }
+                                    }
                                 },
                                 onClearConversation = { chatMessages = emptyList() },
                                 onOpenSettings = { selectedPage = 4 },
@@ -339,7 +391,7 @@ class MainActivity : ComponentActivity() {
             installedApps = AppTool.readLaunchableApps(this),
             detectedApps = AppTool.detectKnownApps(this),
             rootStatus = RootTool.read(this),
-            sampledAt = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+            sampledAt = ZonedDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss XXX"))
         )
     }
 
@@ -435,6 +487,7 @@ private fun DeviceSnapshot.buildLevelReport(
             rootBatteryInfo == null -> appendLine("Root 高级电池信息：本次尚未读取")
             rootBatteryInfo.error != null -> appendLine("Root 高级电池信息：${rootBatteryInfo.error}")
             else -> {
+                appendLine("高级电池采样时间：${rootBatteryInfo.sampledAt}（需在能力页手动重读）")
                 appendLine("设计容量：${rootBatteryInfo.designCapacityMah?.let { "$it mAh" } ?: "设备未提供"}")
                 appendLine("满充容量：${rootBatteryInfo.fullChargeCapacityMah?.let { "$it mAh" } ?: "设备未提供"}")
                 appendLine("循环次数：${rootBatteryInfo.cycleCount ?: "设备未提供"}")
@@ -482,6 +535,8 @@ fun DeviceReportScreen(
     onReadDeviceProfile: () -> Unit,
     onOpenUsageAccessSettings: () -> Unit,
     onRefresh: () -> Unit,
+    isRefreshing: Boolean = false,
+    refreshError: String? = null,
     modifier: Modifier = Modifier
 ) {
     var isChipDetailsExpanded by rememberSaveable { mutableStateOf(false) }
@@ -491,8 +546,9 @@ fun DeviceReportScreen(
     ) {
         Text(text = "DEVICE STATUS · 设备状态")
         Text(text = "LAST SAMPLE · 最近采样：$sampledAt")
-        Button(onClick = onRefresh) {
-            Text(text = "REFRESH · 刷新")
+        refreshError?.let { Text(text = it) }
+        Button(onClick = onRefresh, enabled = !isRefreshing) {
+            Text(text = if (isRefreshing) "正在刷新…" else "REFRESH · 刷新")
         }
         Card {
             Column(
@@ -500,7 +556,7 @@ fun DeviceReportScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(text = "实时状态")
-                InfoLine("🔋", "电池", "${batteryInfo.level}%（${batteryInfo.status}）")
+                InfoLine("🔋", "电池", "${batteryInfo.levelText}（${batteryInfo.status}）")
                 InfoLine("⚡", "电流", batteryInfo.currentMilliAmp?.let { "$it mA" } ?: "设备未上报")
                 InfoLine("🔋", "剩余电量", batteryInfo.remainingMilliAmpHour?.let { "$it mAh" } ?: "设备未上报")
                 InfoLine("⚙", "剩余能量", batteryInfo.remainingMilliWattHour?.let { "$it mWh" } ?: "设备未上报")
@@ -530,11 +586,16 @@ fun DeviceReportScreen(
                 if (!usageSummary.accessGranted) {
                     Text(text = "未授权，不影响基础报告")
                     Text(text = "授权后可汇总当天应用前台使用时长；这不是精确亮屏时长。")
-                    Text(text = "开启后返回 APA，请点页面顶部“刷新”更新数据。")
+                    Text(text = "授权后返回 APA 会自动更新数据。")
                     Button(onClick = onOpenUsageAccessSettings) { Text(text = "授权使用情况") }
                 } else {
-                    val total = usageSummary.foregroundTimeMillis ?: 0L
-                    InfoLine("⏱", "当天应用前台使用", "${total / 3_600_000} 小时 ${(total / 60_000) % 60} 分")
+                    val total = usageSummary.foregroundTimeMillis
+                    InfoLine("⏱", "当天应用前台使用（估算）", total?.let {
+                        "${it / 3_600_000} 小时 ${(it / 60_000) % 60} 分"
+                    } ?: "未获取到")
+                    usageSummary.rangeText?.let { Text(text = "统计范围：$it") }
+                    Text(text = "按系统前后台事件估算，记录可能缺失或延迟，不等同于精确亮屏时长。")
+                    if (usageSummary.isPartial) Text(text = "部分事件缺失，时长可能偏低。")
                     usageSummary.topApps.forEach { app ->
                         InfoLine("", app.label, "${app.foregroundTimeMillis / 60_000} 分")
                     }
@@ -1040,7 +1101,7 @@ fun AgentChatScreen(
                     horizontalArrangement = Arrangement.Start
                 ) {
                     Card(modifier = Modifier.fillMaxWidth(0.9f)) {
-                        Text(text = "$providerLabel 正在分析…", modifier = Modifier.padding(12.dp))
+                        Text(text = "正在读取设备并分析…", modifier = Modifier.padding(12.dp))
                     }
                 }
             }
@@ -1087,11 +1148,12 @@ fun AgentChatScreen(
                         Text(text = if (includeAppReport) "● 应用报告" else "应用报告")
                     }
                     Button(
-                        onClick = { includeSceneReport = !includeSceneReport },
+                        onClick = {},
+                        enabled = false,
                         modifier = Modifier.weight(1f)
                     ) {
                         Text(
-                            text = if (includeSceneReport) "● Scene 一天续航" else "Scene 一天续航"
+                            text = "Scene 续航（开发中）"
                         )
                     }
                 }
@@ -1167,6 +1229,7 @@ fun SettingsPrivacyScreen(modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text(text = "设置与隐私")
+        Text(text = "APA ${BuildConfig.VERSION_NAME} · ${BuildConfig.BUILD_TYPE}")
         Text(text = "模型服务")
         CloudProviderCatalog.providers.forEach { option ->
             val optionHasKey = ApiKeyStore.load(context, option.name) != null
@@ -1210,8 +1273,7 @@ fun SettingsPrivacyScreen(modifier: Modifier = Modifier) {
             val saved = ApiKeyStore.save(context, provider, apiKey, validDays = 7)
             storedApiKey = saved
             if (saved != null) {
-                ApiSession.provider = saved.provider
-                ApiSession.apiKey = saved.apiKey
+                ApiSession.update(saved)
             }
         }) {
             Text(text = "加密保存 7 天")

@@ -3,7 +3,7 @@ package com.aegis.apa.agent
 data class DeviceContext(
     val deviceModel: String,
     val androidVersion: String,
-    val batteryLevel: Int,
+    val batteryLevel: Int?,
     val availableRamBytes: Long,
     val totalRamBytes: Long,
     val availableStorageBytes: Long,

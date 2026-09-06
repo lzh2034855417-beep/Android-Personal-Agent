@@ -4,11 +4,11 @@
 
 [中文](README.md) | [English](README_EN.md)
 
-![Version](https://img.shields.io/badge/version-v0.1.0-blue)
+![Version](https://img.shields.io/badge/version-v0.1.1-blue)
 ![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84)
 ![License](https://img.shields.io/badge/license-MIT-yellow)
 
-> 当前版本：`v0.1.0`
+> 当前公开版本：`v0.1.1`
 >
 > APA 仍处于公开内测阶段。AI 输出仅供参考，不应作为维修、设备健康评估或系统修改的唯一依据。
 
@@ -79,7 +79,9 @@ Root 和 Shizuku 都不是运行 APA 的必要条件。没有高级权限时，L
 - APA 没有自建中转服务器，云端分析直接请求用户选择的模型服务商。
 
 使用云端模型意味着用户选择的报告内容会受对应服务商的隐私政策与数据处理条款约束。发送前请确认报告中不包含不希望上传的信息。
-“使用情况访问权限”完全可选。它只读取系统统计的当天应用前台使用时长，不等同于精确亮屏时长；未授权不会影响 Level 0 基础报告。
+“使用情况访问权限”完全可选。APA 读取今天及前一天的系统前后台事件，以处理跨零点会话，只汇总今天零点至采样时刻的时长。事件可能缺失或延迟，多窗口应用时长可能重叠，因此这是估算值，不等同于精确亮屏时长；没有记录显示“未获取到”，未授权不影响 Level 0 基础报告。授权返回后自动刷新。
+
+本地及云端分析发送前会在后台重新采样。Root 电池和调度档案保留各自采样时间，需手动重读。API Key 在每次云端请求前检查本机保存期限；设置页显示当前版本和构建类型。
 
 ## 系统要求
 
@@ -107,7 +109,7 @@ macOS / Linux：
 Debug APK 默认输出到：
 
 ```text
-app/build/outputs/apk/debug/APA-v0.1.0.apk
+app/build/outputs/apk/debug/APA-v0.1.1-debug.apk
 ```
 
 ## 配置模型

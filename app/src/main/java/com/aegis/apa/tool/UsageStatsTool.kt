@@ -2,11 +2,13 @@ package com.aegis.apa.tool
 
 import android.app.AppOpsManager
 import android.app.usage.UsageStatsManager
+import android.app.usage.UsageEvents
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Process
-import java.time.LocalDate
+import java.time.Instant
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 data class UsageApp(
     val packageName: String,
@@ -17,8 +19,18 @@ data class UsageApp(
 data class UsageSummary(
     val accessGranted: Boolean,
     val foregroundTimeMillis: Long?,
-    val topApps: List<UsageApp>
-)
+    val topApps: List<UsageApp>,
+    val startTimeMillis: Long? = null,
+    val endTimeMillis: Long? = null,
+    val isPartial: Boolean = false
+) {
+    val rangeText: String? get() {
+        val start = startTimeMillis ?: return null
+        val end = endTimeMillis ?: return null
+        val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss XXX").withZone(ZoneId.systemDefault())
+        return "${formatter.format(Instant.ofEpochMilli(start))} 至 ${formatter.format(Instant.ofEpochMilli(end))}"
+    }
+}
 
 object UsageSummaryBuilder {
     fun from(
@@ -42,7 +54,7 @@ object UsageSummaryBuilder {
 
         return UsageSummary(
             accessGranted = true,
-            foregroundTimeMillis = apps.sumOf { it.foregroundTimeMillis },
+            foregroundTimeMillis = if (appDurationsMillis.isEmpty()) null else apps.sumOf { it.foregroundTimeMillis },
             topApps = apps.take(limit)
         )
     }
@@ -53,18 +65,46 @@ object UsageStatsTool {
         if (!hasUsageAccess(context)) return UsageSummary(false, null, emptyList())
 
         val usageStatsManager = context.getSystemService(UsageStatsManager::class.java)
-            ?: return UsageSummary(true, 0L, emptyList())
+            ?: return UsageSummary(true, null, emptyList())
         val now = System.currentTimeMillis()
-        val startOfToday = LocalDate.now()
-            .atStartOfDay(ZoneId.systemDefault())
+        val zone = ZoneId.systemDefault()
+        val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+        val startOfToday = today.atStartOfDay(zone)
             .toInstant()
             .toEpochMilli()
-        val stats = usageStatsManager.queryAndAggregateUsageStats(startOfToday, now)
-        val durations = stats.mapValues { it.value.totalTimeInForeground }
-        val labels = durations.keys.associateWith { packageName ->
-            resolveLabel(context.packageManager, packageName)
+        // Read yesterday as well to recover observed sessions that cross midnight.
+        // Missing history is never replaced by the aggregate API's wider time buckets.
+        val lookback = today.minusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        return try {
+            val events = usageStatsManager.queryEvents(lookback, now)
+                ?: return UsageSummary(true, null, emptyList(), startOfToday, now)
+            val records = mutableListOf<UsageEventRecord>()
+            val event = UsageEvents.Event()
+            while (events.hasNextEvent()) {
+                if (!events.getNextEvent(event)) break
+                val kind = when (event.eventType) {
+                    UsageEvents.Event.ACTIVITY_RESUMED -> UsageEventKind.RESUME
+                    UsageEvents.Event.ACTIVITY_PAUSED -> UsageEventKind.PAUSE
+                    UsageEvents.Event.SCREEN_NON_INTERACTIVE,
+                    UsageEvents.Event.DEVICE_SHUTDOWN -> UsageEventKind.CLOSE_ALL
+                    UsageEvents.Event.DEVICE_STARTUP -> UsageEventKind.RESET
+                    else -> null
+                } ?: continue
+                records += UsageEventRecord(event.packageName.orEmpty(), event.className.orEmpty(), event.timeStamp, kind)
+            }
+            val result = UsageEventDurations.calculate(records, startOfToday, now)
+            val labels = result.durations.keys.associateWith { packageName ->
+                resolveLabel(context.packageManager, packageName)
+            }
+            if (!hasUsageAccess(context)) return UsageSummary(false, null, emptyList())
+            UsageSummaryBuilder.from(true, result.durations, labels).copy(
+                startTimeMillis = startOfToday, endTimeMillis = now, isPartial = result.isPartial
+            )
+        } catch (_: SecurityException) {
+            UsageSummary(hasUsageAccess(context), null, emptyList(), startOfToday, now)
+        } catch (_: RuntimeException) {
+            UsageSummary(true, null, emptyList(), startOfToday, now)
         }
-        return UsageSummaryBuilder.from(true, durations, labels)
     }
 
     fun hasUsageAccess(context: Context): Boolean {

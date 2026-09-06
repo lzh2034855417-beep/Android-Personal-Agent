@@ -33,10 +33,14 @@ data class DeviceProfileSnapshot(
     val cpuPolicies: List<CpuPolicyProfile>,
     val thermalSensors: List<ThermalSensorProfile>,
     val access: DeviceProfileAccess,
-    val error: String? = null
+    val error: String? = null,
+    val sampledAt: String = java.time.ZonedDateTime.now().format(
+        java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss XXX")
+    )
 ) {
     fun toReportText(): String = buildString {
         appendLine("调度档案：只读")
+        appendLine("档案采样时间：$sampledAt（需手动重读）")
         appendLine("当前模式：V8 原厂调度（未修改系统）")
         appendLine(
             "读取权限：${if (access == DeviceProfileAccess.ROOT) "Root 只读" else "标准权限"}"

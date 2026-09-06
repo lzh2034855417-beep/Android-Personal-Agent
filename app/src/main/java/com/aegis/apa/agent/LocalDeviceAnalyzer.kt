@@ -6,7 +6,9 @@ object LocalDeviceAnalyzer {
         val ramRatio = context.availableRamBytes.toDouble() / context.totalRamBytes
         val storageRatio = context.availableStorageBytes.toDouble() / context.totalStorageBytes
 
-        if (context.batteryLevel <= 20) {
+        if (context.batteryLevel == null) {
+            findings += "电量未获取到，暂不判断电池状态。"
+        } else if (context.batteryLevel <= 20) {
             findings += "电量低于 20%，建议及时充电。"
         } else {
             findings += "当前电量处于可用范围。"

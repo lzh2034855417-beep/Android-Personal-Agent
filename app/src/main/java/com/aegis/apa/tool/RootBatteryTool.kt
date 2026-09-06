@@ -9,7 +9,10 @@ data class RootBatteryInfo(
     val currentMilliAmp: Long?,
     val voltageMilliVolt: Long?,
     val temperatureCelsius: Double?,
-    val error: String? = null
+    val error: String? = null,
+    val sampledAt: String = java.time.ZonedDateTime.now().format(
+        java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss XXX")
+    )
 )
 
 object RootBatteryTool {

@@ -45,7 +45,7 @@ object Level0ReportBuilder {
         appendLine()
 
         appendLine("【电池即时状态】")
-        appendLine("当前电量：${batteryInfo.level}%")
+        appendLine("当前电量：${batteryInfo.levelText}")
         appendLine("充电状态：${batteryInfo.status}")
         appendLine("瞬时电流：${batteryInfo.currentMilliAmp?.let { "$it mA" } ?: "设备未提供"}")
         appendLine("剩余电量：${batteryInfo.remainingMilliAmpHour?.let { "$it mAh" } ?: "设备未提供"}")
@@ -60,12 +60,14 @@ object Level0ReportBuilder {
         appendLine()
 
         appendLine("【可选使用习惯】")
+        usageSummary.rangeText?.let { appendLine("统计范围：$it") }
+        if (usageSummary.isPartial) appendLine("数据限制：部分前后台事件缺失，时长可能偏低。")
         if (!usageSummary.accessGranted) {
             appendLine("未授权，不影响基础报告。")
             appendLine("如需汇总当天应用前台使用时长，请在系统设置中为 APA 开启“使用情况访问权限”。")
         } else {
             appendLine("当天应用前台使用时长合计：${usageSummary.foregroundTimeMillis?.let(::formatDuration) ?: "设备未提供"}")
-            appendLine("说明：这是系统的应用前台使用统计，不等同于精确亮屏时长，也不能推断应用内容或后台行为。")
+            appendLine("说明：这是按系统前后台事件估算的应用前台时长，记录可能缺失或延迟；多窗口应用的时长可能重叠，不等同于精确亮屏时长，也不能推断应用内容或后台行为。")
             if (usageSummary.topApps.isEmpty()) {
                 appendLine("前台使用排行：设备未提供")
             } else {
