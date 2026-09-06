@@ -12,6 +12,12 @@ val signingPropertiesFile = rootProject.file("keystore.properties")
 if (signingPropertiesFile.isFile) {
     signingPropertiesFile.inputStream().use(signingProperties::load)
 }
+val hasReleaseSigningProperties = signingPropertiesFile.isFile && signingProperties.getProperty("storeFile") != null
+val requestedReleaseTask = gradle.startParameter.taskNames.any { it.contains("release", ignoreCase = true) }
+
+if (requestedReleaseTask && !hasReleaseSigningProperties) {
+    throw GradleException("Release signing requires a local keystore.properties file")
+}
 
 android {
     namespace = "com.aegis.apa"
@@ -33,13 +39,13 @@ android {
 
     buildTypes {
         release {
-            val storeFilePath = signingProperties.getProperty("storeFile")
-                ?: throw GradleException("Release signing requires a local keystore.properties file")
-            signingConfig = signingConfigs.create("release") {
-                storeFile = file(storeFilePath)
-                storePassword = signingProperties.getProperty("storePassword")
-                keyAlias = signingProperties.getProperty("keyAlias")
-                keyPassword = signingProperties.getProperty("keyPassword")
+            signingProperties.getProperty("storeFile")?.let { storeFilePath ->
+                signingConfig = signingConfigs.create("release") {
+                    storeFile = file(storeFilePath)
+                    storePassword = signingProperties.getProperty("storePassword")
+                    keyAlias = signingProperties.getProperty("keyAlias")
+                    keyPassword = signingProperties.getProperty("keyPassword")
+                }
             }
             optimization {
                 enable = false
