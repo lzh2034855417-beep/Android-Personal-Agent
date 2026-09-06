@@ -1073,6 +1073,7 @@ fun AgentChatScreen(
     var isReportPickerExpanded by remember { mutableStateOf(false) }
     var userMessage by remember { mutableStateOf("") }
     val chatScrollState = rememberScrollState()
+    val colors = androidx.compose.material3.MaterialTheme.colorScheme
     val attachedReportLabel = listOfNotNull(
         selectedLevel.replace("Level ", "L"),
         "应用".takeIf { includeAppReport },
@@ -1088,25 +1089,32 @@ fun AgentChatScreen(
         modifier = modifier.fillMaxSize().imePadding(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Row(
+        androidx.compose.material3.Card(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            colors = androidx.compose.material3.CardDefaults.cardColors(
+                containerColor = colors.surfaceContainerHigh
+            )
         ) {
-            Text(text = "APA Agent · $providerLabel")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "清空",
-                    modifier = Modifier
-                        .clickable(enabled = messages.isNotEmpty() && !isOnlineAnalyzing) {
-                            onClearConversation()
-                        }
-                        .padding(8.dp)
-                )
-                Text(
-                    text = "设置",
-                    modifier = Modifier.clickable(onClick = onOpenSettings).padding(8.dp)
-                )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(text = "APA Agent", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = "$providerLabel · ${if (CloudProviderCatalog.find(ApiSession.provider) != null) "已配置" else "本地分析"}",
+                        color = colors.primary,
+                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(
+                        onClick = onClearConversation,
+                        enabled = messages.isNotEmpty() && !isOnlineAnalyzing
+                    ) { Text("清空") }
+                    TextButton(onClick = onOpenSettings) { Text("设置") }
+                }
             }
         }
 
@@ -1118,15 +1126,21 @@ fun AgentChatScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             if (messages.isEmpty()) {
-                Row(
+                androidx.compose.material3.Card(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Start
+                    colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = colors.surfaceContainerHigh)
                 ) {
-                    Card(modifier = Modifier.fillMaxWidth(0.9f)) {
-                        Text(
-                            text = "选择报告并输入问题，我会只根据本次附带的数据回答。",
-                            modifier = Modifier.padding(12.dp)
-                        )
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text("今天想了解手机什么？", style = androidx.compose.material3.MaterialTheme.typography.titleLarge)
+                        Text("选择报告并提问；我只会根据本次附带的数据回答。", color = colors.onSurfaceVariant)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf("电池是否该换？", "为什么发热？", "今天耗电快吗？").forEach { question ->
+                                TextButton(onClick = { userMessage = question }) { Text(question) }
+                            }
+                        }
                     }
                 }
             }
@@ -1140,17 +1154,22 @@ fun AgentChatScreen(
                         Arrangement.Start
                     }
                 ) {
-                    Card(modifier = Modifier.fillMaxWidth(0.9f)) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(0.9f),
+                        colors = androidx.compose.material3.CardDefaults.cardColors(
+                            containerColor = if (message.role == "user") colors.primaryContainer else colors.surfaceContainer
+                        )
+                    ) {
                         Column(
                             modifier = Modifier.padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Text(text = message.content)
                             message.attachedReportLabel?.let { label ->
-                                Text(text = "已附带：$label")
+                                Text(text = "本次分析 · $label", color = colors.primary, style = androidx.compose.material3.MaterialTheme.typography.labelMedium)
                             }
                             message.source?.let { source ->
-                                Text(text = source)
+                                Text(text = source, color = colors.onSurfaceVariant, style = androidx.compose.material3.MaterialTheme.typography.labelSmall)
                             }
                         }
                     }
@@ -1170,7 +1189,10 @@ fun AgentChatScreen(
 
         }
 
-        Card(modifier = Modifier.fillMaxWidth()) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = colors.surfaceContainerHigh)
+        ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1179,8 +1201,11 @@ fun AgentChatScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(text = "报告  $attachedReportLabel")
-                Text(text = if (isReportPickerExpanded) "▲" else "▼")
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(text = "本次分析", style = androidx.compose.material3.MaterialTheme.typography.titleSmall)
+                    Text(text = attachedReportLabel, color = colors.primary, style = androidx.compose.material3.MaterialTheme.typography.labelMedium)
+                }
+                Text(text = if (isReportPickerExpanded) "收起" else "选择报告", color = colors.primary)
             }
         }
         if (isReportPickerExpanded) {
@@ -1198,7 +1223,7 @@ fun AgentChatScreen(
                         }
                     }
                 }
-                Text(text = "附加报告（可多选）")
+                Text(text = "附加报告（可多选）", color = colors.onSurfaceVariant)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1228,7 +1253,10 @@ fun AgentChatScreen(
                     Text(text = "Scene 导入：$error")
                 }
                 sceneReport?.let { report ->
-                    Card(modifier = Modifier.fillMaxWidth()) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = colors.surfaceContainer)
+                    ) {
                         Column(modifier = Modifier.padding(12.dp)) {
                             Text(text = report)
                             TextButton(onClick = onRemoveScene) { Text("移除导入文件") }
@@ -1237,40 +1265,45 @@ fun AgentChatScreen(
                 }
             }
         }
-        Row(
+        Card(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+            colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = colors.surfaceContainerHigh)
         ) {
-            OutlinedTextField(
-                value = userMessage,
-                onValueChange = { userMessage = it },
-                label = { Text(text = "输入消息") },
-                modifier = Modifier.weight(1f),
-                enabled = !isOnlineAnalyzing,
-                maxLines = 4
-            )
-            Button(
-                onClick = {
-                    val message = userMessage.trim()
-                    if (message.isNotEmpty()) {
-                        userMessage = ""
-                        if (CloudProviderCatalog.find(ApiSession.provider) != null && ApiSession.apiKey.isNotBlank()) {
-                            onOnlineAnalyze(
-                                message,
-                                selectedLevel,
-                                includeAppReport,
-                                includeSceneReport,
-                                attachedReportLabel
-                            )
-                        } else {
-                            onAnalyze(message, attachedReportLabel, sceneReport.takeIf { includeSceneReport })
-                        }
-                    }
-                },
-                enabled = userMessage.isNotBlank() && !isOnlineAnalyzing
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(text = "发送")
+                OutlinedTextField(
+                    value = userMessage,
+                    onValueChange = { userMessage = it },
+                    label = { Text(text = "问问你的设备…") },
+                    modifier = Modifier.weight(1f),
+                    enabled = !isOnlineAnalyzing,
+                    maxLines = 4
+                )
+                Button(
+                    onClick = {
+                        val message = userMessage.trim()
+                        if (message.isNotEmpty()) {
+                            userMessage = ""
+                            if (CloudProviderCatalog.find(ApiSession.provider) != null && ApiSession.apiKey.isNotBlank()) {
+                                onOnlineAnalyze(
+                                    message,
+                                    selectedLevel,
+                                    includeAppReport,
+                                    includeSceneReport,
+                                    attachedReportLabel
+                                )
+                            } else {
+                                onAnalyze(message, attachedReportLabel, sceneReport.takeIf { includeSceneReport })
+                            }
+                        }
+                    },
+                    enabled = userMessage.isNotBlank() && !isOnlineAnalyzing
+                ) {
+                    Text(text = if (isOnlineAnalyzing) "分析中" else "发送")
+                }
             }
         }
     }
