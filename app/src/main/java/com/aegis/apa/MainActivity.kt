@@ -3,8 +3,10 @@ package com.aegis.apa
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -88,6 +90,8 @@ import com.aegis.apa.tool.RootStatus
 import com.aegis.apa.tool.RootTool
 import com.aegis.apa.tool.RootBatteryInfo
 import com.aegis.apa.tool.RootBatteryTool
+import com.aegis.apa.tool.SceneCsvParser
+import com.aegis.apa.tool.SceneReportBuilder
 import com.aegis.apa.tool.StorageInfo
 import com.aegis.apa.tool.StorageTool
 import com.aegis.apa.tool.UsageStatsTool
@@ -158,6 +162,41 @@ class MainActivity : ComponentActivity() {
                 var isDeviceProfileReading by remember { mutableStateOf(false) }
                 var chatMessages by remember { mutableStateOf<List<AgentConversationMessage>>(emptyList()) }
                 var isOnlineAnalyzing by remember { mutableStateOf(false) }
+                var sceneReport by remember { mutableStateOf<String?>(null) }
+                var sceneImportStatus by remember { mutableStateOf<String?>(null) }
+                var sceneImportError by remember { mutableStateOf<String?>(null) }
+                val sceneReportPicker = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.OpenDocument()
+                ) { uri ->
+                    if (uri != null) {
+                        scope.launch {
+                            val imported = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    val text = contentResolver.openInputStream(uri)
+                                        ?.bufferedReader(Charsets.UTF_8)
+                                        ?.use { it.readText() }
+                                        ?: error("无法读取所选文件。")
+                                    SceneCsvParser.parse(text)
+                                }
+                            }
+                            imported.onSuccess { result ->
+                                if (result.error == null) {
+                                    sceneReport = SceneReportBuilder.build(result)
+                                    sceneImportStatus = "已导入 ${result.samples.size} 条样本"
+                                    sceneImportError = null
+                                } else {
+                                    sceneReport = null
+                                    sceneImportStatus = null
+                                    sceneImportError = result.error
+                                }
+                            }.onFailure {
+                                sceneReport = null
+                                sceneImportStatus = null
+                                sceneImportError = "导入失败，请确认文件为 UTF-8 CSV 后重试。"
+                            }
+                        }
+                    }
+                }
                 val currentSnapshot = snapshot
                 if (currentSnapshot == null) {
                     Column(modifier = Modifier.fillMaxSize().padding(32.dp)) {
@@ -294,7 +333,7 @@ class MainActivity : ComponentActivity() {
                             )
                             3 -> AgentChatScreen(
                                 messages = chatMessages,
-                                onAnalyze = { question, attachedReportLabel ->
+                                onAnalyze = { question, attachedReportLabel, attachedSceneReport ->
                                     chatMessages = chatMessages + AgentConversationMessage(
                                         role = "user", content = question, attachedReportLabel = attachedReportLabel
                                     )
@@ -305,7 +344,15 @@ class MainActivity : ComponentActivity() {
                                             val report = LocalDeviceAnalyzer.analyze(fresh.toDeviceContext())
                                             chatMessages = chatMessages + AgentConversationMessage(
                                                 role = "assistant",
-                                                content = "采样时间：${fresh.sampledAt}\n${report.toChatContent()}",
+                                                content = buildString {
+                                                    appendLine("采样时间：${fresh.sampledAt}")
+                                                    append(report.toChatContent())
+                                                    attachedSceneReport?.let {
+                                                        appendLine()
+                                                        appendLine()
+                                                        append(it)
+                                                    }
+                                                },
                                                 source = report.source
                                             )
                                         } catch (cancelled: CancellationException) {
@@ -361,6 +408,15 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onClearConversation = { chatMessages = emptyList() },
                                 onOpenSettings = { selectedPage = 4 },
+                                sceneImportStatus = sceneImportStatus,
+                                sceneImportError = sceneImportError,
+                                sceneReport = sceneReport,
+                                onImportScene = { sceneReportPicker.launch(arrayOf("text/csv", "text/plain")) },
+                                onRemoveScene = {
+                                    sceneReport = null
+                                    sceneImportStatus = null
+                                    sceneImportError = null
+                                },
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 16.dp)
                             )
                                 else -> SettingsPrivacyScreen(modifier = Modifier.padding(24.dp))
@@ -999,11 +1055,16 @@ fun CapabilitySectionsScreen(
 @Composable
 fun AgentChatScreen(
     messages: List<AgentConversationMessage>,
-    onAnalyze: (String, String) -> Unit,
+    onAnalyze: (String, String, String?) -> Unit,
     isOnlineAnalyzing: Boolean,
     onOnlineAnalyze: (String, String, Boolean, Boolean, String) -> Unit,
     onClearConversation: () -> Unit,
     onOpenSettings: () -> Unit,
+    sceneImportStatus: String?,
+    sceneImportError: String?,
+    sceneReport: String?,
+    onImportScene: () -> Unit,
+    onRemoveScene: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var selectedLevel by remember { mutableStateOf("Level 0") }
@@ -1015,7 +1076,7 @@ fun AgentChatScreen(
     val attachedReportLabel = listOfNotNull(
         selectedLevel.replace("Level ", "L"),
         "应用".takeIf { includeAppReport },
-        "Scene".takeIf { includeSceneReport }
+        "Scene".takeIf { includeSceneReport && sceneReport != null }
     ).joinToString(" · ")
     val providerLabel = CloudProviderCatalog.find(ApiSession.provider)?.shortLabel ?: "未配置模型"
 
@@ -1148,14 +1209,30 @@ fun AgentChatScreen(
                     ) {
                         Text(text = if (includeAppReport) "● 应用报告" else "应用报告")
                     }
-                    Button(
-                        onClick = {},
-                        enabled = false,
-                        modifier = Modifier.weight(1f)
-                    ) {
+                    Button(onClick = {
+                        if (sceneReport == null) onImportScene() else includeSceneReport = !includeSceneReport
+                    }, modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Scene 续航（开发中）"
+                            text = when {
+                                sceneReport == null -> "导入 Scene CSV"
+                                includeSceneReport -> "● Scene 摘要"
+                                else -> "Scene 摘要"
+                            }
                         )
+                    }
+                }
+                sceneImportStatus?.let { status ->
+                    Text(text = "$status · 仅在本机解析")
+                }
+                sceneImportError?.let { error ->
+                    Text(text = "Scene 导入：$error")
+                }
+                sceneReport?.let { report ->
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(text = report)
+                            TextButton(onClick = onRemoveScene) { Text("移除导入文件") }
+                        }
                     }
                 }
             }
@@ -1187,7 +1264,7 @@ fun AgentChatScreen(
                                 attachedReportLabel
                             )
                         } else {
-                            onAnalyze(message, attachedReportLabel)
+                            onAnalyze(message, attachedReportLabel, sceneReport.takeIf { includeSceneReport })
                         }
                     }
                 },

@@ -125,7 +125,8 @@ Each provider uses an independent key. Switching providers does not reuse anothe
 ## Known Limitations
 
 - Level 1 does not yet use the real Shizuku Binder permission or system APIs.
-- The Scene one-day battery report currently has a selection entry but no file import or parser.
+- Scene CSV import recognizes common Chinese and English columns for time, battery level, temperature, current, power, and foreground apps; exports from different Scene versions may not be fully recognized.
+- Imported Scene CSV files are parsed locally for local reports and are not sent automatically to a model service.
 - Conversation history is kept only in the current application process.
 - Cloud requests do not yet support streaming, cancellation, or automatic retry.
 - Application detection relies on known package names and Android package visibility.
@@ -142,7 +143,7 @@ APA's AI assessment is based only on the limited reports attached to the current
 ## Roadmap
 
 - Integrate real Shizuku service and permission states
-- Import and parse Scene one-day battery reports
+- Add Scene summaries as an optional online-model attachment after explicit user approval
 - Add streaming responses, stop generation, and regeneration
 - Persist and export conversation history
 - Expand automated tests and device coverage
