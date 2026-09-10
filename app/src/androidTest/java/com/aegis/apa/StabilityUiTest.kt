@@ -30,6 +30,64 @@ import org.junit.Test
 class StabilityUiTest {
     @get:Rule val rule = createAndroidComposeRule<MainActivity>()
 
+    @Test fun draftAndReportSelectionSurvivePageChangesAndRecreation() {
+        rule.waitUntil(15_000) { sampleLabel() != null }
+        rule.runOnUiThread {
+            val session = androidx.lifecycle.ViewModelProvider(rule.activity)[MainSessionViewModel::class.java]
+            session.sceneReport.value = "合成 Scene 摘要：用于状态恢复测试"
+            session.sceneImportStatus.value = "已导入 2 条样本"
+        }
+        rule.onNodeWithText("Agent").performClick()
+        rule.onNodeWithText("选择报告").performClick()
+        rule.onNodeWithText("Level 2").performScrollTo().performClick()
+        rule.onNode(hasSetTextAction()).performTextInput("尚未发送的内测草稿")
+        Espresso.closeSoftKeyboard()
+        rule.onNodeWithText("能力").performClick()
+        rule.onNodeWithText("Agent").performClick()
+        rule.onNode(hasSetTextAction()).assertTextContains("尚未发送的内测草稿")
+        rule.onNodeWithText("● Level 2").performScrollTo().assertIsDisplayed()
+        rule.activityRule.scenario.recreate()
+        rule.onNode(hasSetTextAction()).assertTextContains("尚未发送的内测草稿")
+        rule.onNodeWithText("● Level 2").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("合成 Scene 摘要：用于状态恢复测试").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test fun recreationEndsPendingAnalysisWithoutReplayingIt() {
+        rule.waitUntil(15_000) { sampleLabel() != null }
+        rule.onNodeWithText("Agent").performClick()
+        rule.runOnUiThread {
+            // Model an in-flight request without making any network call.
+            val session = androidx.lifecycle.ViewModelProvider(rule.activity)[MainSessionViewModel::class.java]
+            session.beginAnalysis()
+        }
+        rule.activityRule.scenario.recreate()
+        rule.onNodeWithText("本次分析已中断，请重新发送。").assertExists()
+        rule.onNode(hasSetTextAction()).performTextInput("可以重试")
+        rule.onNodeWithText("发送").assertIsEnabled()
+        rule.activityRule.scenario.recreate()
+        assertTrue(rule.onAllNodes(hasText("本次分析已中断，请重新发送。"))
+            .fetchSemanticsNodes().size == 1)
+    }
+
+    @Test fun localConversationSurvivesRecreationAndClearStaysCleared() {
+        rule.waitUntil(15_000) { sampleLabel() != null }
+        rule.runOnUiThread { ApiSession.update(null) }
+        rule.onNodeWithText("Agent").performClick()
+        rule.onNode(hasSetTextAction()).performTextInput("本地会话恢复测试")
+        rule.onNodeWithText("发送").performClick()
+        rule.waitUntil(15_000) {
+            rule.onAllNodes(hasText("LOCAL BASELINE", substring = true)).fetchSemanticsNodes().isNotEmpty()
+        }
+        Espresso.closeSoftKeyboard()
+        rule.activityRule.scenario.recreate()
+        rule.onNodeWithText("本地会话恢复测试").assertExists()
+        rule.onNodeWithText("LOCAL BASELINE", substring = true).assertExists()
+        rule.onNodeWithText("清空").performClick()
+        rule.activityRule.scenario.recreate()
+        rule.onNodeWithText("本地会话恢复测试").assertDoesNotExist()
+        rule.onNodeWithText("LOCAL BASELINE", substring = true).assertDoesNotExist()
+    }
+
     private fun sampleLabel(): String? = rule.onAllNodes(hasText("LAST SAMPLE", substring = true))
         .fetchSemanticsNodes().firstOrNull()?.config?.get(SemanticsProperties.Text)?.joinToString { it.text }
 

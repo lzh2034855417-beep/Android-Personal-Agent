@@ -47,7 +47,7 @@ App visibility can limit enumeration. Root readings retain separate timestamps a
 - Local messages, including Scene summaries, are excluded from cloud history. Switching providers does not forward another provider's history. Up to 12 eligible messages from the same provider can be included, potentially containing previous report details in answers.
 - Keys are encrypted per provider with Android Keystore AES/GCM and expire locally after seven days by default. This does not revoke the provider-issued key.
 - `allowBackup=false` is configured. Legacy cloud backup, Android 31+ cloud backup and device transfer explicitly exclude the credential preferences file. Actual OEM restore behavior remains unverified.
-- Conversations/imports live in memory and may be lost on Activity recreation; leaving Agent may also lose a draft.
+- An in-memory ViewModel retains Agent drafts, report selections, conversations and Scene summaries across page changes and configuration recreation. Pages retain their scroll positions. Finishing the activity or process death ends the session. Recreation interrupts an active analysis with a retry message; no automatic resend occurs. See TESTING for current device-validation coverage.
 
 Do not post keys, account details or unique device identifiers in issues, logs or screenshots. Treat model output as a limited explanation, not a repair verdict.
 

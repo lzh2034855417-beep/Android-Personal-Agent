@@ -114,6 +114,7 @@ import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalLayoutApi::class)
 class MainActivity : ComponentActivity() {
+    private val session by lazy { androidx.lifecycle.ViewModelProvider(this)[MainSessionViewModel::class.java] }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ApiSession.update(ApiKeyStore.load(this))
@@ -121,7 +122,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             AndroidPersonalAgentTheme {
                 var selectedPage by rememberSaveable { mutableIntStateOf(0) }
-                var snapshot by remember { mutableStateOf<DeviceSnapshot?>(null) }
+                var snapshot by session.snapshot
+                val pageStates = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
                 var isSnapshotRefreshing by remember { mutableStateOf(false) }
                 var snapshotError by remember { mutableStateOf<String?>(null) }
                 val scope = rememberCoroutineScope()
@@ -152,16 +154,19 @@ class MainActivity : ComponentActivity() {
                     if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) onRefresh()
                     onDispose { lifecycle.removeObserver(observer) }
                 }
-                var selectedAppDetails by remember { mutableStateOf<AppDetails?>(null) }
-                var rootBatteryInfo by remember { mutableStateOf<RootBatteryInfo?>(null) }
-                var isRootBatteryReading by remember { mutableStateOf(false) }
-                var deviceProfile by remember { mutableStateOf<DeviceProfileSnapshot?>(null) }
-                var isDeviceProfileReading by remember { mutableStateOf(false) }
-                var chatMessages by remember { mutableStateOf<List<AgentConversationMessage>>(emptyList()) }
-                var isOnlineAnalyzing by remember { mutableStateOf(false) }
-                var sceneReport by remember { mutableStateOf<String?>(null) }
-                var sceneImportStatus by remember { mutableStateOf<String?>(null) }
-                var sceneImportError by remember { mutableStateOf<String?>(null) }
+                var selectedAppDetails by session.selectedAppDetails
+                var rootBatteryInfo by session.rootBatteryInfo
+                var isRootBatteryReading by session.rootBatteryReading
+                var deviceProfile by session.deviceProfile
+                var isDeviceProfileReading by session.deviceProfileReading
+                var chatMessages by session.messages
+                var isOnlineAnalyzing by session.analyzing
+                var sceneReport by session.sceneReport
+                var sceneImportStatus by session.sceneImportStatus
+                var sceneImportError by session.sceneImportError
+                DisposableEffect(session) {
+                    onDispose { session.interruptAnalysis() }
+                }
                 val sceneReportPicker = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.OpenDocument()
                 ) { uri ->
@@ -237,6 +242,7 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier
                                 .fillMaxSize()
                         ) {
+                            pageStates.SaveableStateProvider(selectedPage) {
                             when (selectedPage) {
                             0 -> DeviceReportScreen(
                                 deviceInfo = currentSnapshot.deviceInfo,
@@ -311,17 +317,18 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier.padding(24.dp)
                             )
                             3 -> AgentChatScreen(
+                                state = session.agent,
                                 messages = chatMessages,
                                 onAnalyze = { question, attachedReportLabel, attachedSceneReport ->
                                     chatMessages = chatMessages + AgentConversationMessage(
                                         role = MessageRole.USER, content = question, attachedReportLabel = attachedReportLabel
                                     )
-                                    isOnlineAnalyzing = true
+                                    val generation = session.beginAnalysis()
                                     scope.launch {
                                         try {
                                             val fresh = refreshSnapshot()
                                             val report = LocalDeviceAnalyzer.analyze(fresh.toDeviceContext())
-                                            chatMessages = chatMessages + AgentConversationMessage(
+                                            session.appendAnalysisMessage(generation, AgentConversationMessage(
                                                 role = MessageRole.ASSISTANT,
                                                 content = buildString {
                                                     appendLine("采样时间：${fresh.sampledAt}")
@@ -333,14 +340,15 @@ class MainActivity : ComponentActivity() {
                                                     }
                                                 },
                                                 source = report.source
-                                            )
+                                            ))
                                         } catch (cancelled: CancellationException) {
+                                            session.interruptAnalysis(generation)
                                             throw cancelled
                                         } catch (_: Exception) {
-                                            chatMessages = chatMessages + AgentConversationMessage(
+                                            session.appendAnalysisMessage(generation, AgentConversationMessage(
                                                 role = MessageRole.ERROR, content = "设备数据刷新失败，请重试。", source = "LOCAL · ERROR"
-                                            )
-                                        } finally { isOnlineAnalyzing = false }
+                                            ))
+                                        } finally { session.finishAnalysis(generation) }
                                     }
                                 },
                                 isOnlineAnalyzing = isOnlineAnalyzing,
@@ -352,7 +360,7 @@ class MainActivity : ComponentActivity() {
                                     chatMessages = chatMessages + AgentConversationMessage(
                                         role = MessageRole.USER, content = question, attachedReportLabel = attachedReportLabel, cloudProvider = requestedProvider
                                     )
-                                    isOnlineAnalyzing = true
+                                    val generation = session.beginAnalysis(online = true)
                                     scope.launch {
                                         try {
                                             val requested = ApiSession.requireValid()
@@ -374,16 +382,17 @@ class MainActivity : ComponentActivity() {
                                                     credentials = credentials
                                                 )
                                             }
-                                            chatMessages = chatMessages + AgentConversationMessage(
+                                            session.appendAnalysisMessage(generation, AgentConversationMessage(
                                                 role = MessageRole.ASSISTANT, content = result.toChatContent(), source = result.source, cloudProvider = requestedProvider
-                                            )
+                                            ))
                                         } catch (cancelled: CancellationException) {
+                                            session.interruptAnalysis(generation)
                                             throw cancelled
                                         } catch (error: Exception) {
-                                            chatMessages = chatMessages + AgentConversationMessage(
+                                            session.appendAnalysisMessage(generation, AgentConversationMessage(
                                                 role = MessageRole.ERROR, content = AgentErrorMessage.from(error), source = "MODEL · ERROR"
-                                            )
-                                        } finally { isOnlineAnalyzing = false }
+                                            ))
+                                        } finally { session.finishAnalysis(generation) }
                                     }
                                 },
                                 onClearConversation = { chatMessages = emptyList() },
@@ -400,6 +409,7 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 16.dp)
                             )
                                 else -> SettingsPrivacyScreen(modifier = Modifier.padding(24.dp))
+                            }
                             }
 
                         }
@@ -1037,6 +1047,7 @@ fun CapabilitySectionsScreen(
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun AgentChatScreen(
+    state: AgentPageState,
     messages: List<AgentConversationMessage>,
     onAnalyze: (String, String, String?) -> Unit,
     isOnlineAnalyzing: Boolean,
@@ -1050,12 +1061,12 @@ fun AgentChatScreen(
     onRemoveScene: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var selectedLevel by remember { mutableStateOf("Level 0") }
-    var includeUsageReport by remember { mutableStateOf(false) }
-    var includeAppReport by remember { mutableStateOf(false) }
-    var includeSceneReport by remember { mutableStateOf(false) }
-    var isReportPickerExpanded by remember { mutableStateOf(false) }
-    var userMessage by remember { mutableStateOf("") }
+    var selectedLevel by state.selectedLevel
+    var includeUsageReport by state.includeUsageReport
+    var includeAppReport by state.includeAppReport
+    var includeSceneReport by state.includeSceneReport
+    var isReportPickerExpanded by state.reportPickerExpanded
+    var userMessage by state.draft
     val chatScrollState = rememberScrollState()
     val colors = androidx.compose.material3.MaterialTheme.colorScheme
     val attachedReportLabel = listOfNotNull(
@@ -1066,8 +1077,11 @@ fun AgentChatScreen(
     ).joinToString(" · ")
     val providerLabel = CloudProviderCatalog.find(ApiSession.provider)?.shortLabel ?: "未配置模型"
 
-    LaunchedEffect(messages.size, isOnlineAnalyzing) {
-        chatScrollState.animateScrollTo(chatScrollState.maxValue)
+    LaunchedEffect(messages.size) {
+        if (state.lastAutoScrollMessageCount != messages.size) {
+            state.lastAutoScrollMessageCount = messages.size
+            chatScrollState.animateScrollTo(chatScrollState.maxValue)
+        }
     }
 
     Column(
@@ -1316,8 +1330,9 @@ fun SettingsPrivacyScreen(modifier: Modifier = Modifier) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val initiallyStoredApiKey = remember { ApiKeyStore.load(context) }
     var provider by rememberSaveable { mutableStateOf(initiallyStoredApiKey?.provider ?: "OpenAI · GPT") }
-    var apiKey by remember { mutableStateOf(initiallyStoredApiKey?.apiKey ?: "") }
-    var storedApiKey by remember { mutableStateOf(initiallyStoredApiKey) }
+    val selectedStoredApiKey = remember(provider) { ApiKeyStore.load(context, provider) }
+    var apiKey by remember(provider) { mutableStateOf(selectedStoredApiKey?.apiKey.orEmpty()) }
+    var storedApiKey by remember(provider) { mutableStateOf(selectedStoredApiKey) }
     var isApiKeyFocused by remember { mutableStateOf(false) }
     val apiKeyBringIntoViewRequester = remember { BringIntoViewRequester() }
     val privacyNoticeColor by animateColorAsState(
@@ -1347,8 +1362,6 @@ fun SettingsPrivacyScreen(modifier: Modifier = Modifier) {
             Button(
                 onClick = {
                     provider = option.name
-                    storedApiKey = ApiKeyStore.load(context, option.name)
-                    apiKey = storedApiKey?.apiKey.orEmpty()
                 }
             ) {
                 val selectedMark = if (provider == option.name) "● " else ""

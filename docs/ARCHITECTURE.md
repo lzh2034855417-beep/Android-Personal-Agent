@@ -8,7 +8,8 @@
 
 ```mermaid
 flowchart TD
-    UI[MainActivity / Compose 页面] --> Collect[tool Android 采集器]
+    UI[MainActivity / Compose 页面] --> Session[MainSessionViewModel 内存会话]
+    UI --> Collect[tool Android 采集器]
     Collect --> Model[model 设备身份与遥测快照]
     CSV[用户选择的 UTF-8 CSV] --> Limit[SceneCsvInput 大小和编码限制]
     Limit --> Parse[SceneCsvParser / SceneReportBuilder]
@@ -29,7 +30,8 @@ flowchart TD
 | `model/` | DeviceIdentifiers、DeviceIdentity、DeviceInfo、DeviceSnapshot、基础遥测 DTO、SampleTime | 不依赖 Android、UI 或采集器；原始标识与展示名分离 |
 | `tool/` | Android API、Usage Events、只读 shell、Scene 解析、离线名称库适配 | 返回模型/结构化结果；部分旧 Root/Scene DTO 与 formatter 尚在此包 |
 | `agent/` | 本地规则、报告文字、云端协议、凭据、历史策略 | 纯规则可 JVM 测试；网络 JSON 与 HTTP 尚未分离 |
-| `MainActivity.kt` | 导航、Compose 状态、刷新和请求编排、多个页面、部分报告组装 | 仍过大；没有 ViewModel；本轮只提取模型，不声称分层已彻底完成 |
+| `MainActivity.kt` | 导航、Compose 状态、刷新和请求编排、多个页面、部分报告组装 | 仍过大；会话状态已提取，采集/请求用例仍在 Activity，不声称分层已彻底完成 |
+| `MainSessionViewModel.kt` | 草稿、报告选择、对话、Scene、已读快照/档案；请求代次和中断状态 | 仅内存，不保存凭据，不持有 Activity；不是磁盘会话持久化 |
 | `QuickReportPanel.kt` | 本地卡片渲染、预览和显式分享 | Provider 只开放 cache/report-cards；缓存清理与 Android 实测待补 |
 | Gradle/Manifest | 版本、变体、签名边界、权限及导出组件 | Debug 独立包名；签名校验放到 Release 打包任务 |
 
@@ -51,7 +53,7 @@ flowchart TD
 
 ## 架构决策
 
-- **渐进提取**：本轮把基础领域模型从 Android 采集器移出；保留公开页面行为。下一步从 Activity 提取状态持有者和用例层，避免同时重写所有页面。
+- **渐进提取**：本轮把基础领域模型从 Android 采集器移出；保留公开页面行为。页面状态已提取到 ViewModel，SaveableStateHolder 按页面保留轻量展示状态；下一步提取用例层，避免同时重写所有页面。
 - **事实与推断分开**：原始机型标识不替换成商品名；名称来源不是硬件真实性证明；未获取读数不填零。
 - **默认本地历史**：新消息未标记云端服务商时，不能成为请求历史。服务商归属字段是边界，不能靠匹配“Scene”等正文关键字来过滤。
 - **不滥设外部 schema**：当前 DTO 仅用于内存，尚无持久化 JSON API。未来导出/存储要显式引入 schemaVersion 和迁移，不能直接序列化 Compose 状态或格式化报告文字。

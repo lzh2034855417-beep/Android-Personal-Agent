@@ -26,7 +26,7 @@
 | --- | --- | --- | --- |
 | TD-02 | P1（剩余兼容验证），已显式排除凭据云备份/迁移 | 部分系统的设备迁移行为未验证；凭据迁移边界不明确 | 打包规则契约测试已补；仍需 Android 26/31+ 及 OEM 实际恢复测试 |
 | TD-03 | P1，无仓库 CI 工作流，真机通过但启动需辅助 | 本轮 11/11 真机通过；仍缺独立无人干预运行和 PR 自动检查 | 每个 PR 跑 JVM/Lint/build；独立模拟器执行 UI 测试，保留报告，不使用发布 Key |
-| TD-05 | P2，MainActivity remember 对话/导入/草稿；离开 Agent 即销毁局部状态 | Activity 重建丢对话，页面切换丢草稿 | ViewModel 持有会话，SavedState 保存非敏感小状态；旋转/重建/往返测试；不把 Key 放 SavedState |
+| TD-05 | P2（设备验收待完成），会话状态已提升到 ViewModel | 草稿/选择/对话/Scene 已实现跨切页和配置重建保留；进程回收恢复尚未实现 | 运行新增切页/重建/清空/中断仪器测试；进程回收后的恢复另行设计；Key 不进入状态容器或 SavedState |
 | TD-06 | P2，MainActivity Root/档案 raw Thread；SystemProfileCommandRunner waitFor 后才读输出 | 生命周期脱离、异常漏捕；管道满可导致超时丢数据 | 可取消用例、并发排空有上限输出、finally 释放进程；拒绝/超时/大量输出/重建测试 |
 | TD-07 | P2，RootTool 只检测 KernelSU 原包；AppTool 检测 Next | 能力页与应用页不一致，启动管理器可能失败 | 共用包目录并返回实际安装包；Next-only 场景测试 |
 | TD-08 | P2，Manifest 无 launcher intent query；AppTool MATCH_ALL | Android 包可见性过滤可能低报可启动应用，标签提示也非可信身份 | 最小化 queries 配置；Android 11+ 已知安装集合实测；不可宣称全应用列表 |
