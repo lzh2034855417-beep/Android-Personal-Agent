@@ -66,6 +66,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import com.aegis.apa.agent.MessageRole
 import com.aegis.apa.agent.AgentReport
 import com.aegis.apa.agent.AgentConversationMessage
+import com.aegis.apa.agent.AgentFailure
+import com.aegis.apa.agent.AgentFailureException
 import com.aegis.apa.agent.AgentErrorMessage
 import com.aegis.apa.agent.CloudLlmProvider
 import com.aegis.apa.agent.CloudProviderCatalog
@@ -364,12 +366,11 @@ class MainActivity : ComponentActivity() {
                                     scope.launch {
                                         try {
                                             val requested = ApiSession.requireValid()
-                                            check(requested.provider == requestedProvider) { "模型服务已切换，请重新发送" }
+                                            if (requested.provider != requestedProvider) throw AgentFailureException(AgentFailure.PROVIDER_CHANGED)
                                             val fresh = refreshSnapshot()
                                             val result = withContext(Dispatchers.IO) {
-                                                val credentials = checkNotNull(ApiKeyStore.load(this@MainActivity, requested.provider)) {
-                                                    "API Key 已过期或无法读取，请在设置中重新保存"
-                                                }
+                                                val credentials = ApiKeyStore.load(this@MainActivity, requested.provider)
+                                                    ?: throw AgentFailureException(AgentFailure.EXPIRED_KEY)
                                                 CloudLlmProvider.analyze(
                                                     context = fresh.toDeviceContext(),
                                                     userQuestion = question,

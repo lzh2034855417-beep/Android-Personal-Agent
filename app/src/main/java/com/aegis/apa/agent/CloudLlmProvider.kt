@@ -65,11 +65,10 @@ object CloudLlmProvider {
         conversationHistory: List<AgentConversationMessage>,
         credentials: StoredApiKey
     ): AgentReport {
-        val config = requireNotNull(CloudProviderCatalog.find(credentials.provider)) {
-            "不支持的模型服务：${credentials.provider}"
-        }
-        require(credentials.apiKey.isNotBlank()) { "请先在设置中保存 ${config.shortLabel} API Key" }
-        require(userQuestion.isNotBlank()) { "问题不能为空" }
+        val config = CloudProviderCatalog.find(credentials.provider)
+            ?: throw AgentFailureException(AgentFailure.UNKNOWN_PROVIDER)
+        if (credentials.apiKey.isBlank()) throw AgentFailureException(AgentFailure.MISSING_KEY)
+        if (userQuestion.isBlank()) throw AgentFailureException(AgentFailure.EMPTY_QUESTION)
 
         val systemPrompt = AgentPromptPolicy.systemPrompt()
 
@@ -131,8 +130,8 @@ object CloudLlmProvider {
                 }
         }
 
-        check(credentials.expiresAt > System.currentTimeMillis()) {
-            "API Key 的本机保存期限已到，请在设置中重新保存"
+        if (credentials.expiresAt <= System.currentTimeMillis()) {
+            throw AgentFailureException(AgentFailure.EXPIRED_KEY)
         }
         val connection = (URL(config.endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
@@ -151,14 +150,12 @@ object CloudLlmProvider {
         try {
             connection.outputStream.bufferedWriter(Charsets.UTF_8).use { it.write(body.toString()) }
             val statusCode = connection.responseCode
-            val stream = if (statusCode in 200..299) connection.inputStream else connection.errorStream
-            val response = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
             if (statusCode !in 200..299) {
-                val providerMessage = runCatching {
-                    JSONObject(response).getJSONObject("error").optString("message")
-                }.getOrNull().orEmpty()
-                error("${config.shortLabel} 请求失败（$statusCode）：${providerMessage.ifBlank { "请检查 API Key、余额和网络" }}")
+                // Do not read or display untrusted error bodies: they may echo request data.
+                runCatching { connection.errorStream?.close() }
+                throw ModelHttpException(statusCode)
             }
+            val response = CloudResponseReader.read(connection.inputStream)
 
             val json = JSONObject(response)
             val content = if (config.protocol == "anthropic") {
@@ -178,12 +175,14 @@ object CloudLlmProvider {
                     .getJSONObject("message")
                     .optString("content")
             }
-            require(content.isNotBlank()) { "${config.shortLabel} 返回了空内容" }
+            if (content.isBlank()) throw AgentFailureException(AgentFailure.EMPTY_RESPONSE)
             return AgentReport(
                 summary = content,
                 findings = emptyList(),
                 source = "${config.shortLabel} · ${config.model}"
             )
+        } catch (_: org.json.JSONException) {
+            throw AgentFailureException(AgentFailure.INVALID_RESPONSE)
         } finally {
             connection.disconnect()
         }

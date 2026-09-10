@@ -8,10 +8,10 @@ object ApiSession {
     @Synchronized fun update(value: StoredApiKey?) { credential = value }
 
     @Synchronized fun requireValid(now: Long = System.currentTimeMillis()): StoredApiKey {
-        val value = checkNotNull(credential) { "请先在设置中保存 API Key" }
+        val value = credential ?: throw AgentFailureException(AgentFailure.MISSING_KEY)
         if (value.expiresAt <= now || value.apiKey.isBlank()) {
             credential = null
-            error("API Key 的本机保存期限已到，请在设置中重新保存")
+            throw AgentFailureException(AgentFailure.EXPIRED_KEY)
         }
         return value
     }

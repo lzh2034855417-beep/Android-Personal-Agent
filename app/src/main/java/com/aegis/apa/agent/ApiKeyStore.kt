@@ -15,7 +15,9 @@ data class StoredApiKey(
     val provider: String,
     val apiKey: String,
     val expiresAt: Long
-)
+) {
+    override fun toString(): String = "StoredApiKey(apiKey=<redacted>, expiresAt=$expiresAt)"
+}
 
 object ApiKeyStore {
     private const val PREFS_NAME = "apa_api_credentials"
