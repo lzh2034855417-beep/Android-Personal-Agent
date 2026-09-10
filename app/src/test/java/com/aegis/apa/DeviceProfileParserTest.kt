@@ -92,7 +92,9 @@ class DeviceProfileParserTest {
         val report = profile.toReportText()
 
         assertTrue(report.contains("只读"))
-        assertTrue(report.contains("V8 原厂调度"))
+        assertTrue(report.contains("APA 未修改系统调度"))
+        assertTrue(!report.contains("原厂调度"))
+        assertEquals("未获取到", profile.toChipSchedulingDetails().scheduler)
         assertTrue(report.contains("标准权限"))
         assertTrue(report.contains("CPU 策略：设备未提供"))
         assertTrue(report.contains("温度节点：设备未提供"))
@@ -116,7 +118,7 @@ class DeviceProfileParserTest {
         val details = profile.toChipSchedulingDetails()
 
         assertEquals("SM8850", details.chipset)
-        assertEquals("V8 原厂调度", details.scheduler)
+        assertEquals("schedutil / walt", details.scheduler)
         assertEquals("Root 只读", details.access)
         assertEquals("CPU 0-7", details.cpuTopology)
         assertEquals(

@@ -5,7 +5,6 @@ import com.aegis.apa.tool.BatteryReportText
 import com.aegis.apa.model.DeviceInfo
 import com.aegis.apa.model.DisplayInfo
 import com.aegis.apa.tool.DisplayReportText
-import com.aegis.apa.tool.HardwareExperienceGrade
 import com.aegis.apa.model.RamInfo
 import com.aegis.apa.model.StorageInfo
 import com.aegis.apa.model.UsageSummary
@@ -19,10 +18,10 @@ object Level0ReportBuilder {
         ramInfo: RamInfo,
         storageInfo: StorageInfo,
         usageSummary: UsageSummary,
-        hardwareGrade: HardwareExperienceGrade,
         securityPatch: String?,
         socName: String?,
-        supportedAbis: List<String>
+        supportedAbis: List<String>,
+        includeUsageReport: Boolean = false
     ): String = buildString {
         appendLine("【本次采样范围】")
         appendLine("采样时间：$sampledAt")
@@ -36,8 +35,6 @@ object Level0ReportBuilder {
         appendLine("安全补丁：${securityPatch.orUnavailable()}")
         appendLine("芯片：${socName.orUnavailable()}")
         appendLine("支持 ABI：${supportedAbis.takeIf { it.isNotEmpty() }?.joinToString() ?: "设备未提供"}")
-        appendLine("硬件等级：${hardwareGrade.label} · ${hardwareGrade.summary}")
-        hardwareGrade.reasons.forEach { appendLine("等级依据：$it") }
         appendLine()
 
         appendLine("【屏幕体验】")
@@ -60,6 +57,10 @@ object Level0ReportBuilder {
         appendLine()
 
         appendLine("【可选使用习惯】")
+        if (!includeUsageReport) {
+            appendLine("本次未选择，不发送使用习惯。")
+            return@buildString
+        }
         usageSummary.rangeText?.let { appendLine("统计范围：$it") }
         if (usageSummary.isPartial) appendLine("数据限制：部分前后台事件缺失，时长可能偏低。")
         if (!usageSummary.accessGranted) {

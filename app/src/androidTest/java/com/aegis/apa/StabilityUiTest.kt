@@ -14,6 +14,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performScrollTo
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.espresso.Espresso
@@ -78,13 +79,14 @@ class StabilityUiTest {
         rule.waitUntil(15_000) { sampleLabel() != null }
         rule.onNodeWithText("Agent").performClick()
         rule.onNodeWithText("选择报告").performClick()
-        rule.onNodeWithText("导入 Scene CSV").assertIsDisplayed().assertIsEnabled()
+        rule.onNodeWithText("导入 Scene CSV").performScrollTo().assertIsDisplayed().assertIsEnabled()
     }
 
     @Test fun keyboardKeepsComposerVisibleAndNavigationReturnsAfterBack() {
         rule.waitUntil(15_000) { sampleLabel() != null }
         rule.onNodeWithText("Agent").performClick()
         rule.onNodeWithText("能力").assertIsDisplayed()
+        rule.onNodeWithText("选择报告").performClick()
         val input = rule.onNode(hasSetTextAction())
         try {
             input.performClick()

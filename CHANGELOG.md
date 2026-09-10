@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### Release hardening
+
+- Level 0 不再混入高级芯片档案推导等级；使用习惯排行独立选择，默认不发送，报告选择区说明在线范围和历史限制。
+- 调度页面展示已读取 governor，缺失明确未知，移除未经验证的原厂调度结论。
+- 显式排除凭据偏好文件的云备份和设备迁移，新增打包 manifest/XML 契约测试；OEM 恢复仍待验证。
+- 展开报告区限高滚动，键盘回归同时检查展开状态下的输入框可见性和间距。
+
 ### Architecture and reliability
 
 - 将基础遥测 DTO 和 DeviceSnapshot 提取到纯 Kotlin model 包；设备名称保留原始标识与识别来源，修复跨厂商映射和缺失值识别。

@@ -42,7 +42,7 @@ data class DeviceProfileSnapshot(
     fun toReportText(): String = buildString {
         appendLine("调度档案：只读")
         appendLine("档案采样时间：$sampledAt（需手动重读）")
-        appendLine("当前模式：V8 原厂调度（未修改系统）")
+        appendLine("APA 未修改系统调度")
         appendLine(
             "读取权限：${if (access == DeviceProfileAccess.ROOT) "Root 只读" else "标准权限"}"
         )
@@ -94,7 +94,8 @@ data class ChipSchedulingDetails(
 
 fun DeviceProfileSnapshot.toChipSchedulingDetails(): ChipSchedulingDetails = ChipSchedulingDetails(
     chipset = soc ?: "未读取",
-    scheduler = "V8 原厂调度",
+    scheduler = cpuPolicies.mapNotNull { it.governor?.takeIf(String::isNotBlank) }.distinct()
+        .joinToString(" / ").ifEmpty { "未获取到" },
     access = if (access == DeviceProfileAccess.ROOT) "Root 只读" else "标准权限",
     cpuTopology = cpuPresent?.let { "CPU $it" } ?: "CPU 未读取",
     policySummaries = cpuPolicies.map { policy ->

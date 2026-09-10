@@ -43,10 +43,10 @@ App visibility can limit enumeration. Root readings retain separate timestamps a
 
 - Basic readings and visible apps are collected **locally on entry and Activity resume**. Usage events are read if Usage Access was granted. Collection and transmission selection are different boundaries.
 - Explicit online Send triggers a direct provider request with a basic snapshot, selected Level report and optional app report; there is no APA relay server.
-- Level 0 currently includes authorized usage summaries. Leaving the separate app-report toggle off does not exclude usage rankings; a granular preview/selection flow is pending.
+- Level 0 usage rankings have an independent send toggle, off by default. Granting Usage Access does not select transmission. The base report excludes grades derived from advanced profiles. The report picker explains transmission scope; historical answers may reference earlier data, and clearing the conversation removes that history.
 - Local messages, including Scene summaries, are excluded from cloud history. Switching providers does not forward another provider's history. Up to 12 eligible messages from the same provider can be included, potentially containing previous report details in answers.
 - Keys are encrypted per provider with Android Keystore AES/GCM and expire locally after seven days by default. This does not revoke the provider-issued key.
-- `allowBackup=false` is configured; explicit migration exclusions and restore tests remain outstanding. OEM migration behavior has not been comprehensively verified.
+- `allowBackup=false` is configured. Legacy cloud backup, Android 31+ cloud backup and device transfer explicitly exclude the credential preferences file. Actual OEM restore behavior remains unverified.
 - Conversations/imports live in memory and may be lost on Activity recreation; leaving Agent may also lose a draft.
 
 Do not post keys, account details or unique device identifiers in issues, logs or screenshots. Treat model output as a limited explanation, not a repair verdict.

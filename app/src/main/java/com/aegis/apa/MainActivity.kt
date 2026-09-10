@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
@@ -343,7 +344,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 },
                                 isOnlineAnalyzing = isOnlineAnalyzing,
-                                onOnlineAnalyze = { question, selectedLevel, includeAppReport, _, attachedReportLabel ->
+                                onOnlineAnalyze = { question, selectedLevel, includeAppReport, includeUsageReport, attachedReportLabel ->
                                     val previousMessages = chatMessages
                                     val requestedProvider = ApiSession.provider
                                     val attachedRootBattery = rootBatteryInfo
@@ -366,7 +367,7 @@ class MainActivity : ComponentActivity() {
                                                     userQuestion = question,
                                                     selectedLevel = selectedLevel,
                                                     levelReport = fresh.buildLevelReport(
-                                                        selectedLevel, attachedRootBattery, attachedDeviceProfile
+                                                        selectedLevel, attachedRootBattery, attachedDeviceProfile, includeUsageReport
                                                     ),
                                                     appReport = fresh.buildAppReport().takeIf { includeAppReport },
                                                     conversationHistory = previousMessages,
@@ -476,7 +477,8 @@ private fun AgentReport.toChatContent(): String = buildString {
 private fun DeviceSnapshot.buildLevelReport(
     selectedLevel: String,
     rootBatteryInfo: RootBatteryInfo?,
-    deviceProfile: DeviceProfileSnapshot?
+    deviceProfile: DeviceProfileSnapshot?,
+    includeUsageReport: Boolean = false
 ): String = when (selectedLevel) {
     "Level 0" -> Level0ReportBuilder.build(
         sampledAt = sampledAt,
@@ -486,11 +488,7 @@ private fun DeviceSnapshot.buildLevelReport(
         ramInfo = ramInfo,
         storageInfo = storageInfo,
         usageSummary = usageSummary,
-        hardwareGrade = HardwareExperienceEvaluator.evaluate(
-            totalRamBytes = ramInfo.totalBytes,
-            totalStorageBytes = storageInfo.totalBytes,
-            maxCpuFrequencyKhz = deviceProfile?.cpuPolicies?.mapNotNull { it.maxFrequencyKhz }?.maxOrNull()
-        ),
+        includeUsageReport = includeUsageReport,
         securityPatch = Build.VERSION.SECURITY_PATCH,
         socName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             listOf(Build.SOC_MANUFACTURER, Build.SOC_MODEL).filter { it.isNotBlank() }.joinToString(" ")
@@ -525,7 +523,7 @@ private fun DeviceSnapshot.buildLevelReport(
             }
         }
         if (deviceProfile == null) {
-            appendLine("调度档案：本次尚未读取；当前保持 V8 原厂调度")
+            appendLine("调度档案：本次尚未读取；APA 未修改系统调度")
         } else {
             appendLine()
             append(deviceProfile.toReportText())
@@ -672,7 +670,7 @@ fun DeviceReportScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "调度：${chipDetails?.scheduler ?: "V8 原厂调度"}",
+                        text = "调度：${chipDetails?.scheduler ?: "未读取"}",
                         modifier = Modifier.weight(1f)
                     )
                     TextButton(
@@ -1001,7 +999,7 @@ fun CapabilitySectionsScreen(
 
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(text = "调度实验 · 只读档案")
-                Text(text = "当前模式：V8 原厂调度")
+                Text(text = "APA 未修改系统调度")
                 Text(text = "只读取设备与CPU信息，不会修改频率、温控或线程亲和性。")
                 Button(
                     onClick = onReadDeviceProfile,
@@ -1036,6 +1034,7 @@ fun CapabilitySectionsScreen(
         }
     }
 }
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun AgentChatScreen(
     messages: List<AgentConversationMessage>,
@@ -1052,6 +1051,7 @@ fun AgentChatScreen(
     modifier: Modifier = Modifier
 ) {
     var selectedLevel by remember { mutableStateOf("Level 0") }
+    var includeUsageReport by remember { mutableStateOf(false) }
     var includeAppReport by remember { mutableStateOf(false) }
     var includeSceneReport by remember { mutableStateOf(false) }
     var isReportPickerExpanded by remember { mutableStateOf(false) }
@@ -1060,7 +1060,8 @@ fun AgentChatScreen(
     val colors = androidx.compose.material3.MaterialTheme.colorScheme
     val attachedReportLabel = listOfNotNull(
         selectedLevel.replace("Level ", "L"),
-        "应用".takeIf { includeAppReport },
+        "应用".takeIf { includeAppReport && ApiSession.apiKey.isNotBlank() },
+        "使用习惯".takeIf { includeUsageReport && selectedLevel == "Level 0" && ApiSession.apiKey.isNotBlank() },
         "Scene（仅本地）".takeIf { includeSceneReport && sceneReport != null && ApiSession.apiKey.isBlank() }
     ).joinToString(" · ")
     val providerLabel = CloudProviderCatalog.find(ApiSession.provider)?.shortLabel ?: "未配置模型"
@@ -1193,7 +1194,11 @@ fun AgentChatScreen(
             }
         }
         if (isReportPickerExpanded) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier.heightIn(max = if (WindowInsets.isImeVisible) 120.dp else 280.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1208,6 +1213,18 @@ fun AgentChatScreen(
                     }
                 }
                 Text(text = "附加报告（可多选）", color = colors.onSurfaceVariant)
+                if (ApiSession.apiKey.isNotBlank() && selectedLevel == "Level 0") {
+                    TextButton(onClick = { includeUsageReport = !includeUsageReport }) {
+                        Text(if (includeUsageReport) "● 发送使用习惯排行" else "发送使用习惯排行（默认关闭）")
+                    }
+                }
+                Text(
+                    text = if (ApiSession.apiKey.isNotBlank())
+                        "在线发送：问题、基础快照、所选报告及同一服务最近最多 12 条对话。历史回答可能引用之前的数据；可点清空移除。Scene 仅本地。"
+                    else "本地分析使用基础快照及选中的 Scene 摘要；其他报告暂不参与本地分析。",
+                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1276,7 +1293,7 @@ fun AgentChatScreen(
                                     message,
                                     selectedLevel,
                                     includeAppReport,
-                                    includeSceneReport,
+                                    includeUsageReport && selectedLevel == "Level 0",
                                     attachedReportLabel
                                 )
                             } else {
