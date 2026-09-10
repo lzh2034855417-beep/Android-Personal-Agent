@@ -5,6 +5,14 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class DevicePublicNameTest {
+    @Test fun curatedModelCannotOverrideAnotherManufacturer() {
+        assertEquals("Samsung · 系统型号 2509FPN0BC", publicDeviceName("Samsung", "2509FPN0BC"))
+    }
+
+    @Test fun missingSystemValuesAreNotRetailNames() {
+        assertEquals("Android 未识别机型", publicDeviceName("unknown", "unknown"))
+    }
+
     @Test
     fun resolvesCurrentXiaomiModelCodeToPublicRetailName() {
         assertEquals(

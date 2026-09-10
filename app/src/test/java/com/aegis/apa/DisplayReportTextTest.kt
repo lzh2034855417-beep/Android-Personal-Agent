@@ -1,6 +1,6 @@
 package com.aegis.apa
 
-import com.aegis.apa.tool.DisplayInfo
+import com.aegis.apa.model.DisplayInfo
 import com.aegis.apa.tool.DisplayReportText
 import org.junit.Assert.assertTrue
 import org.junit.Test

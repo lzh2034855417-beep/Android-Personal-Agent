@@ -1,6 +1,6 @@
 package com.aegis.apa
 
-import com.aegis.apa.tool.BatteryInfo
+import com.aegis.apa.model.BatteryInfo
 import com.aegis.apa.agent.QuickReport
 import org.junit.Assert.*
 import org.junit.Test

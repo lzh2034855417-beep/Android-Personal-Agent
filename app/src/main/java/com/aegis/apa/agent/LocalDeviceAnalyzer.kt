@@ -14,13 +14,17 @@ object LocalDeviceAnalyzer {
             findings += "当前电量处于可用范围。"
         }
 
-        if (ramRatio < 0.2) {
+        if (context.totalRamBytes <= 0 || context.availableRamBytes !in 0..context.totalRamBytes) {
+            findings += "RAM 未获取到有效读数，暂不判断。"
+        } else if (ramRatio < 0.2) {
             findings += "可用 RAM 较低，后台应用可能影响流畅度。"
         } else {
             findings += "RAM 可用空间正常。"
         }
 
-        if (storageRatio < 0.1) {
+        if (context.totalStorageBytes <= 0 || context.availableStorageBytes !in 0..context.totalStorageBytes) {
+            findings += "存储未获取到有效读数，暂不判断。"
+        } else if (storageRatio < 0.1) {
             findings += "存储空间不足 10%，建议清理大文件或不常用应用。"
         } else {
             findings += "存储空间充足。"

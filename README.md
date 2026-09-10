@@ -1,174 +1,82 @@
 # Android Personal Agent（APA）
 
-面向 Android 设备的开源个人 Agent 实验项目。
+用手机实际提供的数据，解释电池、发热和资源状态的 Android 开源实验项目。
 
-[中文](README.md) | [English](README_EN.md)
+[English](README_EN.md) · [路线图](ROADMAP.md) · [架构审计](docs/ARCHITECTURE.md) · [数据规范](docs/DATA_MODEL.md) · [技术债](docs/TECH_DEBT.md) · [测试](docs/TESTING.md)
 
-![Version](https://img.shields.io/badge/version-v0.1.1-blue)
-![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84)
-![License](https://img.shields.io/badge/license-MIT-yellow)
+> 当前源码版本号仍为 `0.1.1`，此工作分支包含未发布变更。下载版具体功能以 [GitHub Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases) 的对应标签为准。本轮没有发布新版本。
 
-> 当前公开版本：`v0.1.1`
->
-> APA 仍处于公开内测阶段。AI 输出仅供参考，不应作为维修、设备健康评估或系统修改的唯一依据。
+## 能做什么
 
-APA 会在用户明确选择数据范围后读取设备状态，并将报告交给本地分析器或用户配置的云端模型进行解释。项目强调用户知情、最小化数据发送和能力分级，不会在后台自动上传设备报告。
+- **免 Key 本地查看**：设备、屏幕、电池即时状态、内存和存储；本地规则解释与可预览的 PNG 分享卡片。
+- **设备识别**：保留系统型号，优先精确机型映射和离线名称库；展示名称来源，未知型号不猜商品名。
+- **Agent 对话**：自行配置模型服务 Key 后，主动发送问题与报告；没有 Key 时使用有限的本地规则。
+- **Scene CSV**：本机导入、解析采样区间摘要。目前不作为在线附件发送。
+- **分级能力**：普通 API 可独立使用；Usage Access、Shizuku、Root 均为可选项。
 
-## 作者的话
+APA 不会执行模型建议，也不修改系统调度、自动清理或刷机。单次快照不能判断真实电池寿命或确定是否该换电池。
 
-> 我是来自中国大陆的一名本科在读学生。APA 是一个纯粹由兴趣驱动的个人开源项目，希望借此探索 Android 系统能力与个人 Agent 的结合。项目仍很年轻，欢迎开发者、测试者和 Android 爱好者一起参与，让它逐步变得可靠、透明而实用。
+## 快速使用
 
-## 测试条件
+1. 安装 APK，打开“设备”查看本地数据，无需 Key 或 Root。
+2. 在“Agent”选择报告并提问。没有有效配置时，结果来自本地规则，不是云端大模型。
+3. 如需在线分析，进入“设置”，选择服务商，输入自己的 Key，点击“加密保存 7 天”，回到 Agent 主动发送。
+4. 分享本地报告时，先检查“预览分享卡片”，再选择分享应用。
 
-- Level 0：Android 8.0 或更高版本的普通 Android 设备
-- Level 1：安装并运行 Shizuku
-- Level 2：已通过 KernelSU、Magisk 等方案取得 Root 权限
+当前配置目录包含 DeepSeek、OpenAI、Anthropic、MiMo、Kimi；具体默认模型和接口见 [CloudProviderCatalog](app/src/main/java/com/aegis/apa/agent/CloudLlmProvider.kt)。默认字符串不保证账号可用，本轮未请求真实服务验证。
 
-能力等级代表可访问的数据范围，而不是设备性能或用户等级。Root 和 Shizuku 都不是使用 APA 的必要条件。
+### 导入 Scene
 
-> KernelSU 是 Root 管理方案，因此归入 Level 2；Level 1 对应 Shizuku。
+在 Scene 中取得 CSV 文件并保存到手机，再打开 **APA → Agent → 选择报告 → 导入 Scene CSV**。看到“已导入 × 条样本”后查看摘要。
 
-## 联系与协作
+支持 UTF-8 CSV（含 BOM），上限 2 MiB；时间、电量、温度、电流、功耗、前台应用的常见中英文列名。数值单位放表头，支持 mA/uA/A 和 mW/W 转换。不是所有 Scene 版本都已实测兼容；不支持截图、PDF 或带换行字段。可先使用[合成示例](docs/examples/scene-example.csv)核对格式，详见[数据规范](docs/DATA_MODEL.md)。
 
-问题反馈、功能建议和开发交流请优先使用本仓库的 **GitHub Issues**。欢迎 Android、Kotlin、系统工具和大模型应用方向的开发者提交 Issue 或 Pull Request。
+## 能力等级与限制
 
-请勿在 Issue、截图或日志中公开 API Key、手机号、QQ 号、设备序列号等敏感信息。目前不设置公开的私人 QQ 或 Telegram 联系方式，避免让个人社交账号与项目维护强绑定。
-
-## 当前能力
-
-- AI 可依据用户主动附带的设备与应用报告，对手机当前状态作出基础评价、说明依据并提供非强制性建议
-- 读取设备型号、Android 版本、电量、内存和存储信息
-- 检测常用 Root、框架和普通应用
-- 查看可启动应用及应用基础信息
-- 按 Level 0 / Level 1 / Level 2 选择发送给 Agent 的报告范围
-- Root 授权后读取部分底层电池数据
-- 实验性只读采集设备、SoC、内核、CPU 拓扑、频率策略和相关温度节点，不修改系统调度
-- 多轮 Agent 对话、报告附件标记和对话清空
-- 每家模型服务独立加密保存 API Key，有效期默认 7 天
-
-## 能力等级
-
-| 等级 | 数据来源 | 当前状态 |
+| 等级 | 当前实现 | 不代表什么 |
 | --- | --- | --- |
-| Level 0 | 普通 Android API | 已实现设备、屏幕、电池即时状态、内存、存储和应用基础信息；可选开启 Usage Access 汇总当天应用前台使用时长 |
-| Level 1 | Shizuku | 已实现安装检测与跳转；服务状态、授权状态及高级接口仍在开发 |
-| Level 2 | Root | 已实现 `su`、KernelSU/Magisk 检测、部分底层电池读取和只读调度档案采集 |
+| Level 0 | 普通 API 快照；可选 Usage Access 当天应用前台时长估算 | 不是专业健康检测；前台时长不是亮屏时间 |
+| Level 1 | Shizuku 安装检测和跳转 | 尚未连接 Binder 服务或取得高级能力 |
+| Level 2 | 已知 Root 线索、主动读取部分电池节点/CPU 档案 | 不保证所有机型兼容；检测到管理器不代表已授权 |
 
-Root 和 Shizuku 都不是运行 APA 的必要条件。没有高级权限时，Level 0 仍可独立使用。
+应用列表受系统包可见性限制。Root 报告需手动重读并保留独立采样时间。本地分析目前主要消费基础快照，选择高级等级不代表本地规则已分析所有附件。
 
-## 云端模型
+## 数据和隐私
 
-| 服务商 | 默认模型 | 接口 |
-| --- | --- | --- |
-| DeepSeek | `deepseek-v4-flash` | DeepSeek Chat Completions |
-| OpenAI | `gpt-5.6-terra` | OpenAI Chat Completions |
-| Anthropic | `claude-sonnet-5` | Anthropic Messages API |
-| Xiaomi MiMo | `mimo-v2.5` | MiMo OpenAI-compatible API |
-| Kimi | `kimi-k3` | Kimi 国内 Chat Completions |
+- 打开应用及 Activity 恢复时，**自动在本机采集/刷新**基础设备与可见应用数据；开启 Usage Access 后还读取使用事件。这与发送范围是两件事。
+- **点击在线发送**才请求所选模型服务；没有 APA 中转服务器。本次请求包含基础快照、所选 Level 报告和可选应用报告。
+- Level 0 目前包含已授权的使用习惯汇总，“未勾选应用报告”不等于没有使用排行。报告范围预览与更细开关属于发布前待办。
+- 本地消息（含 Scene 摘要）不进入在线历史；不同服务商之间不转发历史。同服务商最多携带最近 12 条允许发送的消息，可能包含之前回答中的数据。
+- Key 按服务商用 Android Keystore AES/GCM 加密保存，默认本机有效期 7 天；过期不等于撤销服务商签发的 Key。
+- `allowBackup=false` 已设置；细化系统迁移排除和恢复测试仍是技术债，不声称所有厂商迁移路径都已验证。
+- 当前对话及导入只在内存，Activity 重建也可能清空；切换 Agent 页面可能丢草稿。
 
-除 DeepSeek 外的服务商仍需要更多账户和机型参与公开内测。模型名称及服务可用性可能由服务商调整。
+请勿在 Issues、日志或截图中公开 Key、账号信息或唯一设备标识。模型输出仅供参考；涉及维修和系统修改需独立核实。
 
-## 隐私与安全
+## 开发与验证
 
-- 设备数据默认仅在本机读取。
-- 只有用户主动发送消息时，当前选择的报告才会发往所选模型服务商。
-- API Key 使用 Android Keystore 的 AES/GCM 加密后保存在本机。
-- 不同服务商的 Key 分开保存，默认 7 天后失效。
-- APA 禁止系统云备份，避免加密凭据文件进入设备备份。
-- 项目源码不包含开发者或测试者的 API Key。
-- APA 没有自建中转服务器，云端分析直接请求用户选择的模型服务商。
-
-使用云端模型意味着用户选择的报告内容会受对应服务商的隐私政策与数据处理条款约束。发送前请确认报告中不包含不希望上传的信息。
-“使用情况访问权限”完全可选。APA 读取今天及前一天的系统前后台事件，以处理跨零点会话，只汇总今天零点至采样时刻的时长。事件可能缺失或延迟，多窗口应用时长可能重叠，因此这是估算值，不等同于精确亮屏时长；没有记录显示“未获取到”，未授权不影响 Level 0 基础报告。授权返回后自动刷新。
-
-本地及云端分析发送前会在后台重新采样。Root 电池和调度档案保留各自采样时间，需手动重读。API Key 在每次云端请求前检查本机保存期限；设置页显示当前版本和构建类型。
-
-## 系统要求
-
-- Android 8.0（API 26）或更高版本
-- 网络权限仅用于用户主动发起的云端模型请求
-- Usage Access、Shizuku 和 Root 均为可选能力
-
-## 本地构建
-
-需要 Android Studio、Android SDK 以及项目兼容的 JDK。
-
-Windows：
+Android 8.0 / API 26+；当前 compile SDK 36.1、target SDK 36。Gradle/插件版本固定在仓库；使用可运行该 wrapper 的 Android Studio JBR/JDK（本地验证使用 Android Studio 自带 JBR），并安装对应 Android SDK。
 
 ```powershell
 $env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'
-.\gradlew.bat :app:assembleDebug
+$env:ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"
+.\gradlew.bat testDebugUnitTest lintDebug lintRelease assembleDebug assembleDebugAndroidTest
 ```
 
-macOS / Linux：
+macOS/Linux 使用 `./gradlew` 执行相同任务。首次构建需要下载依赖；仅在已有缓存时加 `--offline`。
 
-```bash
-./gradlew :app:assembleDebug
-```
+- Debug：`com.aegis.apa.preview` / APA Preview，APK：`app/build/outputs/apk/debug/APA-v0.1.1-debug.apk`。
+- Release：`com.aegis.apa` / APA。预览版和正式版可同时存在，数据互不合并。
+- Debug 构建和 Lint/单元测试不需要发布密钥。APK/AAB 正式打包要求本地完整签名配置，不能把 Key 提交到 Git。
+- 本地 `keystore.properties` 使用 `storeFile`、`storePassword`、`keyAlias`、`keyPassword`；可用 `-Papa.signingProperties=本地文件` 指定替代配置，PowerShell 中整项加引号。相对 storeFile 按 app 模块目录解析。
+- 发布维护者运行 `assembleRelease`，必须另做版本递增、签名/校验值核验和设备测试；详见[测试说明](docs/TESTING.md)。
 
-Debug APK 默认输出到：
+## 项目状态与协作
 
-```text
-app/build/outputs/apk/debug/APA-v0.1.1-debug.apk
-```
+本项目由一名中国大陆本科生出于兴趣维护，欢迎 Android、Kotlin、系统工具及模型应用方向的贡献。问题与建议优先提交 [Issues](https://github.com/lzh2034855417-beep/Android-Personal-Agent/issues)。
 
-## 配置模型
+反馈请附品牌/型号、Android/API、构建类型与版本、权限状态、复现步骤、期望/实际结果和脱敏截图。改代码前阅读 [DATA_MODEL](docs/DATA_MODEL.md)，PR 附测试结果与未测限制。下一阶段优先关闭 [TECH_DEBT](docs/TECH_DEBT.md) 中 P1 项，再扩展 Shizuku、流式回答和持久化。
 
-1. 打开 APA 的“设置”页面。
-2. 选择模型服务商。
-3. 输入该服务商签发的 API Key。
-4. 点击“加密保存 7 天”。
-5. 回到 Agent 页面，选择本轮附带的报告并发送问题。
+## 许可证
 
-每家服务商使用独立 Key。切换服务商不会把上一家的 Key 当作当前服务商凭据。
-
-## 当前限制
-
-- Level 1 尚未接入真正的 Shizuku Binder 授权与系统接口。
-- Scene CSV 导入会按常见中英文列名识别时间、电量、温度、电流、功耗和前台应用；不同 Scene 版本的导出格式可能无法完全识别。
-- 导入的 Scene CSV 仅在本机解析并用于本地报告，不会自动发送给模型服务。
-- 对话记录只保存在当前应用进程中，重启后会清空。
-- 云端请求暂未提供流式输出、取消请求和自动重试。
-- 应用检测依赖已知包名与系统可见性，不保证覆盖所有修改版或隐藏版应用。
-- GitHub Releases 提供由 APA 发布密钥签名的 Release APK；安装前请核对发布页给出的 SHA-256。
-
-## 风险提示
-
-Root 操作可能导致系统异常、数据损坏或设备失去保修。APA 当前只读取有限的底层信息，不会自动执行清理、授权、修改系统设置等操作。请勿向来源不明的应用授予 Root 或 Shizuku 权限。
-
-AI 输出可能存在遗漏或错误。执行任何涉及 Root、系统组件、删除数据或电池维修的建议前，请进行独立验证。
-
-APA 的 AI 评价仅基于本次附带的有限报告，属于基础信息分析，不等同于专业检测、维修结论或长期设备健康诊断。
-
-## 路线图
-
-- 接入 Shizuku 服务状态、授权状态和实际能力
-- 在用户明确允许后，将 Scene 摘要作为在线模型分析的可选附件
-- 支持流式回答、停止生成和重新生成
-- 增加对话持久化与导出
-- 扩充自动化测试和内测机型覆盖
-
-## 参与测试
-
-提交问题时建议附上：
-
-- 手机品牌和型号
-- Android 版本及系统版本
-- 是否使用 KernelSU、Magisk、Shizuku 或 LSPosed
-- 复现步骤
-- 已隐藏个人信息的截图或错误文本
-
-请勿在 Issue、截图或日志中提交 API Key。
-
-## 参与开发
-
-1. Fork 本仓库。
-2. 从 `main` 创建功能分支。
-3. 保持修改范围清晰，并说明测试设备与验证结果。
-4. 提交 Pull Request。
-
-首次参与开源协作、不熟悉 GitHub 流程也没关系，可以先创建 Issue 描述想法。
-
-## License
-
-本项目采用 [MIT License](LICENSE)。
+[MIT](LICENSE)；第三方说明见 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md)。

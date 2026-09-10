@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### Architecture and reliability
+
+- 将基础遥测 DTO 和 DeviceSnapshot 提取到纯 Kotlin model 包；设备名称保留原始标识与识别来源，修复跨厂商映射和缺失值识别。
+- 采样时间使用 Instant，Root 循环计数改为 Long?，提取 Root 电池 parser 并校验无效读数。
+- Scene 导入限制为 2 MiB UTF-8，明确数值/单位/列结构，充电夹杂区间不再推断持续放电速率。
+- 云端历史仅携带同服务商已标记消息，本地 Scene 摘要和其他服务商历史排除。
+- Release APK/AAB 打包边界验证签名；无发布密钥可执行测试、Lint 和 Debug 构建。
+- 扩充 JVM 边界测试、更新失效 UI 测试并新增分享文件访问范围测试；仪器测试运行限制见 docs/TESTING.md。
+- 整理中英文 README、ROADMAP、架构审计、数据规范和技术债记录；保留已有键盘布局修复。
+
 ## [0.1.1] - 2026-09-06
 
 ### Reliability

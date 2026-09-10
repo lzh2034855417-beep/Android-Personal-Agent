@@ -1,13 +1,9 @@
 package com.aegis.apa.tool
 
+import com.aegis.apa.model.RamInfo
+
 import android.app.ActivityManager
 import android.content.Context
-
-data class RamInfo(
-    val totalBytes: Long,
-    val availableBytes: Long,
-    val isLowMemory: Boolean
-)
 
 object RamTool {
     fun read(context: Context): RamInfo {

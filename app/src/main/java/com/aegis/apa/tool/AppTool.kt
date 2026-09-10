@@ -1,37 +1,15 @@
 package com.aegis.apa.tool
 
+import com.aegis.apa.model.InstalledApp
+import com.aegis.apa.model.AppDetails
+import com.aegis.apa.model.DetectedApp
+import com.aegis.apa.model.AppCategory
+
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
-
-data class InstalledApp(
-    val name: String,
-    val packageName: String
-)
-
-data class AppDetails(
-    val name: String,
-    val packageName: String,
-    val versionName: String,
-    val versionCode: Long,
-    val firstInstallTime: Long,
-    val lastUpdateTime: Long,
-    val isSystemApp: Boolean
-)
-
-data class DetectedApp(
-    val displayName: String,
-    val category: AppCategory,
-    val packageName: String?,
-    val isInstalled: Boolean
-)
-
-enum class AppCategory(val displayName: String) {
-    ROOT_AND_FRAMEWORK("Root 与框架"),
-    COMMON("常规应用")
-}
 
 private data class KnownApp(
     val displayName: String,

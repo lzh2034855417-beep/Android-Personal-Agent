@@ -9,6 +9,15 @@ import org.junit.Test
 import java.time.OffsetDateTime
 
 class SceneReportBuilderTest {
+    @Test fun rechargeInMiddleCannotBeReportedAsContinuousDischarge() {
+        val report = SceneReportBuilder.build(SceneImportResult(
+            listOf(SceneSample(0, 90), SceneSample(3_600_000, 95), SceneSample(7_200_000, 70)),
+            setOf(SceneField.TIMESTAMP, SceneField.BATTERY_PERCENT)
+        ))
+        assertTrue(!report.contains("%/小时"))
+        assertTrue(report.contains("电量回升"))
+    }
+
     @Test fun calculatesDischargeRateFromTimedBatterySamples() {
         val report = SceneReportBuilder.build(
             SceneImportResult(
@@ -36,7 +45,7 @@ class SceneReportBuilderTest {
 
         assertTrue(report.contains("电量变化：90% → 70%（下降 20%）"))
         assertTrue(report.contains("样本覆盖：2.0 小时"))
-        assertTrue(report.contains("推算耗电：10.0%/小时"))
+        assertTrue(report.contains("区间平均电量下降：10.0%/小时"))
         assertTrue(report.contains("最高温度：39.0°C"))
         assertTrue(report.contains("前台应用线索：com.example.game"))
     }

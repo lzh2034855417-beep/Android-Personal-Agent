@@ -1,14 +1,9 @@
 package com.aegis.apa.tool
 
+import com.aegis.apa.model.RootStatus
+
 import android.content.Context
 import java.io.File
-
-data class RootStatus(
-    val hasSuBinary: Boolean,
-    val isShizukuInstalled: Boolean,
-    val isKernelSuManagerInstalled: Boolean,
-    val isMagiskManagerInstalled: Boolean
-)
 
 object RootTool {
     private val suPaths = listOf(

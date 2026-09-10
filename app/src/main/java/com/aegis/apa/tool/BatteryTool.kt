@@ -1,25 +1,11 @@
 package com.aegis.apa.tool
 
+import com.aegis.apa.model.BatteryInfo
+
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
-
-data class BatteryInfo(
-    val level: Int?,
-    val status: String,
-    val currentMilliAmp: Int? = null,
-    val remainingMilliAmpHour: Int? = null,
-    val remainingMilliWattHour: Long? = null,
-    val temperatureCelsius: Double? = null,
-    val voltageMilliVolt: Int? = null,
-    val health: String? = null,
-    val plugged: String? = null,
-    val technology: String? = null,
-    val isPresent: Boolean? = null
-) {
-    val levelText: String get() = level?.let { "$it%" } ?: "未获取到"
-}
 
 object BatteryReportText {
     fun format(info: BatteryInfo): String = buildString {

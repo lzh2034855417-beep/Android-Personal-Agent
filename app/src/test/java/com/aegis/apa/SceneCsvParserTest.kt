@@ -8,6 +8,31 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SceneCsvParserTest {
+    @Test fun rejectsOutOfRangePercentBeforeRounding() {
+        val result = SceneCsvParser.parse("battery,app\n-0.5,a\n100.5,b")
+        assertTrue(result.samples.all { it.batteryPercent == null })
+    }
+
+    @Test fun doesNotStripLettersToInventNumericValues() {
+        val result = SceneCsvParser.parse("temperature,app\nerror42,a\n1e2,b")
+        assertNull(result.samples[0].temperatureCelsius)
+        assertEquals(100.0, result.samples[1].temperatureCelsius!!, 0.001)
+    }
+
+    @Test fun convertsExplicitHeaderUnitsToCanonicalUnits() {
+        val result = SceneCsvParser.parse("current(uA),power(W),app\n-450000,2.2,a")
+        assertEquals(-450.0, result.samples.single().currentMilliAmp!!, 0.001)
+        assertEquals(2200.0, result.samples.single().powerMilliWatt!!, 0.001)
+    }
+
+    @Test fun rejectsAmbiguousDuplicateColumns() {
+        assertTrue(SceneCsvParser.parse("battery,电量\n80,20").error != null)
+    }
+
+    @Test fun rejectsRowsWithWrongColumnCount() {
+        assertTrue(SceneCsvParser.parse("battery,app\n80,a,extra").error != null)
+    }
+
     @Test fun parsesCommonChineseColumnsAndKeepsQuotedApplicationNames() {
         val result = SceneCsvParser.parse(
             """

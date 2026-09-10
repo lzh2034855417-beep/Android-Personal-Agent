@@ -7,16 +7,26 @@ plugins {
 
 val apaVersionName = "0.1.1"
 val signingProperties = Properties()
-val signingPropertiesFile = rootProject.file("keystore.properties")
+val signingPropertiesFile = rootProject.file(providers.gradleProperty("apa.signingProperties").getOrElse("keystore.properties"))
 
 if (signingPropertiesFile.isFile) {
     signingPropertiesFile.inputStream().use(signingProperties::load)
 }
-val hasReleaseSigningProperties = signingPropertiesFile.isFile && signingProperties.getProperty("storeFile") != null
-val requestedReleaseTask = gradle.startParameter.taskNames.any { it.contains("release", ignoreCase = true) }
+val missingSigningFields = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+    .filter { signingProperties.getProperty(it).isNullOrBlank() }
+val releaseKeyExists = signingProperties.getProperty("storeFile")?.takeIf { it.isNotBlank() }?.let { file(it).isFile } == true
 
-if (requestedReleaseTask && !hasReleaseSigningProperties) {
-    throw GradleException("Release signing requires a local keystore.properties file")
+// Enforce at the packaging boundary, including aggregate assemble/build tasks.
+// Source checks and unit tests must remain usable without a maintainer's signing key.
+tasks.matching { it.name in setOf("packageRelease", "packageReleaseBundle", "signReleaseBundle") }.configureEach {
+    val missingFields = missingSigningFields.toList()
+    val keyExists = releaseKeyExists
+    inputs.property("releaseSigningConfigured", missingFields.isEmpty() && keyExists)
+    doFirst {
+        if (missingFields.isNotEmpty() || !keyExists) {
+            throw GradleException("Release packaging requires complete local signing properties and an existing keystore. Missing fields: ${missingFields.joinToString()}")
+        }
+    }
 }
 
 android {

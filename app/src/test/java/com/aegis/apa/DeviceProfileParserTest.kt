@@ -13,6 +13,7 @@ class DeviceProfileParserTest {
     @Test
     fun parsesSm8850CpuPoliciesAndThermalSensors() {
         val raw = """
+            MANUFACTURER=Xiaomi
             MODEL=2509FPN0BC
             DEVICE=popsicle
             SOC=SM8850

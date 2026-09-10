@@ -1,13 +1,13 @@
 package com.aegis.apa
 
 import com.aegis.apa.agent.Level0ReportBuilder
-import com.aegis.apa.tool.BatteryInfo
-import com.aegis.apa.tool.DeviceInfo
-import com.aegis.apa.tool.DisplayInfo
+import com.aegis.apa.model.BatteryInfo
+import com.aegis.apa.model.DeviceInfo
+import com.aegis.apa.model.DisplayInfo
 import com.aegis.apa.tool.HardwareExperienceGrade
-import com.aegis.apa.tool.RamInfo
-import com.aegis.apa.tool.StorageInfo
-import com.aegis.apa.tool.UsageSummary
+import com.aegis.apa.model.RamInfo
+import com.aegis.apa.model.StorageInfo
+import com.aegis.apa.model.UsageSummary
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -16,7 +16,7 @@ class Level0ReportBuilderTest {
     fun separatesBaseAndOptionalDataInTheLevel0Report() {
         val report = Level0ReportBuilder.build(
             sampledAt = "12:00:00",
-            deviceInfo = DeviceInfo("Example Phone", "Android 16（API 36）"),
+            deviceInfo = DeviceInfo(com.aegis.apa.tool.DeviceNameResolver.resolve(com.aegis.apa.model.DeviceIdentifiers("Example", "Phone")), "16", 36),
             batteryInfo = BatteryInfo(level = 70, status = "未充电"),
             displayInfo = DisplayInfo(null, null, null, null, null),
             ramInfo = RamInfo(8_000_000_000L, 4_000_000_000L, false),
@@ -41,7 +41,7 @@ class Level0ReportBuilderTest {
     fun keepsOneDecimalForResourceCapacityInsteadOfRoundingDown() {
         val report = Level0ReportBuilder.build(
             sampledAt = "12:00:00",
-            deviceInfo = DeviceInfo("Example Phone", "Android 16（API 36）"),
+            deviceInfo = DeviceInfo(com.aegis.apa.tool.DeviceNameResolver.resolve(com.aegis.apa.model.DeviceIdentifiers("Example", "Phone")), "16", 36),
             batteryInfo = BatteryInfo(level = 70, status = "未充电"),
             displayInfo = DisplayInfo(null, null, null, null, null),
             ramInfo = RamInfo(8_590_000_000L, 4_290_000_000L, false),

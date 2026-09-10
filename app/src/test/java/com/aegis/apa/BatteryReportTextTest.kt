@@ -1,6 +1,6 @@
 package com.aegis.apa
 
-import com.aegis.apa.tool.BatteryInfo
+import com.aegis.apa.model.BatteryInfo
 import com.aegis.apa.tool.BatteryPlugText
 import com.aegis.apa.tool.BatteryReportText
 import org.junit.Assert.assertEquals

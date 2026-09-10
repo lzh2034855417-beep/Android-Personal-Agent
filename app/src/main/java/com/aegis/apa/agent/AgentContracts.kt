@@ -17,11 +17,15 @@ data class AgentReport(
     val source: String
 )
 
+enum class MessageRole(val wireName: String) { USER("user"), ASSISTANT("assistant"), ERROR("error") }
+
 data class AgentConversationMessage(
-    val role: String,
+    val role: MessageRole,
     val content: String,
     val attachedReportLabel: String? = null,
-    val source: String? = null
+    val source: String? = null,
+    /** Null means local-only. Only the provider that produced a cloud turn may receive its history. */
+    val cloudProvider: String? = null
 )
 
 interface LlmProvider {

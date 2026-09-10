@@ -13,6 +13,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -58,6 +62,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
+import com.aegis.apa.agent.MessageRole
 import com.aegis.apa.agent.AgentReport
 import com.aegis.apa.agent.AgentConversationMessage
 import com.aegis.apa.agent.AgentErrorMessage
@@ -69,54 +74,44 @@ import com.aegis.apa.agent.DeviceContext
 import com.aegis.apa.agent.Level0ReportBuilder
 import com.aegis.apa.agent.LocalDeviceAnalyzer
 import com.aegis.apa.tool.AppTool
-import com.aegis.apa.tool.AppDetails
-import com.aegis.apa.tool.AppCategory
-import com.aegis.apa.tool.DetectedApp
-import com.aegis.apa.tool.BatteryInfo
+import com.aegis.apa.model.AppDetails
+import com.aegis.apa.model.AppCategory
+import com.aegis.apa.model.DetectedApp
+import com.aegis.apa.model.BatteryInfo
 import com.aegis.apa.tool.BatteryTool
-import com.aegis.apa.tool.DeviceInfo
+import com.aegis.apa.model.DeviceInfo
 import com.aegis.apa.tool.DeviceProfileAccess
 import com.aegis.apa.tool.DeviceProfileCollector
 import com.aegis.apa.tool.DeviceProfileSnapshot
 import com.aegis.apa.tool.HardwareExperienceEvaluator
 import com.aegis.apa.tool.DeviceInfoTool
-import com.aegis.apa.tool.DisplayInfo
+import com.aegis.apa.model.DisplayInfo
 import com.aegis.apa.tool.DisplayInfoTool
 import com.aegis.apa.tool.DisplayReportText
 import com.aegis.apa.tool.toChipSchedulingDetails
-import com.aegis.apa.tool.InstalledApp
-import com.aegis.apa.tool.RamInfo
+import com.aegis.apa.model.InstalledApp
+import com.aegis.apa.model.RamInfo
 import com.aegis.apa.tool.RamTool
-import com.aegis.apa.tool.RootStatus
+import com.aegis.apa.model.RootStatus
 import com.aegis.apa.tool.RootTool
 import com.aegis.apa.tool.RootBatteryInfo
 import com.aegis.apa.tool.RootBatteryTool
 import com.aegis.apa.tool.SceneCsvParser
 import com.aegis.apa.tool.SceneReportBuilder
-import com.aegis.apa.tool.StorageInfo
+import com.aegis.apa.model.StorageInfo
 import com.aegis.apa.tool.StorageTool
 import com.aegis.apa.tool.UsageStatsTool
-import com.aegis.apa.tool.UsageSummary
+import com.aegis.apa.model.UsageSummary
 import com.aegis.apa.ui.theme.AndroidPersonalAgentTheme
 import java.util.Locale
-import java.time.ZonedDateTime
+import com.aegis.apa.model.DeviceSnapshot
+import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.text.SimpleDateFormat
 import kotlinx.coroutines.delay
 
-data class DeviceSnapshot(
-    val deviceInfo: DeviceInfo,
-    val batteryInfo: BatteryInfo,
-    val displayInfo: DisplayInfo,
-    val ramInfo: RamInfo,
-    val storageInfo: StorageInfo,
-    val usageSummary: UsageSummary,
-    val installedApps: List<InstalledApp>,
-    val detectedApps: List<DetectedApp>,
-    val rootStatus: RootStatus,
-    val sampledAt: String
-)
 
+@OptIn(ExperimentalLayoutApi::class)
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -174,8 +169,7 @@ class MainActivity : ComponentActivity() {
                             val imported = withContext(Dispatchers.IO) {
                                 runCatching {
                                     val text = contentResolver.openInputStream(uri)
-                                        ?.bufferedReader(Charsets.UTF_8)
-                                        ?.use { it.readText() }
+                                        ?.use(com.aegis.apa.tool.SceneCsvInput::read)
                                         ?: error("无法读取所选文件。")
                                     SceneCsvParser.parse(text)
                                 }
@@ -193,7 +187,7 @@ class MainActivity : ComponentActivity() {
                             }.onFailure {
                                 sceneReport = null
                                 sceneImportStatus = null
-                                sceneImportError = "导入失败，请确认文件为 UTF-8 CSV 后重试。"
+                                sceneImportError = "导入失败，请确认文件为 UTF-8 CSV 且不超过 2 MiB 后重试。"
                             }
                         }
                     }
@@ -221,8 +215,9 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 Scaffold(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().imePadding(),
                     bottomBar = {
+                        if (!WindowInsets.isImeVisible) {
                         androidx.compose.material3.NavigationBar {
                             listOf(0 to "设备", 3 to "Agent", 2 to "能力", 1 to "应用", 4 to "设置").forEach { (page, title) ->
                                 NavigationBarItem(
@@ -233,9 +228,10 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                         }
+                        }
                     }
                 ) { innerPadding ->
-                    Row(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+                    Row(modifier = Modifier.fillMaxSize().padding(innerPadding).consumeWindowInsets(innerPadding)) {
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -317,7 +313,7 @@ class MainActivity : ComponentActivity() {
                                 messages = chatMessages,
                                 onAnalyze = { question, attachedReportLabel, attachedSceneReport ->
                                     chatMessages = chatMessages + AgentConversationMessage(
-                                        role = "user", content = question, attachedReportLabel = attachedReportLabel
+                                        role = MessageRole.USER, content = question, attachedReportLabel = attachedReportLabel
                                     )
                                     isOnlineAnalyzing = true
                                     scope.launch {
@@ -325,7 +321,7 @@ class MainActivity : ComponentActivity() {
                                             val fresh = refreshSnapshot()
                                             val report = LocalDeviceAnalyzer.analyze(fresh.toDeviceContext())
                                             chatMessages = chatMessages + AgentConversationMessage(
-                                                role = "assistant",
+                                                role = MessageRole.ASSISTANT,
                                                 content = buildString {
                                                     appendLine("采样时间：${fresh.sampledAt}")
                                                     append(report.toChatContent())
@@ -341,7 +337,7 @@ class MainActivity : ComponentActivity() {
                                             throw cancelled
                                         } catch (_: Exception) {
                                             chatMessages = chatMessages + AgentConversationMessage(
-                                                role = "error", content = "设备数据刷新失败，请重试。", source = "LOCAL · ERROR"
+                                                role = MessageRole.ERROR, content = "设备数据刷新失败，请重试。", source = "LOCAL · ERROR"
                                             )
                                         } finally { isOnlineAnalyzing = false }
                                     }
@@ -349,15 +345,17 @@ class MainActivity : ComponentActivity() {
                                 isOnlineAnalyzing = isOnlineAnalyzing,
                                 onOnlineAnalyze = { question, selectedLevel, includeAppReport, _, attachedReportLabel ->
                                     val previousMessages = chatMessages
+                                    val requestedProvider = ApiSession.provider
                                     val attachedRootBattery = rootBatteryInfo
                                     val attachedDeviceProfile = deviceProfile
                                     chatMessages = chatMessages + AgentConversationMessage(
-                                        role = "user", content = question, attachedReportLabel = attachedReportLabel
+                                        role = MessageRole.USER, content = question, attachedReportLabel = attachedReportLabel, cloudProvider = requestedProvider
                                     )
                                     isOnlineAnalyzing = true
                                     scope.launch {
                                         try {
                                             val requested = ApiSession.requireValid()
+                                            check(requested.provider == requestedProvider) { "模型服务已切换，请重新发送" }
                                             val fresh = refreshSnapshot()
                                             val result = withContext(Dispatchers.IO) {
                                                 val credentials = checkNotNull(ApiKeyStore.load(this@MainActivity, requested.provider)) {
@@ -371,19 +369,18 @@ class MainActivity : ComponentActivity() {
                                                         selectedLevel, attachedRootBattery, attachedDeviceProfile
                                                     ),
                                                     appReport = fresh.buildAppReport().takeIf { includeAppReport },
-                                                    sceneReport = null,
                                                     conversationHistory = previousMessages,
                                                     credentials = credentials
                                                 )
                                             }
                                             chatMessages = chatMessages + AgentConversationMessage(
-                                                role = "assistant", content = result.toChatContent(), source = result.source
+                                                role = MessageRole.ASSISTANT, content = result.toChatContent(), source = result.source, cloudProvider = requestedProvider
                                             )
                                         } catch (cancelled: CancellationException) {
                                             throw cancelled
                                         } catch (error: Exception) {
                                             chatMessages = chatMessages + AgentConversationMessage(
-                                                role = "error", content = AgentErrorMessage.from(error), source = "MODEL · ERROR"
+                                                role = MessageRole.ERROR, content = AgentErrorMessage.from(error), source = "MODEL · ERROR"
                                             )
                                         } finally { isOnlineAnalyzing = false }
                                     }
@@ -422,7 +419,7 @@ class MainActivity : ComponentActivity() {
             installedApps = AppTool.readLaunchableApps(this),
             detectedApps = AppTool.detectKnownApps(this),
             rootStatus = RootTool.read(this),
-            sampledAt = ZonedDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss XXX"))
+            sampledAtInstant = Instant.now()
         )
     }
 
@@ -577,7 +574,7 @@ fun DeviceReportScreen(
     ) {
         Text(text = "设备概览", style = androidx.compose.material3.MaterialTheme.typography.headlineMedium)
         QuickReportPanel(deviceInfo.model, sampledAt, batteryInfo,
-            "Android ${deviceInfo.androidVersion}\n" +
+            "${deviceInfo.androidVersion}\n" +
                 "当前刷新率：${displayInfo.currentRefreshRate?.let { "${it.toInt()} Hz" } ?: "未获取到"}\n" +
                 "可用内存：${formatSize(ramInfo.availableBytes)} / ${formatSize(ramInfo.totalBytes)}\n" +
                 "可用存储：${formatSize(storageInfo.availableBytes)} / ${formatSize(storageInfo.totalBytes)}\n\n" +
@@ -648,6 +645,13 @@ fun DeviceReportScreen(
             ) {
                 Text(text = "设备与系统", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
                 DetailLine("📱", "设备型号", deviceInfo.model)
+                DetailLine("", "系统型号", deviceInfo.identity.identifiers.modelCode ?: "未获取到")
+                DetailLine("", "名称来源", when (deviceInfo.identity.nameSource) {
+                    com.aegis.apa.model.DeviceNameSource.CURATED -> "项目机型映射"
+                    com.aegis.apa.model.DeviceNameSource.OFFLINE_DATABASE -> "离线名称库"
+                    com.aegis.apa.model.DeviceNameSource.SYSTEM_MODEL -> "系统原值（未匹配商品名）"
+                    com.aegis.apa.model.DeviceNameSource.UNAVAILABLE -> "未获取到"
+                })
                 InfoLine("🤖", "Android", deviceInfo.androidVersion)
                 val chipDetails = deviceProfile?.toChipSchedulingDetails()
                 val hardwareGrade = HardwareExperienceEvaluator.evaluate(
@@ -725,7 +729,7 @@ fun DeviceReportScreen(
                     else -> {
                         InfoLine("🔋", "设计容量", "${rootBatteryInfo.designCapacityMah ?: "N/A"} mAh")
                         InfoLine("", "满充容量", "${rootBatteryInfo.fullChargeCapacityMah ?: "N/A"} mAh")
-                        InfoLine("", "循环次数", rootBatteryInfo.cycleCount ?: "N/A")
+                        InfoLine("", "循环次数", rootBatteryInfo.cycleCount?.toString() ?: "N/A")
                         InfoLine("⚡", "电池电流", "${rootBatteryInfo.currentMilliAmp ?: "N/A"} mA")
                         InfoLine("⚙", "电池电压", "${rootBatteryInfo.voltageMilliVolt ?: "N/A"} mV")
                         InfoLine("🌡", "电池温度", "${rootBatteryInfo.temperatureCelsius ?: "N/A"} °C")
@@ -1057,7 +1061,7 @@ fun AgentChatScreen(
     val attachedReportLabel = listOfNotNull(
         selectedLevel.replace("Level ", "L"),
         "应用".takeIf { includeAppReport },
-        "Scene".takeIf { includeSceneReport && sceneReport != null }
+        "Scene（仅本地）".takeIf { includeSceneReport && sceneReport != null && ApiSession.apiKey.isBlank() }
     ).joinToString(" · ")
     val providerLabel = CloudProviderCatalog.find(ApiSession.provider)?.shortLabel ?: "未配置模型"
 
@@ -1066,7 +1070,7 @@ fun AgentChatScreen(
     }
 
     Column(
-        modifier = modifier.fillMaxSize().imePadding(),
+        modifier = modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         androidx.compose.material3.Card(
@@ -1128,7 +1132,7 @@ fun AgentChatScreen(
             messages.forEach { message ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = if (message.role == "user") {
+                    horizontalArrangement = if (message.role == MessageRole.USER) {
                         Arrangement.End
                     } else {
                         Arrangement.Start
@@ -1137,7 +1141,7 @@ fun AgentChatScreen(
                     Card(
                         modifier = Modifier.fillMaxWidth(0.9f),
                         colors = androidx.compose.material3.CardDefaults.cardColors(
-                            containerColor = if (message.role == "user") colors.primaryContainer else colors.surfaceContainer
+                            containerColor = if (message.role == MessageRole.USER) colors.primaryContainer else colors.surfaceContainer
                         )
                     ) {
                         Column(
@@ -1227,7 +1231,7 @@ fun AgentChatScreen(
                     }
                 }
                 sceneImportStatus?.let { status ->
-                    Text(text = "$status · 仅在本机解析")
+                    Text(text = "$status · 仅在本机解析，不随在线分析发送")
                 }
                 sceneImportError?.let { error ->
                     Text(text = "Scene 导入：$error")
@@ -1315,8 +1319,7 @@ fun SettingsPrivacyScreen(modifier: Modifier = Modifier) {
 
     Column(
         modifier = modifier
-            .verticalScroll(settingsScrollState)
-            .imePadding(),
+            .verticalScroll(settingsScrollState),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text(text = "设置与隐私", style = androidx.compose.material3.MaterialTheme.typography.headlineMedium)
@@ -1438,8 +1441,8 @@ fun DeviceReportPreview() {
     AndroidPersonalAgentTheme {
         DeviceReportScreen(
             deviceInfo = DeviceInfo(
-                model = "Xiaomi 示例设备",
-                androidVersion = "Android 16（API 36）"
+                identity = com.aegis.apa.tool.DeviceNameResolver.resolve(com.aegis.apa.model.DeviceIdentifiers("Xiaomi", "示例设备")),
+                androidRelease = "16", apiLevel = 36
             ),
             batteryInfo = BatteryInfo(level = 80, status = "正在充电"),
             displayInfo = DisplayInfo(1220, 2712, 480, 120f, 120f),

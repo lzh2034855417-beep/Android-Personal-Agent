@@ -23,6 +23,7 @@ data class ThermalSensorProfile(
 
 data class DeviceProfileSnapshot(
     val model: String?,
+    val manufacturer: String? = null,
     val device: String?,
     val soc: String?,
     val androidVersion: String?,
@@ -34,10 +35,10 @@ data class DeviceProfileSnapshot(
     val thermalSensors: List<ThermalSensorProfile>,
     val access: DeviceProfileAccess,
     val error: String? = null,
-    val sampledAt: String = java.time.ZonedDateTime.now().format(
-        java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss XXX")
-    )
+    val sampledAtInstant: java.time.Instant = java.time.Instant.now()
 ) {
+    val sampledAt: String get() = com.aegis.apa.model.SampleTime.format(sampledAtInstant)
+
     fun toReportText(): String = buildString {
         appendLine("调度档案：只读")
         appendLine("档案采样时间：$sampledAt（需手动重读）")
@@ -45,7 +46,7 @@ data class DeviceProfileSnapshot(
         appendLine(
             "读取权限：${if (access == DeviceProfileAccess.ROOT) "Root 只读" else "标准权限"}"
         )
-        appendLine("设备名称：${publicDeviceName(manufacturer = null, modelCode = model)}")
+        appendLine("设备名称：${publicDeviceName(manufacturer = manufacturer, modelCode = model)}")
         appendLine("SoC：${soc ?: "设备未提供"}")
         appendLine("Android：${androidVersion ?: "设备未提供"}")
         appendLine("系统版本：${buildVersion ?: "设备未提供"}")
@@ -107,6 +108,7 @@ fun DeviceProfileSnapshot.toChipSchedulingDetails(): ChipSchedulingDetails = Chi
 object DeviceProfileParser {
     private val retainedKeys = setOf(
         "MODEL",
+        "MANUFACTURER",
         "DEVICE",
         "SOC",
         "ANDROID",
@@ -143,6 +145,7 @@ object DeviceProfileParser {
 
         return DeviceProfileSnapshot(
             model = values["MODEL"],
+            manufacturer = values["MANUFACTURER"],
             device = values["DEVICE"],
             soc = values["SOC"],
             androidVersion = values["ANDROID"],
@@ -263,6 +266,7 @@ object DeviceProfileCollector {
         "设备未返回调度档案数据".takeIf { output.isBlank() }
 
     private val collectionScript = """
+        printf 'MANUFACTURER=%s\n' "${'$'}(getprop ro.product.manufacturer)"
         printf 'MODEL=%s\n' "${'$'}(getprop ro.product.model)"
         printf 'DEVICE=%s\n' "${'$'}(getprop ro.product.device)"
         printf 'SOC=%s\n' "${'$'}(getprop ro.soc.model)"

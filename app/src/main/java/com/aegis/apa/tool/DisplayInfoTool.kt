@@ -1,16 +1,10 @@
 package com.aegis.apa.tool
 
+import com.aegis.apa.model.DisplayInfo
+
 import android.content.Context
 import android.hardware.display.DisplayManager
 import android.view.Display
-
-data class DisplayInfo(
-    val widthPixels: Int?,
-    val heightPixels: Int?,
-    val densityDpi: Int?,
-    val currentRefreshRate: Float?,
-    val maxRefreshRate: Float?
-)
 
 object DisplayReportText {
     fun format(info: DisplayInfo): String = buildString {

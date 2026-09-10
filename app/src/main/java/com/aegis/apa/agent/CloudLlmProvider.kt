@@ -62,7 +62,6 @@ object CloudLlmProvider {
         selectedLevel: String,
         levelReport: String,
         appReport: String?,
-        sceneReport: String?,
         conversationHistory: List<AgentConversationMessage>,
         credentials: StoredApiKey
     ): AgentReport {
@@ -96,17 +95,15 @@ object CloudLlmProvider {
             appendLine(appReport ?: "本次未附带")
             appendLine()
             appendLine("【Scene 一天续航报告】")
-            appendLine(sceneReport ?: "本次未附带")
+            appendLine("本次未附带；Scene 导入仅供本地查看")
         }
 
         val historyMessages = JSONArray()
-        conversationHistory
-            .filter { it.role == "user" || it.role == "assistant" }
-            .takeLast(12)
+        CloudHistoryPolicy.select(conversationHistory, credentials.provider)
             .forEach { message ->
                 historyMessages.put(
                     JSONObject()
-                        .put("role", message.role)
+                        .put("role", message.role.wireName)
                         .put("content", message.content)
                 )
             }

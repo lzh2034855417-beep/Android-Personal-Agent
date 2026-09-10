@@ -1,14 +1,14 @@
 package com.aegis.apa.agent
 
-import com.aegis.apa.tool.BatteryInfo
+import com.aegis.apa.model.BatteryInfo
 import com.aegis.apa.tool.BatteryReportText
-import com.aegis.apa.tool.DeviceInfo
-import com.aegis.apa.tool.DisplayInfo
+import com.aegis.apa.model.DeviceInfo
+import com.aegis.apa.model.DisplayInfo
 import com.aegis.apa.tool.DisplayReportText
 import com.aegis.apa.tool.HardwareExperienceGrade
-import com.aegis.apa.tool.RamInfo
-import com.aegis.apa.tool.StorageInfo
-import com.aegis.apa.tool.UsageSummary
+import com.aegis.apa.model.RamInfo
+import com.aegis.apa.model.StorageInfo
+import com.aegis.apa.model.UsageSummary
 
 object Level0ReportBuilder {
     fun build(

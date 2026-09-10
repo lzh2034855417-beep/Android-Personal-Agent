@@ -1,6 +1,6 @@
 package com.aegis.apa.agent
 
-import com.aegis.apa.tool.BatteryInfo
+import com.aegis.apa.model.BatteryInfo
 
 object QuickReport {
     fun explain(topic: String, battery: BatteryInfo): String = buildString {

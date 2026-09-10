@@ -1,5 +1,8 @@
 package com.aegis.apa.tool
 
+import com.aegis.apa.model.UsageApp
+import com.aegis.apa.model.UsageSummary
+
 import android.app.AppOpsManager
 import android.app.usage.UsageStatsManager
 import android.app.usage.UsageEvents
@@ -9,28 +12,6 @@ import android.os.Process
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-
-data class UsageApp(
-    val packageName: String,
-    val label: String,
-    val foregroundTimeMillis: Long
-)
-
-data class UsageSummary(
-    val accessGranted: Boolean,
-    val foregroundTimeMillis: Long?,
-    val topApps: List<UsageApp>,
-    val startTimeMillis: Long? = null,
-    val endTimeMillis: Long? = null,
-    val isPartial: Boolean = false
-) {
-    val rangeText: String? get() {
-        val start = startTimeMillis ?: return null
-        val end = endTimeMillis ?: return null
-        val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss XXX").withZone(ZoneId.systemDefault())
-        return "${formatter.format(Instant.ofEpochMilli(start))} 至 ${formatter.format(Instant.ofEpochMilli(end))}"
-    }
-}
 
 object UsageSummaryBuilder {
     fun from(

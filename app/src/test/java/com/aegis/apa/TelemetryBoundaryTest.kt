@@ -8,6 +8,11 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TelemetryBoundaryTest {
+    @Test fun invalidResourceReadingsCannotBeCalledHealthy() {
+        val report = LocalDeviceAnalyzer.analyze(DeviceContext("Phone", "16", 80, 0, 0, -1, 128, 0))
+        assertFalse(report.findings.any { it.contains("正常") || it.contains("充足") })
+        assertTrue(report.findings.count { it.contains("未获取到有效") } == 2)
+    }
     @Test fun invalidBatteryLevelsRemainUnknown() {
         assertNull(BatteryReading.percentage(-1, 100))
         assertNull(BatteryReading.percentage(80, 0))
