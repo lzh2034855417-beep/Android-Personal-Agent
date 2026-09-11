@@ -31,12 +31,6 @@ class MainSessionViewModel : ViewModel() {
     val analyzing = mutableStateOf(false)
     val powerDiagnostic = mutableStateOf<PowerDiagnosticSnapshot?>(null)
     val powerDiagnosticState = mutableStateOf<PowerDiagnosticUiState>(PowerDiagnosticUiState.Idle)
-    @Deprecated("Scene CSV is replaced by system power diagnostics")
-    val sceneReport = mutableStateOf<String?>(null)
-    @Deprecated("Scene CSV is replaced by system power diagnostics")
-    val sceneImportStatus = mutableStateOf<String?>(null)
-    @Deprecated("Scene CSV is replaced by system power diagnostics")
-    val sceneImportError = mutableStateOf<String?>(null)
     private var analysisGeneration = 0L
     private var onlineAnalysis = false
 
@@ -74,8 +68,6 @@ class AgentPageState {
     val includeUsageReport = mutableStateOf(false)
     val includeAppReport = mutableStateOf(false)
     val includePowerDiagnosticReport = mutableStateOf(false)
-    @Deprecated("Scene CSV is replaced by system power diagnostics")
-    val includeSceneReport = mutableStateOf(false)
     val reportPickerExpanded = mutableStateOf(false)
     val draft = mutableStateOf("")
     var lastAutoScrollMessageCount = -1

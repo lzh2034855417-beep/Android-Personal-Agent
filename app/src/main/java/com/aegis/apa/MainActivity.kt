@@ -3,10 +3,8 @@ package com.aegis.apa
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -76,6 +74,7 @@ import com.aegis.apa.agent.ApiSession
 import com.aegis.apa.agent.DeviceContext
 import com.aegis.apa.agent.Level0ReportBuilder
 import com.aegis.apa.agent.LocalDeviceAnalyzer
+import com.aegis.apa.agent.PowerDiagnosticReportBuilder
 import com.aegis.apa.tool.AppTool
 import com.aegis.apa.model.AppDetails
 import com.aegis.apa.model.AppCategory
@@ -99,8 +98,8 @@ import com.aegis.apa.model.RootStatus
 import com.aegis.apa.tool.RootTool
 import com.aegis.apa.tool.RootBatteryInfo
 import com.aegis.apa.tool.RootBatteryTool
-import com.aegis.apa.tool.SceneCsvParser
-import com.aegis.apa.tool.SceneReportBuilder
+import com.aegis.apa.tool.SystemPowerDiagnosticsCollector
+import com.aegis.apa.model.PowerDiagnosticSnapshot
 import com.aegis.apa.model.StorageInfo
 import com.aegis.apa.tool.StorageTool
 import com.aegis.apa.tool.UsageStatsTool
@@ -163,40 +162,13 @@ class MainActivity : ComponentActivity() {
                 var isDeviceProfileReading by session.deviceProfileReading
                 var chatMessages by session.messages
                 var isOnlineAnalyzing by session.analyzing
-                var sceneReport by session.sceneReport
-                var sceneImportStatus by session.sceneImportStatus
-                var sceneImportError by session.sceneImportError
+                var powerDiagnostic by session.powerDiagnostic
+                var powerDiagnosticState by session.powerDiagnosticState
                 DisposableEffect(session) {
-                    onDispose { session.interruptAnalysis() }
-                }
-                val sceneReportPicker = rememberLauncherForActivityResult(
-                    contract = ActivityResultContracts.OpenDocument()
-                ) { uri ->
-                    if (uri != null) {
-                        scope.launch {
-                            val imported = withContext(Dispatchers.IO) {
-                                runCatching {
-                                    val text = contentResolver.openInputStream(uri)
-                                        ?.use(com.aegis.apa.tool.SceneCsvInput::read)
-                                        ?: error("无法读取所选文件。")
-                                    SceneCsvParser.parse(text)
-                                }
-                            }
-                            imported.onSuccess { result ->
-                                if (result.error == null) {
-                                    sceneReport = SceneReportBuilder.build(result)
-                                    sceneImportStatus = "已导入 ${result.samples.size} 条样本"
-                                    sceneImportError = null
-                                } else {
-                                    sceneReport = null
-                                    sceneImportStatus = null
-                                    sceneImportError = result.error
-                                }
-                            }.onFailure {
-                                sceneReport = null
-                                sceneImportStatus = null
-                                sceneImportError = "导入失败，请确认文件为 UTF-8 CSV 且不超过 2 MiB 后重试。"
-                            }
+                    onDispose {
+                        session.interruptAnalysis()
+                        if (session.powerDiagnosticState.value is PowerDiagnosticUiState.Collecting) {
+                            session.powerDiagnosticState.value = PowerDiagnosticUiState.Interrupted
                         }
                     }
                 }
@@ -207,6 +179,30 @@ class MainActivity : ComponentActivity() {
                         if (snapshotError != null) Button(onClick = onRefresh) { Text("重试") }
                     }
                     return@AndroidPersonalAgentTheme
+                }
+                val onCollectPowerDiagnostic: () -> Unit = {
+                    if (powerDiagnosticState !is PowerDiagnosticUiState.Collecting) {
+                        session.agent.includePowerDiagnosticReport.value = false
+                        powerDiagnosticState = PowerDiagnosticUiState.Collecting(0, 8, "准备 Root 授权")
+                        scope.launch {
+                            try {
+                                val result = withContext(Dispatchers.IO) {
+                                    SystemPowerDiagnosticsCollector().collect { completed, total, source ->
+                                        this@MainActivity.runOnUiThread {
+                                            powerDiagnosticState = PowerDiagnosticUiState.Collecting(completed, total, source)
+                                        }
+                                    }
+                                }
+                                powerDiagnostic = result
+                                powerDiagnosticState = PowerDiagnosticUiState.Ready
+                            } catch (cancelled: CancellationException) {
+                                powerDiagnosticState = PowerDiagnosticUiState.Interrupted
+                                throw cancelled
+                            } catch (_: Exception) {
+                                powerDiagnosticState = PowerDiagnosticUiState.Error("无法完成系统耗电采集，请检查 Root 授权后重试。")
+                            }
+                        }
+                    }
                 }
                 val onReadDeviceProfile = {
                     if (!isDeviceProfileReading) {
@@ -321,7 +317,7 @@ class MainActivity : ComponentActivity() {
                             3 -> AgentChatScreen(
                                 state = session.agent,
                                 messages = chatMessages,
-                                onAnalyze = { question, attachedReportLabel, attachedSceneReport ->
+                                onAnalyze = { question, attachedReportLabel, attachedPowerDiagnosticReport ->
                                     chatMessages = chatMessages + AgentConversationMessage(
                                         role = MessageRole.USER, content = question, attachedReportLabel = attachedReportLabel
                                     )
@@ -335,10 +331,10 @@ class MainActivity : ComponentActivity() {
                                                 content = buildString {
                                                     appendLine("采样时间：${fresh.sampledAt}")
                                                     append(report.toChatContent())
-                                                    attachedSceneReport?.let {
+                                                    attachedPowerDiagnosticReport?.let {
                                                         appendLine()
                                                         appendLine()
-                                                        append(it)
+                                                        appendLine(it)
                                                     }
                                                 },
                                                 source = report.source
@@ -354,7 +350,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 },
                                 isOnlineAnalyzing = isOnlineAnalyzing,
-                                onOnlineAnalyze = { question, selectedLevel, includeAppReport, includeUsageReport, attachedReportLabel ->
+                                onOnlineAnalyze = { question, selectedLevel, includeAppReport, includeUsageReport, attachedReportLabel, attachedPowerDiagnosticReport ->
                                     val previousMessages = chatMessages
                                     val requestedProvider = ApiSession.provider
                                     val attachedRootBattery = rootBatteryInfo
@@ -379,6 +375,7 @@ class MainActivity : ComponentActivity() {
                                                         selectedLevel, attachedRootBattery, attachedDeviceProfile, includeUsageReport
                                                     ),
                                                     appReport = fresh.buildAppReport().takeIf { includeAppReport },
+                                                    powerDiagnosticReport = attachedPowerDiagnosticReport,
                                                     conversationHistory = previousMessages,
                                                     credentials = credentials
                                                 )
@@ -398,14 +395,17 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onClearConversation = { chatMessages = emptyList() },
                                 onOpenSettings = { selectedPage = 4 },
-                                sceneImportStatus = sceneImportStatus,
-                                sceneImportError = sceneImportError,
-                                sceneReport = sceneReport,
-                                onImportScene = { sceneReportPicker.launch(arrayOf("text/csv", "text/plain")) },
-                                onRemoveScene = {
-                                    sceneReport = null
-                                    sceneImportStatus = null
-                                    sceneImportError = null
+                                powerDiagnosticState = powerDiagnosticState,
+                                powerDiagnostic = powerDiagnostic,
+                                onCollectPowerDiagnostic = onCollectPowerDiagnostic,
+                                onRemovePowerDiagnostic = {
+                                    powerDiagnostic = null
+                                    powerDiagnosticState = PowerDiagnosticUiState.Idle
+                                    session.agent.includePowerDiagnosticReport.value = false
+                                },
+                                onCopyPackage = { packageName ->
+                                    val clipboard = getSystemService(android.content.ClipboardManager::class.java)
+                                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("package", packageName))
                                 },
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 16.dp)
                             )
@@ -1052,20 +1052,20 @@ fun AgentChatScreen(
     messages: List<AgentConversationMessage>,
     onAnalyze: (String, String, String?) -> Unit,
     isOnlineAnalyzing: Boolean,
-    onOnlineAnalyze: (String, String, Boolean, Boolean, String) -> Unit,
+    onOnlineAnalyze: (String, String, Boolean, Boolean, String, String?) -> Unit,
     onClearConversation: () -> Unit,
     onOpenSettings: () -> Unit,
-    sceneImportStatus: String?,
-    sceneImportError: String?,
-    sceneReport: String?,
-    onImportScene: () -> Unit,
-    onRemoveScene: () -> Unit,
+    powerDiagnosticState: PowerDiagnosticUiState,
+    powerDiagnostic: PowerDiagnosticSnapshot?,
+    onCollectPowerDiagnostic: () -> Unit,
+    onRemovePowerDiagnostic: () -> Unit,
+    onCopyPackage: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var selectedLevel by state.selectedLevel
     var includeUsageReport by state.includeUsageReport
     var includeAppReport by state.includeAppReport
-    var includeSceneReport by state.includeSceneReport
+    var includePowerDiagnosticReport by state.includePowerDiagnosticReport
     var isReportPickerExpanded by state.reportPickerExpanded
     var userMessage by state.draft
     val chatScrollState = rememberScrollState()
@@ -1074,7 +1074,7 @@ fun AgentChatScreen(
         selectedLevel.replace("Level ", "L"),
         "应用".takeIf { includeAppReport && ApiSession.apiKey.isNotBlank() },
         "使用习惯".takeIf { includeUsageReport && selectedLevel == "Level 0" && ApiSession.apiKey.isNotBlank() },
-        "Scene（仅本地）".takeIf { includeSceneReport && sceneReport != null && ApiSession.apiKey.isBlank() }
+        "系统耗电诊断".takeIf { includePowerDiagnosticReport && powerDiagnostic != null }
     ).joinToString(" · ")
     val providerLabel = CloudProviderCatalog.find(ApiSession.provider)?.shortLabel ?: "未配置模型"
 
@@ -1235,8 +1235,8 @@ fun AgentChatScreen(
                 }
                 Text(
                     text = if (ApiSession.apiKey.isNotBlank())
-                        "在线发送：问题、基础快照、所选报告及同一服务最近最多 12 条对话。历史回答可能引用之前的数据；可点清空移除。Scene 仅本地。"
-                    else "本地分析使用基础快照及选中的 Scene 摘要；其他报告暂不参与本地分析。",
+                        "在线发送：问题、基础快照、明确选中的系统耗电诊断及同一服务最近最多 12 条对话。原始 Root 输出不会发送。"
+                    else "本地分析使用基础快照及明确选中的系统耗电诊断；只给建议，不执行 Scene 操作。",
                     style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant
                 )
@@ -1250,35 +1250,16 @@ fun AgentChatScreen(
                     ) {
                         Text(text = if (includeAppReport) "● 应用报告" else "应用报告")
                     }
-                    Button(onClick = {
-                        if (sceneReport == null) onImportScene() else includeSceneReport = !includeSceneReport
-                    }, modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = when {
-                                sceneReport == null -> "导入 Scene CSV"
-                                includeSceneReport -> "● Scene 摘要"
-                                else -> "Scene 摘要"
-                            }
-                        )
-                    }
                 }
-                sceneImportStatus?.let { status ->
-                    Text(text = "$status · 仅在本机解析，不随在线分析发送")
-                }
-                sceneImportError?.let { error ->
-                    Text(text = "Scene 导入：$error")
-                }
-                sceneReport?.let { report ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = colors.surfaceContainer)
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(text = report)
-                            TextButton(onClick = onRemoveScene) { Text("移除导入文件") }
-                        }
-                    }
-                }
+                PowerDiagnosticPanel(
+                    state = powerDiagnosticState,
+                    snapshot = powerDiagnostic,
+                    selected = includePowerDiagnosticReport,
+                    onCollect = onCollectPowerDiagnostic,
+                    onToggleSelected = { includePowerDiagnosticReport = !includePowerDiagnosticReport },
+                    onRemove = onRemovePowerDiagnostic,
+                    onCopyPackage = onCopyPackage
+                )
             }
         }
         Card(
@@ -1309,10 +1290,16 @@ fun AgentChatScreen(
                                     selectedLevel,
                                     includeAppReport,
                                     includeUsageReport && selectedLevel == "Level 0",
-                                    attachedReportLabel
+                                    attachedReportLabel,
+                                    powerDiagnostic?.let(PowerDiagnosticReportBuilder::build)
+                                        .takeIf { includePowerDiagnosticReport }
                                 )
                             } else {
-                                onAnalyze(message, attachedReportLabel, sceneReport.takeIf { includeSceneReport })
+                                onAnalyze(
+                                    message,
+                                    attachedReportLabel,
+                                    powerDiagnostic?.let(PowerDiagnosticReportBuilder::build).takeIf { includePowerDiagnosticReport }
+                                )
                             }
                         }
                     },

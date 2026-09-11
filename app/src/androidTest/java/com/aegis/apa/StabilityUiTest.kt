@@ -34,8 +34,15 @@ class StabilityUiTest {
         rule.waitUntil(15_000) { sampleLabel() != null }
         rule.runOnUiThread {
             val session = androidx.lifecycle.ViewModelProvider(rule.activity)[MainSessionViewModel::class.java]
-            session.sceneReport.value = "合成 Scene 摘要：用于状态恢复测试"
-            session.sceneImportStatus.value = "已导入 2 条样本"
+            session.powerDiagnostic.value = com.aegis.apa.model.PowerDiagnosticSnapshot(
+                sampledAtInstant = java.time.Instant.EPOCH,
+                collectionDurationMillis = 10,
+                sources = emptyMap(),
+                apps = emptyList(),
+                system = com.aegis.apa.model.SystemPowerEvidence(),
+                findings = emptyList()
+            )
+            session.powerDiagnosticState.value = PowerDiagnosticUiState.Ready
         }
         rule.onNodeWithText("Agent").performClick()
         rule.onNodeWithText("选择报告").performClick()
@@ -49,7 +56,7 @@ class StabilityUiTest {
         rule.activityRule.scenario.recreate()
         rule.onNode(hasSetTextAction()).assertTextContains("尚未发送的内测草稿")
         rule.onNodeWithText("● Level 2").performScrollTo().assertIsDisplayed()
-        rule.onNodeWithText("合成 Scene 摘要：用于状态恢复测试").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("当前证据不足，暂不建议限制或冻结任何应用。").performScrollTo().assertIsDisplayed()
     }
 
     @Test fun recreationEndsPendingAnalysisWithoutReplayingIt() {
@@ -133,11 +140,26 @@ class StabilityUiTest {
         } finally { rule.runOnUiThread { ApiSession.update(credential) } }
     }
 
-    @Test fun sceneImportIsAvailableInReportSelection() {
+    @Test fun systemPowerDiagnosticReplacesSceneImportAndDefaultsToNotSelected() {
         rule.waitUntil(15_000) { sampleLabel() != null }
+        rule.runOnUiThread {
+            val session = androidx.lifecycle.ViewModelProvider(rule.activity)[MainSessionViewModel::class.java]
+            session.powerDiagnostic.value = com.aegis.apa.model.PowerDiagnosticSnapshot(
+                sampledAtInstant = java.time.Instant.EPOCH,
+                collectionDurationMillis = 10,
+                sources = emptyMap(),
+                apps = emptyList(),
+                system = com.aegis.apa.model.SystemPowerEvidence(),
+                findings = emptyList()
+            )
+            session.powerDiagnosticState.value = PowerDiagnosticUiState.Ready
+            session.agent.includePowerDiagnosticReport.value = false
+        }
         rule.onNodeWithText("Agent").performClick()
         rule.onNodeWithText("选择报告").performClick()
-        rule.onNodeWithText("导入 Scene CSV").performScrollTo().assertIsDisplayed().assertIsEnabled()
+        rule.onNodeWithText("系统耗电诊断").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("随问题发送（默认关闭）").performScrollTo().assertIsDisplayed().assertIsEnabled()
+        rule.onNodeWithText("导入 Scene CSV").assertDoesNotExist()
     }
 
     @Test fun keyboardKeepsComposerVisibleAndNavigationReturnsAfterBack() {
