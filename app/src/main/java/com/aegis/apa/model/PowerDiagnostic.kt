@@ -25,6 +25,7 @@ data class AppPowerEvidence(
     val uid: Int?,
     val packageNames: List<String>,
     val displayNames: List<String> = emptyList(),
+    val estimatedPowerMah: Double? = null,
     val wakeLockDurationMillis: Long? = null,
     val wakeupCount: Long? = null,
     val alarmCount: Long? = null,
