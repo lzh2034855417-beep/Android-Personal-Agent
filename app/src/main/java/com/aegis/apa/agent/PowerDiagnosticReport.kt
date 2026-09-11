@@ -15,8 +15,17 @@ object PowerDiagnosticReportBuilder {
             appendLine("采样时间：${snapshot.sampledAtInstant}")
             appendLine("采集耗时：${snapshot.collectionDurationMillis} ms")
 
+            val partial = snapshot.sources.values
+                .filter { it.status == DiagnosticSourceStatus.TRUNCATED }
+                .sortedBy { it.source }
+            if (partial.isNotEmpty()) {
+                appendLine("部分数据：" + partial.joinToString("；") {
+                    "${it.source}（输出截断，已解析已获取的关键字段）"
+                })
+            }
+
             val unavailable = snapshot.sources.values
-                .filter { it.status != DiagnosticSourceStatus.AVAILABLE }
+                .filter { it.status != DiagnosticSourceStatus.AVAILABLE && it.status != DiagnosticSourceStatus.TRUNCATED }
                 .sortedBy { it.source }
             if (unavailable.isNotEmpty()) {
                 appendLine("未获取：" + unavailable.joinToString("；") {

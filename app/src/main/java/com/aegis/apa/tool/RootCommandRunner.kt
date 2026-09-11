@@ -77,7 +77,7 @@ object RootCommandRunner : DiagnosticCommandRunner {
         output: String,
         truncated: Boolean
     ): RootCommandResult {
-        val (status, detail) = classifyStatus(exitCode, output, truncated)
+        val (status, detail) = classifyStatus(exitCode, output, truncated, command)
         val safeOutput = if (status == DiagnosticSourceStatus.AVAILABLE || status == DiagnosticSourceStatus.TRUNCATED) output else ""
         return RootCommandResult(command, status, safeOutput, truncated, detail)
     }
@@ -85,7 +85,8 @@ object RootCommandRunner : DiagnosticCommandRunner {
     private fun classifyStatus(
         exitCode: Int,
         output: String,
-        truncated: Boolean
+        truncated: Boolean,
+        command: AllowedRootCommand? = null
     ): Pair<DiagnosticSourceStatus, String?> {
         if (exitCode == 0) {
             return if (truncated) {
@@ -96,6 +97,8 @@ object RootCommandRunner : DiagnosticCommandRunner {
         }
         val normalized = output.lowercase(Locale.ROOT)
         return when {
+            command == AllowedRootCommand.WAKEUP && output.isBlank() ->
+                DiagnosticSourceStatus.UNSUPPORTED to "设备不支持或不允许读取 wakeup_sources"
             "permission denied" in normalized || "not allowed" in normalized || "access denied" in normalized ->
                 DiagnosticSourceStatus.PERMISSION_DENIED to "Root 授权被拒绝或权限不足"
             "not found" in normalized || "can't find service" in normalized || "no such file" in normalized ->

@@ -17,7 +17,8 @@ data class RawDiagnosticSection(
 
 object PowerDiagnosticParser {
     private val packagePattern = Regex("package:(\\S+)\\s+uid:(\\d+)")
-    private val uidPowerPattern = Regex("(?m)^\\s*Uid\\s+(\\S+):\\s*([0-9]+(?:\\.[0-9]+)?)")
+    private const val ESTIMATED_POWER_HEADER = "Estimated power use (mAh):"
+    private val uidPowerPattern = Regex("(?m)^\\s*UID\\s+(\\S+):\\s*([0-9]+(?:\\.[0-9]+)?)")
 
     fun parse(
         sections: List<RawDiagnosticSection>,
@@ -32,7 +33,8 @@ object PowerDiagnosticParser {
             )
             .mapValues { (_, packages) -> packages.distinct().sorted() }
 
-        val apps = uidPowerPattern.findAll(byName["batterystats"]?.output.orEmpty())
+        val estimatedPowerSection = extractEstimatedPowerSection(byName["batterystats"]?.output.orEmpty())
+        val apps = uidPowerPattern.findAll(estimatedPowerSection)
             .mapNotNull { match ->
                 val uid = parseUid(match.groupValues[1]) ?: return@mapNotNull null
                 val power = match.groupValues[2].toDoubleOrNull() ?: return@mapNotNull null
@@ -85,6 +87,37 @@ object PowerDiagnosticParser {
             ),
             findings = emptyList()
         )
+    }
+
+    /**
+     * Android's batterystats output contains unrelated title-case `Uid` rows later in the
+     * document (for example packet counts). Only the uppercase `UID` rows belonging to the
+     * estimated-power section represent mAh values.
+     */
+    private fun extractEstimatedPowerSection(output: String): String {
+        val lines = output.lines()
+        val headerIndex = lines.indexOfFirst { it.trim() == ESTIMATED_POWER_HEADER }
+        if (headerIndex < 0) return ""
+
+        val headerIndent = lines[headerIndex].leadingWhitespaceCount()
+        val sectionLines = mutableListOf<String>()
+        for (line in lines.drop(headerIndex + 1)) {
+            val trimmed = line.trim()
+            if (
+                trimmed.isNotEmpty() &&
+                line.leadingWhitespaceCount() <= headerIndent &&
+                !trimmed.startsWith("UID ")
+            ) {
+                break
+            }
+            sectionLines += line
+        }
+        return sectionLines.joinToString("\n")
+    }
+
+    private fun String.leadingWhitespaceCount(): Int {
+        val firstContentIndex = indexOfFirst { !it.isWhitespace() }
+        return if (firstContentIndex < 0) length else firstContentIndex
     }
 
     private fun parseUid(token: String): Int? {

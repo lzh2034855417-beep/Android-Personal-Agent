@@ -26,6 +26,26 @@ class PowerDiagnosticReportTest {
     }
 
     @Test
+    fun truncatedSourceWithCapturedPrefixIsReportedAsPartialInsteadOfMissing() {
+        val base = sampleSnapshot()
+        val report = PowerDiagnosticReportBuilder.build(
+            base.copy(
+                sources = base.sources + (
+                    "batterystats" to DiagnosticSourceResult(
+                        "batterystats",
+                        DiagnosticSourceStatus.TRUNCATED,
+                        "输出过长，已截断"
+                    )
+                )
+            )
+        )
+
+        assertTrue(report.contains("部分数据：batterystats（输出截断，已解析已获取的关键字段）"))
+        assertFalse(report.contains("未获取：batterystats"))
+        assertTrue(report.contains("证据：唤醒锁累计 24 分钟"))
+    }
+
+    @Test
     fun reportIsBoundedAndDoesNotContainRawOutput() {
         val report = PowerDiagnosticReportBuilder.build(
             sampleSnapshot(title = "x".repeat(50_000))

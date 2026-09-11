@@ -44,4 +44,18 @@ class RootCommandRunnerTest {
         assertEquals(DiagnosticSourceStatus.TRUNCATED, result.status)
         assertTrue(result.truncated)
     }
+
+    @Test
+    fun missingWakeupSourcesIsReportedAsUnsupported() {
+        val result = RootCommandRunner.classifyForTest(
+            command = AllowedRootCommand.WAKEUP,
+            exitCode = 1,
+            output = "",
+            truncated = false
+        )
+
+        assertEquals(DiagnosticSourceStatus.UNSUPPORTED, result.status)
+        assertEquals("", result.output)
+        assertTrue(result.detail.orEmpty().contains("不支持"))
+    }
 }

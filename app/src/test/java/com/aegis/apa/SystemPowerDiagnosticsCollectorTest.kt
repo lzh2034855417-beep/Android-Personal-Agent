@@ -41,7 +41,8 @@ class SystemPowerDiagnosticsCollectorTest {
             visited += command
             val output = when (command) {
                 AllowedRootCommand.PACKAGES -> "package:com.example.chat uid:10123"
-                AllowedRootCommand.BATTERYSTATS -> "Uid u0a123: 240.0"
+                AllowedRootCommand.BATTERYSTATS ->
+                    "Estimated power use (mAh):\n  UID u0a123: 240.0 fg: 10.0 bg: 230.0"
                 else -> ""
             }
             RootCommandResult(command, DiagnosticSourceStatus.AVAILABLE, output)

@@ -63,6 +63,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import com.aegis.apa.agent.MessageRole
 import com.aegis.apa.agent.AgentReport
+import com.aegis.apa.agent.AgentPlainTextFormatter
 import com.aegis.apa.agent.AgentConversationMessage
 import com.aegis.apa.agent.AgentFailure
 import com.aegis.apa.agent.AgentFailureException
@@ -478,10 +479,10 @@ private fun DeviceSnapshot.toDeviceContext() = DeviceContext(
 )
 
 private fun AgentReport.toChatContent(): String = buildString {
-    append(summary)
+    append(AgentPlainTextFormatter.format(summary))
     findings.forEach { finding ->
         appendLine()
-        append("• $finding")
+        append("• ${AgentPlainTextFormatter.format(finding)}")
     }
 }
 
