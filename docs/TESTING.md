@@ -2,6 +2,15 @@
 
 审计日期：2026-09-09，实机记录核对至 2026-09-10。本次未发布、未覆盖手机正式版、未调用真实模型服务；经用户授权在手机安装独立 Preview 执行测试。
 
+## 系统耗电诊断分支验收（2026-09-11）
+
+- 分支：`codex/system-power-diagnostics`；验收提交前代码：`bb5d2f9`。
+- 命令：`:app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:compileDebugAndroidTestKotlin`，Gradle 退出码 0。
+- JVM：91 项，0 failure、0 error、0 skipped。覆盖报告上限、解析、关键包保护、Root 白名单、超时/截断分类、部分成功、会话选择和云端提示边界。
+- Debug Lint 成功；Debug APK 生成；Android 仪器测试源码编译成功。源码搜索未发现 `batterystats --reset`、force-stop、卸载、`settings put` 或 sysfs 写入命令；Manifest 未增加存储权限。
+- `adb devices` 无设备。本分支没有执行 Root 授权、OEM dumpsys 格式、真实采集时长、界面滚动和 connectedDebugAndroidTest；不得将以前的 Xiaomi 测试结果算作本功能的真机通过。
+- 未请求真实模型服务、未读取用户 Key、未改变 Scene 或系统设置。第一版只显示诊断和手动建议。
+
 ## 模型响应可靠性修复（2026-09-10，当前代码）
 
 - JVM：89 项，0 failure/error/skipped；新增 9 项测试。异常正文和密钥对象输出的两项测试在旧代码下失败，修复后通过。
