@@ -76,6 +76,8 @@ import com.aegis.apa.agent.DeviceContext
 import com.aegis.apa.agent.Level0ReportBuilder
 import com.aegis.apa.agent.LocalDeviceAnalyzer
 import com.aegis.apa.agent.PowerDiagnosticReportBuilder
+import com.aegis.apa.navigation.ShizukuDestination
+import com.aegis.apa.navigation.ShizukuNavigationPolicy
 import com.aegis.apa.tool.AppTool
 import com.aegis.apa.model.AppDetails
 import com.aegis.apa.model.AppCategory
@@ -447,22 +449,21 @@ class MainActivity : ComponentActivity() {
     private fun openShizuku() {
         val packageName = "moe.shizuku.privileged.api"
         val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-        if (launchIntent != null) {
-            startActivity(launchIntent)
-            return
-        }
-
-        val marketIntent = android.content.Intent(
-            android.content.Intent.ACTION_VIEW,
-            android.net.Uri.parse("market://details?id=$packageName")
-        )
-        runCatching { startActivity(marketIntent) }.getOrElse {
-            startActivity(
-                android.content.Intent(
+        when (val destination = ShizukuNavigationPolicy.destination(launchIntent != null)) {
+            ShizukuDestination.InstalledApp -> launchIntent?.let(::startActivity)
+            is ShizukuDestination.Browser -> {
+                val browserIntent = android.content.Intent(
                     android.content.Intent.ACTION_VIEW,
-                    android.net.Uri.parse("https://play.google.com/store/apps/details?id=$packageName")
-                )
-            )
+                    android.net.Uri.parse(destination.url)
+                ).addCategory(android.content.Intent.CATEGORY_BROWSABLE)
+                runCatching { startActivity(browserIntent) }.onFailure {
+                    android.widget.Toast.makeText(
+                        this,
+                        "未找到可打开下载页面的浏览器",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
         }
     }
 }
@@ -956,11 +957,11 @@ fun CapabilitySectionsScreen(
                     text = if (rootStatus.isShizukuInstalled) {
                         "已检测到 Shizuku。打开后启动服务，并在 Shizuku 中授权 APA。"
                     } else {
-                        "未安装 Shizuku。点击按钮前往安装页面。"
+                        "未安装 Shizuku。点击按钮用浏览器打开官方下载页面，可选择酷安、GitHub 或 F-Droid。"
                     }
                 )
                 Button(onClick = onOpenShizuku) {
-                    Text(text = if (rootStatus.isShizukuInstalled) "打开 Shizuku" else "安装 Shizuku")
+                    Text(text = if (rootStatus.isShizukuInstalled) "打开 Shizuku" else "浏览器下载 Shizuku")
                 }
             }
         }
