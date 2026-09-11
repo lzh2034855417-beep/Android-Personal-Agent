@@ -1,6 +1,6 @@
 package com.aegis.apa.tool
 
-import java.util.concurrent.TimeUnit
+import com.aegis.apa.model.DiagnosticSourceStatus
 
 data class RootBatteryInfo(
     val designCapacityMah: Long?,
@@ -17,36 +17,14 @@ data class RootBatteryInfo(
 
 object RootBatteryTool {
     fun read(): RootBatteryInfo {
-        val command = """
-            for key in charge_full_design charge_full cycle_count current_now voltage_now temp; do
-              for path in /sys/class/power_supply/battery/${'$'}key /sys/class/power_supply/Battery/${'$'}key; do
-                if [ -r "${'$'}path" ]; then
-                  echo "${'$'}key=${'$'}(cat "${'$'}path")"
-                  break
-                fi
-              done
-            done
-        """.trimIndent()
-
-        val process = runCatching {
-            ProcessBuilder("su", "-c", command)
-                .redirectErrorStream(true)
-                .start()
-        }.getOrElse {
-            return emptyInfo("无法启动 Root 命令")
+        val result = RootCommandRunner.runBatteryHealth()
+        return when (result.status) {
+            DiagnosticSourceStatus.AVAILABLE,
+            DiagnosticSourceStatus.TRUNCATED -> RootBatteryParser.parse(result.output)
+            DiagnosticSourceStatus.TIMED_OUT -> emptyInfo("Root 授权超时")
+            DiagnosticSourceStatus.PERMISSION_DENIED -> emptyInfo(result.detail ?: "Root 授权被拒绝或执行失败")
+            else -> emptyInfo("Root 授权被拒绝或执行失败")
         }
-
-        if (!process.waitFor(8, TimeUnit.SECONDS)) {
-            process.destroyForcibly()
-            return emptyInfo("Root 授权超时")
-        }
-
-        val output = process.inputStream.bufferedReader().use { it.readText() }
-        if (process.exitValue() != 0) {
-            return emptyInfo("Root 授权被拒绝或执行失败")
-        }
-
-        return RootBatteryParser.parse(output)
     }
 
     private fun emptyInfo(error: String) = RootBatteryInfo(
