@@ -6,10 +6,19 @@ import com.aegis.apa.agent.AgentConversationMessage
 import com.aegis.apa.agent.MessageRole
 import com.aegis.apa.model.AppDetails
 import com.aegis.apa.model.DeviceSnapshot
+import com.aegis.apa.model.PowerDiagnosticSnapshot
 import com.aegis.apa.tool.DeviceProfileSnapshot
 import com.aegis.apa.tool.RootBatteryInfo
 
-/** In-memory session only. No credentials, Activity references or large saved-state Bundles. */
+sealed interface PowerDiagnosticUiState {
+    data object Idle : PowerDiagnosticUiState
+    data class Collecting(val completed: Int, val total: Int, val source: String) : PowerDiagnosticUiState
+    data object Ready : PowerDiagnosticUiState
+    data class Error(val message: String) : PowerDiagnosticUiState
+    data object Interrupted : PowerDiagnosticUiState
+}
+
+/** In-memory session only. No credentials, Activity references, raw command output or large saved-state Bundles. */
 class MainSessionViewModel : ViewModel() {
     val agent = AgentPageState()
     val snapshot = mutableStateOf<DeviceSnapshot?>(null)
@@ -20,8 +29,13 @@ class MainSessionViewModel : ViewModel() {
     val deviceProfileReading = mutableStateOf(false)
     val messages = mutableStateOf<List<AgentConversationMessage>>(emptyList())
     val analyzing = mutableStateOf(false)
+    val powerDiagnostic = mutableStateOf<PowerDiagnosticSnapshot?>(null)
+    val powerDiagnosticState = mutableStateOf<PowerDiagnosticUiState>(PowerDiagnosticUiState.Idle)
+    @Deprecated("Scene CSV is replaced by system power diagnostics")
     val sceneReport = mutableStateOf<String?>(null)
+    @Deprecated("Scene CSV is replaced by system power diagnostics")
     val sceneImportStatus = mutableStateOf<String?>(null)
+    @Deprecated("Scene CSV is replaced by system power diagnostics")
     val sceneImportError = mutableStateOf<String?>(null)
     private var analysisGeneration = 0L
     private var onlineAnalysis = false
@@ -43,7 +57,7 @@ class MainSessionViewModel : ViewModel() {
     fun interruptAnalysis(generation: Long? = null) {
         if (generation != null && generation != analysisGeneration) return
         if (!analyzing.value) return
-        ++analysisGeneration // Ignore completion from the destroyed Activity's request.
+        ++analysisGeneration
         analyzing.value = false
         messages.value = messages.value + AgentConversationMessage(
             role = MessageRole.ERROR,
@@ -59,6 +73,8 @@ class AgentPageState {
     val selectedLevel = mutableStateOf("Level 0")
     val includeUsageReport = mutableStateOf(false)
     val includeAppReport = mutableStateOf(false)
+    val includePowerDiagnosticReport = mutableStateOf(false)
+    @Deprecated("Scene CSV is replaced by system power diagnostics")
     val includeSceneReport = mutableStateOf(false)
     val reportPickerExpanded = mutableStateOf(false)
     val draft = mutableStateOf("")

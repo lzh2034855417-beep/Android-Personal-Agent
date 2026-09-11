@@ -55,6 +55,38 @@ object CloudProviderCatalog {
     fun find(name: String): CloudProviderConfig? = providers.firstOrNull { it.name == name }
 }
 
+internal fun buildCloudAnalysisPrompt(
+    context: DeviceContext,
+    userQuestion: String,
+    selectedLevel: String,
+    levelReport: String,
+    appReport: String?,
+    powerDiagnosticReport: String?
+): String = buildString {
+    appendLine("【用户问题】")
+    appendLine(userQuestion)
+    appendLine()
+    appendLine("【本次选择】")
+    appendLine(selectedLevel)
+    appendLine()
+    appendLine("【基础设备快照】")
+    appendLine("设备：${context.deviceModel}")
+    appendLine("系统：${context.androidVersion}")
+    appendLine("电量：${context.batteryLevel?.let { "$it%" } ?: "未获取到"}")
+    appendLine("RAM：可用 ${context.availableRamBytes} B / 总计 ${context.totalRamBytes} B")
+    appendLine("存储：可用 ${context.availableStorageBytes} B / 总计 ${context.totalStorageBytes} B")
+    appendLine("可启动应用数量：${context.launchableAppCount}")
+    appendLine()
+    appendLine("【Level 报告】")
+    appendLine(levelReport)
+    appendLine()
+    appendLine("【应用报告】")
+    appendLine(appReport ?: "本次未附带")
+    appendLine()
+    appendLine("【系统耗电诊断】")
+    appendLine(powerDiagnosticReport ?: "本次未附带")
+}
+
 object CloudLlmProvider {
     fun analyze(
         context: DeviceContext,
@@ -62,6 +94,7 @@ object CloudLlmProvider {
         selectedLevel: String,
         levelReport: String,
         appReport: String?,
+        powerDiagnosticReport: String? = null,
         conversationHistory: List<AgentConversationMessage>,
         credentials: StoredApiKey
     ): AgentReport {
@@ -72,30 +105,14 @@ object CloudLlmProvider {
 
         val systemPrompt = AgentPromptPolicy.systemPrompt()
 
-        val prompt = buildString {
-            appendLine("【用户问题】")
-            appendLine(userQuestion)
-            appendLine()
-            appendLine("【本次选择】")
-            appendLine(selectedLevel)
-            appendLine()
-            appendLine("【基础设备快照】")
-            appendLine("设备：${context.deviceModel}")
-            appendLine("系统：${context.androidVersion}")
-            appendLine("电量：${context.batteryLevel?.let { "$it%" } ?: "未获取到"}")
-            appendLine("RAM：可用 ${context.availableRamBytes} B / 总计 ${context.totalRamBytes} B")
-            appendLine("存储：可用 ${context.availableStorageBytes} B / 总计 ${context.totalStorageBytes} B")
-            appendLine("可启动应用数量：${context.launchableAppCount}")
-            appendLine()
-            appendLine("【Level 报告】")
-            appendLine(levelReport)
-            appendLine()
-            appendLine("【应用报告】")
-            appendLine(appReport ?: "本次未附带")
-            appendLine()
-            appendLine("【Scene 一天续航报告】")
-            appendLine("本次未附带；Scene 导入仅供本地查看")
-        }
+        val prompt = buildCloudAnalysisPrompt(
+            context = context,
+            userQuestion = userQuestion,
+            selectedLevel = selectedLevel,
+            levelReport = levelReport,
+            appReport = appReport,
+            powerDiagnosticReport = powerDiagnosticReport
+        )
 
         val historyMessages = JSONArray()
         CloudHistoryPolicy.select(conversationHistory, credentials.provider)
