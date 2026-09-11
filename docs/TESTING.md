@@ -15,7 +15,7 @@
 
 - JVM：80 项，0 failure/error/skipped，新增 3 项请求中断/重试代次保护及在线重试提示测试。
 - Debug/Release Lint 和 Preview/androidTest 构建成功，Lint 各 0 错误、23 个已有警告。
-- 新增 4 项仪器测试：草稿/等级/Scene 跨切页和重建、本地对话及清空跨重建、待完成分析重建后的中断提示及重试入口，以及设置页服务选择恢复后对应凭据槽位匹配（仅隔离合成凭据）。仅编译通过，当前没有连接设备，未执行这些新增用例；下方前轮 11/11 不能作为本次状态修复的实机证据。
+- 仪器测试覆盖草稿/等级/系统耗电诊断跨切页和重建、默认不发送、本地对话及清空、分析中断和设置状态。当前仅完成编译，本分支没有连接设备，不能把前轮真机结果当作新诊断的实机证据。
 - 会话内容存于 Activity 级 ViewModel；页面 SaveableStateHolder 只保存滚动等轻量状态。API Key 和大段报告/对话不写入 SavedState Bundle。彻底退出和进程回收不恢复会话。
 - 独立审查后修正了自动滚动覆盖恢复位置、设置页恢复后的服务/凭据槽位错配。网络层仍使用阻塞 HTTP，重建时会话停止接收旧结果，但旧连接可能继续至响应或超时；在线中断提示明确重试是新请求，不声称已撤回请求。真实网络取消测试仍待传输层改造。
 - 测试先添加；首轮 JVM 因新状态类尚未存在而编译失败，不将其描述为已在旧版设备复现。手机连接后需运行完整 connectedDebugAndroidTest（现 15 项），保持独立 Preview 前台。
@@ -43,9 +43,10 @@
 | 测试 | 保护的行为 |
 | --- | --- |
 | DevicePublicNameTest / DeviceIdentityTest | 错误厂商不能套用映射；系统占位符、土耳其 locale、原值保留、数据库失败、重复品牌、未知 codename |
-| SceneCsvParserTest | 严格数字、越界百分比、科学计数法、显式单位、重复语义列、错列数、BOM/中文/引号 |
-| SceneCsvInputTest | UTF-8 中文无损读取、超限拒绝、异常 UTF-8 拒绝 |
-| SceneReportBuilderTest | 时间不足不推断，中途电量回升不当成持续耗电，区间速率保留限制 |
+| PowerDiagnosticParserTest | UID/包名映射、共享 UID、来源截断、power/idle/thermal 保守解析 |
+| PowerDiagnosticFindingEngineTest | 多证据置信度、单证据只观察、关键包不成为冻结候选 |
+| PowerDiagnosticReportTest / PowerDiagnosticPromptTest | 事实与建议分离、16 KiB 上限、缺失来源、默认不发送和显式附件边界 |
+| RootCommandRunnerTest / SystemPowerDiagnosticsCollectorTest | 固定只读白名单、失败输出不泄露、截断、部分成功及完整来源遍历 |
 | CloudHistoryPolicyTest | 本地 Scene/提问排除、切换服务商隔离、先过滤后截取历史 |
 | RootBatteryParserTest | sysfs 单位、带符号电流、数字循环数、非法读数、0 次循环 |
 | TelemetryBoundaryTest | 未知电量、无效 RAM/存储不评价正常 |
@@ -57,7 +58,7 @@
 
 ## 仪器测试维护
 
-`StabilityUiTest` 使用语义输入框和当前 Scene 导入入口；设置返回采用真实 Back 事件，不再重新启动不匹配的 Activity。增加软键盘弹出/收回、输入栏可见、距键盘不超过 48 dp、导航恢复和草稿保留断言，不点击在线发送。
+`StabilityUiTest` 使用语义输入框和系统耗电诊断入口，断言旧 Scene CSV 入口不存在且诊断默认不发送；设置返回采用真实 Back 事件。新增诊断用例尚未在设备执行。
 
 `ExampleInstrumentedTest` 已用真实 FileProvider 读文件及拒绝缓存目录外文件测试替换模板包名断言，两项已在上述设备通过。测试只创建/删除自己的合成临时文件。
 

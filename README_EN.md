@@ -11,7 +11,7 @@ An experimental Android app that explains battery, heat and resource readings us
 - Local device/display/battery/RAM/storage readings, limited local rules and previewable PNG report cards, without a model key.
 - Structured device identity: original system identifiers, resolved display name and lookup source. Unknown models fall back to the system value.
 - User-triggered cloud analysis with a personally configured provider key; limited local rules when no valid configuration is available.
-- Local Scene CSV import and interval summaries. Scene is not an online attachment.
+- User-triggered, read-only Root power diagnostics with evidence, confidence and manual Scene recommendations.
 - Optional Usage Access, Shizuku and Root; ordinary Android APIs work independently.
 
 APA returns explanations; it does not execute model suggestions or change scheduling, clean files or flash devices. A single snapshot cannot establish battery lifetime or a replacement decision.
@@ -25,9 +25,11 @@ APA returns explanations; it does not execute model suggestions or change schedu
 
 The configured catalog includes DeepSeek, OpenAI, Anthropic, MiMo and Kimi. See [CloudProviderCatalog](app/src/main/java/com/aegis/apa/agent/CloudLlmProvider.kt) for configured model/endpoint values. These defaults are not proof of account availability; this audit made no live provider requests.
 
-### Scene import
+### System power diagnostics
 
-Save a Scene CSV to the phone, then use **Agent → Select report → Import Scene CSV**. The import count and summary appear locally. UTF-8 (including BOM), comma-separated, at most 2 MiB. Common Chinese/English headers are supported. Numeric units belong in headers: mA/uA/A and mW/W are converted explicitly. Screenshots, PDFs and multiline quoted fields are unsupported; not every Scene export version has been tested. See the [synthetic example](docs/examples/scene-example.csv) and [data contract](docs/DATA_MODEL.md).
+Use **Agent → Select report → System power diagnostics → Start read-only diagnostics** and grant Root when prompted. APA runs only a fixed allowlist of power-related reads. Unsupported, denied or timed-out sources are reported without discarding successful sections. Results separate facts, interpretation, confidence and manual Scene advice. APA never freezes, throttles or changes settings.
+
+The compact diagnostic is off by default for every question. If explicitly selected, only the bounded human-readable summary is sent; raw Root output is neither sent nor retained in session state.
 
 ## Capability levels
 
