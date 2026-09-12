@@ -673,7 +673,7 @@ fun DeviceReportScreen(
                         ?.mapNotNull { it.maxFrequencyKhz }
                         ?.maxOrNull()
                 )
-                InfoLine("🏅", "硬件等级", "${hardwareGrade.label} · ${hardwareGrade.summary}")
+                DetailLine("🏅", "硬件等级", "${hardwareGrade.label} · ${hardwareGrade.summary}")
                 hardwareGrade.reasons.forEach { reason ->
                     InfoLine("", "依据", reason)
                 }
