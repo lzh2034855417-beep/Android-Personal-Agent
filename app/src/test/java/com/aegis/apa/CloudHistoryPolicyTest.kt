@@ -31,4 +31,18 @@ class CloudHistoryPolicyTest {
         assertEquals("message 8", result.first().content)
         assertEquals("message 19", result.last().content)
     }
+
+    @Test fun freshDiagnosticDoesNotReuseEarlierAssistantConclusions() {
+        val messages = listOf(
+            AgentConversationMessage(MessageRole.USER, "之前为什么耗电", cloudProvider = "DeepSeek"),
+            AgentConversationMessage(MessageRole.ASSISTANT, "之前证据不足", cloudProvider = "DeepSeek")
+        )
+
+        val result = CloudHistoryPolicy.select(
+            messages = messages,
+            provider = "DeepSeek",
+            freshDiagnostic = true
+        )
+        assertTrue(result.isEmpty())
+    }
 }

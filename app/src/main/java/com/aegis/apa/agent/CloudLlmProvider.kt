@@ -66,6 +66,19 @@ internal fun buildCloudAnalysisPrompt(
     appendLine("【用户问题】")
     appendLine(userQuestion)
     appendLine()
+    if (powerDiagnosticReport != null) {
+        appendLine("【回答任务：耗电诊断】")
+        appendLine("先用一句话给出第一嫌疑；然后按证据强弱列出最多 3 个嫌疑应用。")
+        appendLine("每个嫌疑必须写出应用名或包名、报告中的原始数值、原因和置信度。")
+        appendLine("每个嫌疑只给一项 Scene 手动操作，并说明预期作用、副作用和回退方法；不得声称已经执行。")
+        appendLine("如果证据仍不足，不要复述所有缺失栏目，只给出一个最有价值的下一步采样动作。")
+        appendLine()
+    } else {
+        appendLine("【回答任务】")
+        appendLine("直接回答当前问题；只引用下方实际附带的数据，不要讨论未附带的报告。")
+        appendLine("按结论、依据、一个可执行建议组织；证据不足时只指出最关键缺口。")
+        appendLine()
+    }
     appendLine("【本次选择】")
     appendLine(selectedLevel)
     appendLine()
@@ -79,12 +92,16 @@ internal fun buildCloudAnalysisPrompt(
     appendLine()
     appendLine("【Level 报告】")
     appendLine(levelReport)
-    appendLine()
-    appendLine("【应用报告】")
-    appendLine(appReport ?: "本次未附带")
-    appendLine()
-    appendLine("【系统耗电诊断】")
-    appendLine(powerDiagnosticReport ?: "本次未附带")
+    appReport?.let {
+        appendLine()
+        appendLine("【应用报告】")
+        appendLine(it)
+    }
+    powerDiagnosticReport?.let {
+        appendLine()
+        appendLine("【系统耗电诊断】")
+        appendLine(it)
+    }
 }
 
 object CloudLlmProvider {
@@ -115,7 +132,11 @@ object CloudLlmProvider {
         )
 
         val historyMessages = JSONArray()
-        CloudHistoryPolicy.select(conversationHistory, credentials.provider)
+        CloudHistoryPolicy.select(
+            messages = conversationHistory,
+            provider = credentials.provider,
+            freshDiagnostic = powerDiagnosticReport != null
+        )
             .forEach { message ->
                 historyMessages.put(
                     JSONObject()
