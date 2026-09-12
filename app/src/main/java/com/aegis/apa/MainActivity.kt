@@ -72,6 +72,7 @@ import com.aegis.apa.agent.CloudLlmProvider
 import com.aegis.apa.agent.CloudProviderCatalog
 import com.aegis.apa.agent.ApiKeyStore
 import com.aegis.apa.agent.ApiSession
+import com.aegis.apa.agent.AgentMessageCopyPolicy
 import com.aegis.apa.agent.DeviceContext
 import com.aegis.apa.agent.Level0ReportBuilder
 import com.aegis.apa.agent.LocalDeviceAnalyzer
@@ -409,6 +410,15 @@ class MainActivity : ComponentActivity() {
                                 onCopyPackage = { packageName ->
                                     val clipboard = getSystemService(android.content.ClipboardManager::class.java)
                                     clipboard.setPrimaryClip(android.content.ClipData.newPlainText("package", packageName))
+                                },
+                                onCopyMessage = { messageText ->
+                                    val clipboard = getSystemService(android.content.ClipboardManager::class.java)
+                                    clipboard.setPrimaryClip(
+                                        android.content.ClipData.newPlainText("APA AI 回复", messageText)
+                                    )
+                                    android.widget.Toast.makeText(
+                                        this@MainActivity, "AI 回复已复制", android.widget.Toast.LENGTH_SHORT
+                                    ).show()
                                 },
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 16.dp)
                             )
@@ -1062,6 +1072,7 @@ fun AgentChatScreen(
     onCollectPowerDiagnostic: () -> Unit,
     onRemovePowerDiagnostic: () -> Unit,
     onCopyPackage: (String) -> Unit,
+    onCopyMessage: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var selectedLevel by state.selectedLevel
@@ -1148,6 +1159,7 @@ fun AgentChatScreen(
             }
 
             messages.forEach { message ->
+                val copyText = AgentMessageCopyPolicy.copyText(message)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = if (message.role == MessageRole.USER) {
@@ -1172,6 +1184,16 @@ fun AgentChatScreen(
                             }
                             message.source?.let { source ->
                                 Text(text = source, color = colors.onSurfaceVariant, style = androidx.compose.material3.MaterialTheme.typography.labelSmall)
+                            }
+                            copyText?.let { text ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End
+                                ) {
+                                    TextButton(onClick = { onCopyMessage(text) }) {
+                                        Text("复制全文")
+                                    }
+                                }
                             }
                         }
                     }
