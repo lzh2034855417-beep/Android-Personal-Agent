@@ -11,20 +11,14 @@ class SystemPowerDiagnosticsCollector(
     fun collect(onProgress: ((completed: Int, total: Int, source: String) -> Unit)? = null): PowerDiagnosticSnapshot {
         val startedNanos = System.nanoTime()
         val commands = AllowedRootCommand.entries
-        val sections = commands.mapIndexed { index, command ->
+        val results = commands.mapIndexed { index, command ->
             val result = runner.run(command)
             onProgress?.invoke(index + 1, commands.size, command.source)
-            RawDiagnosticSection(
-                source = command.source,
-                status = result.status,
-                output = result.output,
-                truncated = result.truncated,
-                detail = result.detail
-            )
+            result
         }
         val elapsedMillis = (System.nanoTime() - startedNanos) / 1_000_000
         val parsed = PowerDiagnosticParser.parse(
-            sections = sections,
+            sections = RootDiagnosticAdapter.toSections(results),
             sampledAt = clock.instant(),
             collectionDurationMillis = elapsedMillis
         )
