@@ -2,9 +2,14 @@ package com.aegis.apa
 
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.SavedStateHandle
 import com.aegis.apa.agent.AgentConversationMessage
 import com.aegis.apa.agent.MessageRole
 import com.aegis.apa.model.AppDetails
+import com.aegis.apa.model.BatteryObservationAnalyzer
+import com.aegis.apa.model.BatteryObservationPoint
+import com.aegis.apa.model.BatteryObservationResult
+import com.aegis.apa.model.BatteryObservationValidity
 import com.aegis.apa.model.DeviceSnapshot
 import com.aegis.apa.model.PowerDiagnosticSnapshot
 import com.aegis.apa.tool.DeviceProfileSnapshot
@@ -19,8 +24,10 @@ sealed interface PowerDiagnosticUiState {
     data object Interrupted : PowerDiagnosticUiState
 }
 
-/** In-memory session only. No credentials, Activity references, raw command output or large saved-state Bundles. */
-class MainSessionViewModel : ViewModel() {
+/** Session state; only the small battery-observation checkpoint enters SavedState. Never store credentials or raw reports here. */
+class MainSessionViewModel(
+    private val savedStateHandle: SavedStateHandle = SavedStateHandle()
+) : ViewModel() {
     val agent = AgentPageState()
     val snapshot = mutableStateOf<DeviceSnapshot?>(null)
     val selectedAppDetails = mutableStateOf<AppDetails?>(null)
@@ -32,6 +39,17 @@ class MainSessionViewModel : ViewModel() {
     val analyzing = mutableStateOf(false)
     val powerDiagnostic = mutableStateOf<PowerDiagnosticSnapshot?>(null)
     val powerDiagnosticState = mutableStateOf<PowerDiagnosticUiState>(PowerDiagnosticUiState.Idle)
+    val batteryObservationStart = mutableStateOf(restoredObservationPoint(START_PREFIX))
+    val batteryObservationResult = mutableStateOf(restoredObservationResult())
+    val batteryObservationNotice = mutableStateOf(
+        when {
+            batteryObservationStart.value != null -> "已恢复进行中的续航观察；保持不充电，至少 30 分钟后结束。"
+            batteryObservationResult.value != null -> BatteryObservationAnalyzer.explanation(
+                batteryObservationResult.value!!.validity
+            )
+            else -> null
+        }
+    )
     private var analysisGeneration = 0L
     private var onlineAnalysis = false
 
@@ -39,6 +57,52 @@ class MainSessionViewModel : ViewModel() {
         powerDiagnostic.value = snapshot
         powerDiagnosticState.value = PowerDiagnosticUiState.Ready
         agent.includePowerDiagnosticReport.value = true
+    }
+
+    fun startBatteryObservation(point: BatteryObservationPoint) {
+        if (batteryObservationStart.value != null) {
+            batteryObservationNotice.value = "续航观察已经在进行中。"
+            return
+        }
+        val error = BatteryObservationAnalyzer.startError(point)
+        if (error != null) {
+            batteryObservationNotice.value = error
+            return
+        }
+        batteryObservationStart.value = point
+        batteryObservationResult.value = null
+        saveObservationPoint(START_PREFIX, point)
+        saveObservationResult(null)
+        batteryObservationNotice.value = "观察已开始。保持设备不充电，建议正常使用至少 30 分钟。"
+    }
+
+    fun finishBatteryObservation(point: BatteryObservationPoint) {
+        val start = batteryObservationStart.value
+        if (start == null) {
+            batteryObservationNotice.value = "还没有开始续航观察。"
+            return
+        }
+        val result = BatteryObservationAnalyzer.finish(start, point)
+        val canContinue = result.validity in setOf(
+            BatteryObservationValidity.MISSING_BATTERY_LEVEL,
+            BatteryObservationValidity.TOO_SHORT,
+            BatteryObservationValidity.NO_MEASURABLE_DROP
+        )
+        if (!canContinue) {
+            batteryObservationStart.value = null
+            batteryObservationResult.value = result
+            saveObservationPoint(START_PREFIX, null)
+            saveObservationResult(result)
+        }
+        batteryObservationNotice.value = BatteryObservationAnalyzer.explanation(result.validity)
+    }
+
+    fun clearBatteryObservation() {
+        batteryObservationStart.value = null
+        batteryObservationResult.value = null
+        batteryObservationNotice.value = null
+        saveObservationPoint(START_PREFIX, null)
+        saveObservationResult(null)
     }
 
     fun beginAnalysis(online: Boolean = false): Long {
@@ -67,6 +131,46 @@ class MainSessionViewModel : ViewModel() {
             else "本次分析已中断，请重新发送。",
             source = "LOCAL · INTERRUPTED"
         )
+    }
+
+    private fun restoredObservationResult(): BatteryObservationResult? {
+        val start = restoredObservationPoint(RESULT_START_PREFIX) ?: return null
+        val end = restoredObservationPoint(RESULT_END_PREFIX) ?: return null
+        return BatteryObservationAnalyzer.finish(start, end)
+    }
+
+    private fun restoredObservationPoint(prefix: String): BatteryObservationPoint? {
+        val epochMillis = savedStateHandle.get<Long>("${prefix}_time") ?: return null
+        val storedLevel = savedStateHandle.get<Int>("${prefix}_level") ?: return null
+        val charging = savedStateHandle.get<Boolean>("${prefix}_charging") ?: return null
+        return BatteryObservationPoint(
+            sampledAtInstant = java.time.Instant.ofEpochMilli(epochMillis),
+            levelPercent = storedLevel.takeIf { it >= 0 },
+            charging = charging
+        )
+    }
+
+    private fun saveObservationPoint(prefix: String, point: BatteryObservationPoint?) {
+        if (point == null) {
+            savedStateHandle.remove<Long>("${prefix}_time")
+            savedStateHandle.remove<Int>("${prefix}_level")
+            savedStateHandle.remove<Boolean>("${prefix}_charging")
+            return
+        }
+        savedStateHandle["${prefix}_time"] = point.sampledAtInstant.toEpochMilli()
+        savedStateHandle["${prefix}_level"] = point.levelPercent ?: -1
+        savedStateHandle["${prefix}_charging"] = point.charging
+    }
+
+    private fun saveObservationResult(result: BatteryObservationResult?) {
+        saveObservationPoint(RESULT_START_PREFIX, result?.start)
+        saveObservationPoint(RESULT_END_PREFIX, result?.end)
+    }
+
+    private companion object {
+        const val START_PREFIX = "battery_observation_start"
+        const val RESULT_START_PREFIX = "battery_observation_result_start"
+        const val RESULT_END_PREFIX = "battery_observation_result_end"
     }
 }
 

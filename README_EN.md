@@ -11,6 +11,7 @@ An experimental Android app that explains battery, heat and resource readings us
 - Local device/display/battery/RAM/storage readings, limited local rules and previewable PNG report cards, without a model key.
 - Structured device identity: original system identifiers, resolved display name and lookup source. Unknown models fall back to the system value.
 - User-triggered cloud analysis with a personally configured provider key; limited local rules when no valid configuration is available.
+- Root-free battery observation that records unplugged start/end samples and computes the measured drain rate locally; charging, intervals under 30 minutes, rising charge, and unmeasurable drops are rejected.
 - User-triggered, read-only Root power diagnostics with evidence, confidence and manual Scene recommendations.
 - Optional Usage Access, Shizuku and Root; ordinary Android APIs work independently.
 
@@ -26,6 +27,10 @@ APA returns explanations; it does not execute model suggestions or change schedu
 The configured catalog includes DeepSeek, OpenAI, Anthropic, MiMo and Kimi. See [CloudProviderCatalog](app/src/main/java/com/aegis/apa/agent/CloudLlmProvider.kt) for configured model/endpoint values. These defaults are not proof of account availability; this audit made no live provider requests.
 
 ### System power diagnostics
+
+For “how fast did this interval drain?” use **Agent → Select report → System power diagnostics → Start battery observation**. Unplug first, use the phone normally for at least 30 minutes, then finish the observation. APA computes the average rate locally from the two samples. This does not identify a responsible app. A small checkpoint participates in Android saved-state restoration, but force-stop, task removal, or app-data clearing should be treated as a new observation.
+
+For “which app or system component caused the drain?”, import an Android system Bug Report or use the Root read-only collector below. APA treats rate measurement and app attribution as different evidence and no longer substitutes a single instantaneous battery snapshot.
 
 Use **Agent → Select report → System power diagnostics → Start read-only diagnostics** and grant Root when prompted. APA runs only a fixed allowlist of power-related reads. Unsupported, denied or timed-out sources are reported without discarding successful sections. Results separate facts, interpretation, confidence and manual Scene advice. APA never freezes, throttles or changes settings.
 
@@ -45,12 +50,13 @@ App visibility can limit enumeration. Root readings retain separate timestamps a
 
 - Basic readings and visible apps are collected **locally on entry and Activity resume**. Usage events are read if Usage Access was granted. Collection and transmission selection are different boundaries.
 - Explicit online Send triggers a direct provider request with a basic snapshot, selected Level report, optional app report and any diagnostic summary that remains selected after import or collection; there is no APA relay server.
+- Deterministic battery-observation answers are generated locally. Configuring a provider key does not automatically send the exact observation timestamps or battery trajectory.
 - A successful system diagnostic selects only its bounded human-readable summary and shows that attachment state clearly. The user can deselect it; the raw Bug Report ZIP and Root output remain local and are released after parsing.
 - Level 0 usage rankings have an independent send toggle, off by default. Granting Usage Access does not select transmission. The base report excludes grades derived from advanced profiles. The report picker explains transmission scope; historical answers may reference earlier data, and clearing the conversation removes that history.
 - Local messages, including Scene summaries, are excluded from cloud history. Switching providers does not forward another provider's history. Up to 12 eligible messages from the same provider can be included, potentially containing previous report details in answers.
 - Keys are encrypted per provider with Android Keystore AES/GCM and expire locally after seven days by default. This does not revoke the provider-issued key.
 - `allowBackup=false` is configured. Legacy cloud backup, Android 31+ cloud backup and device transfer explicitly exclude the credential preferences file. Actual OEM restore behavior remains unverified.
-- An in-memory ViewModel retains Agent drafts, report selections, conversations and Scene summaries across page changes and configuration recreation. Pages retain their scroll positions. Finishing the activity or process death ends the session. Recreation interrupts an active analysis with a retry message; no automatic resend occurs. See TESTING for current device-validation coverage.
+- An in-memory ViewModel retains Agent drafts, report selections, conversations and diagnostic summaries across page changes and configuration recreation. Only the small battery-observation checkpoint additionally enters Android SavedState for eligible system restoration; it is not a long-term database. Force-stop or task removal does not guarantee restoration of the wider session. Recreation interrupts an active analysis with a retry message; no automatic resend occurs. See TESTING for current device-validation coverage.
 
 Do not post keys, account details or unique device identifiers in issues, logs or screenshots. Treat model output as a limited explanation, not a repair verdict.
 

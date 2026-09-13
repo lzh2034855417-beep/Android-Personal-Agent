@@ -18,9 +18,11 @@ object PowerAnalysisPreflight {
 
     fun classify(question: String): PowerQuestionIntent {
         val normalized = question.trim().lowercase()
+        val asksWhy = normalized.contains("为什么") || normalized.contains("什么原因") || normalized.contains("怎么回事")
         return when {
-            drainRateMarkers.any(normalized::contains) -> PowerQuestionIntent.DRAIN_RATE
             attributionMarkers.any(normalized::contains) -> PowerQuestionIntent.ATTRIBUTION
+            asksWhy && drainRateMarkers.any(normalized::contains) -> PowerQuestionIntent.ATTRIBUTION
+            drainRateMarkers.any(normalized::contains) -> PowerQuestionIntent.DRAIN_RATE
             else -> PowerQuestionIntent.OTHER
         }
     }
@@ -28,11 +30,18 @@ object PowerAnalysisPreflight {
     fun blockingMessage(
         question: String,
         diagnosticAvailable: Boolean,
-        diagnosticSelected: Boolean
+        diagnosticSelected: Boolean,
+        observationAvailable: Boolean = false
     ): String? {
-        if (classify(question) == PowerQuestionIntent.OTHER) return null
+        val intent = classify(question)
+        if (intent == PowerQuestionIntent.OTHER) return null
+        if (intent == PowerQuestionIntent.DRAIN_RATE && observationAvailable) return null
         if (!diagnosticAvailable) {
-            return "这次没有系统耗电诊断。请展开“选择报告”，点击“导入系统报告”，选择 Android 系统 Bug Report；导入成功后诊断摘要会自动附加。"
+            return if (intent == PowerQuestionIntent.DRAIN_RATE) {
+                "目前只有单点快照，不能判断掉电速度。请展开“选择报告”，先开始续航观察，拔掉充电器正常使用至少 30 分钟后结束观察；若还想定位具体应用，再导入 Android 系统 Bug Report。"
+            } else {
+                "这次没有系统耗电诊断。请展开“选择报告”，点击“导入系统报告”，选择 Android 系统 Bug Report；导入成功后诊断摘要会自动附加。"
+            }
         }
         if (!diagnosticSelected) {
             return "系统报告已经导入，但本次没有附加诊断摘要。请点击“附加诊断摘要”后重新发送；原始 ZIP 不会发送。"

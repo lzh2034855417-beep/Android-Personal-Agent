@@ -67,6 +67,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import com.aegis.apa.agent.MessageRole
 import com.aegis.apa.agent.PowerAnalysisPreflight
+import com.aegis.apa.agent.PowerQuestionIntent
 import com.aegis.apa.agent.AgentReport
 import com.aegis.apa.agent.AgentPlainTextFormatter
 import com.aegis.apa.agent.AgentConversationMessage
@@ -89,6 +90,9 @@ import com.aegis.apa.model.AppDetails
 import com.aegis.apa.model.AppCategory
 import com.aegis.apa.model.DetectedApp
 import com.aegis.apa.model.BatteryInfo
+import com.aegis.apa.model.BatteryObservationPoint
+import com.aegis.apa.model.BatteryObservationReportBuilder
+import com.aegis.apa.model.BatteryObservationResult
 import com.aegis.apa.tool.BatteryTool
 import com.aegis.apa.model.DeviceInfo
 import com.aegis.apa.tool.DeviceProfileAccess
@@ -180,6 +184,9 @@ class MainActivity : ComponentActivity() {
                 var isOnlineAnalyzing by session.analyzing
                 var powerDiagnostic by session.powerDiagnostic
                 var powerDiagnosticState by session.powerDiagnosticState
+                var batteryObservationStart by session.batteryObservationStart
+                var batteryObservationResult by session.batteryObservationResult
+                var batteryObservationNotice by session.batteryObservationNotice
                 val importBugReportUri: (Uri) -> Unit = { uri ->
                     if (
                         powerDiagnosticState !is PowerDiagnosticUiState.Collecting &&
@@ -272,6 +279,28 @@ class MainActivity : ComponentActivity() {
                             } catch (_: Exception) {
                                 powerDiagnosticState = PowerDiagnosticUiState.Error("无法完成系统耗电采集，请检查 Root 授权后重试。")
                             }
+                        }
+                    }
+                }
+                val onStartBatteryObservation: () -> Unit = {
+                    scope.launch {
+                        try {
+                            session.startBatteryObservation(BatteryObservationPoint.from(refreshSnapshot()))
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Exception) {
+                            batteryObservationNotice = "无法读取当前电量，请重试。"
+                        }
+                    }
+                }
+                val onFinishBatteryObservation: () -> Unit = {
+                    scope.launch {
+                        try {
+                            session.finishBatteryObservation(BatteryObservationPoint.from(refreshSnapshot()))
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Exception) {
+                            batteryObservationNotice = "无法读取结束电量，请重试；观察仍在继续。"
                         }
                     }
                 }
@@ -478,10 +507,27 @@ class MainActivity : ComponentActivity() {
                                         )
                                     )
                                 },
+                                onLocalEvidenceMessage = { question, attachedReportLabel, message ->
+                                    chatMessages = chatMessages + listOf(
+                                        AgentConversationMessage(
+                                            role = MessageRole.USER,
+                                            content = question,
+                                            attachedReportLabel = attachedReportLabel
+                                        ),
+                                        AgentConversationMessage(
+                                            role = MessageRole.ASSISTANT,
+                                            content = message,
+                                            source = "LOCAL · BATTERY OBSERVATION"
+                                        )
+                                    )
+                                },
                                 onClearConversation = { chatMessages = emptyList() },
                                 onOpenSettings = { selectedPage = 4 },
                                 powerDiagnosticState = powerDiagnosticState,
                                 powerDiagnostic = powerDiagnostic,
+                                batteryObservationStart = batteryObservationStart,
+                                batteryObservationResult = batteryObservationResult,
+                                batteryObservationNotice = batteryObservationNotice,
                                 rootAvailable = currentSnapshot.rootStatus.hasSuBinary,
                                 onCollectPowerDiagnostic = onCollectPowerDiagnostic,
                                 onImportBugReport = {
@@ -489,6 +535,9 @@ class MainActivity : ComponentActivity() {
                                         arrayOf("application/zip", "text/plain", "application/octet-stream")
                                     )
                                 },
+                                onStartBatteryObservation = onStartBatteryObservation,
+                                onFinishBatteryObservation = onFinishBatteryObservation,
+                                onClearBatteryObservation = session::clearBatteryObservation,
                                 onRemovePowerDiagnostic = {
                                     powerDiagnostic = null
                                     powerDiagnosticState = PowerDiagnosticUiState.Idle
@@ -501,10 +550,10 @@ class MainActivity : ComponentActivity() {
                                 onCopyMessage = { messageText ->
                                     val clipboard = getSystemService(android.content.ClipboardManager::class.java)
                                     clipboard.setPrimaryClip(
-                                        android.content.ClipData.newPlainText("APA AI 回复", messageText)
+                                        android.content.ClipData.newPlainText("APA 回复", messageText)
                                     )
                                     android.widget.Toast.makeText(
-                                        this@MainActivity, "AI 回复已复制", android.widget.Toast.LENGTH_SHORT
+                                        this@MainActivity, "回复已复制", android.widget.Toast.LENGTH_SHORT
                                     ).show()
                                 },
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 16.dp)
@@ -1174,13 +1223,20 @@ fun AgentChatScreen(
     isOnlineAnalyzing: Boolean,
     onOnlineAnalyze: (String, String, Boolean, Boolean, String, String?) -> Unit,
     onPreflightMessage: (String, String, String) -> Unit,
+    onLocalEvidenceMessage: (String, String, String) -> Unit,
     onClearConversation: () -> Unit,
     onOpenSettings: () -> Unit,
     powerDiagnosticState: PowerDiagnosticUiState,
     powerDiagnostic: PowerDiagnosticSnapshot?,
+    batteryObservationStart: BatteryObservationPoint?,
+    batteryObservationResult: BatteryObservationResult?,
+    batteryObservationNotice: String?,
     rootAvailable: Boolean,
     onCollectPowerDiagnostic: () -> Unit,
     onImportBugReport: () -> Unit,
+    onStartBatteryObservation: () -> Unit,
+    onFinishBatteryObservation: () -> Unit,
+    onClearBatteryObservation: () -> Unit,
     onRemovePowerDiagnostic: () -> Unit,
     onCopyPackage: (String) -> Unit,
     onCopyMessage: (String) -> Unit,
@@ -1194,10 +1250,12 @@ fun AgentChatScreen(
     var userMessage by state.draft
     val chatScrollState = rememberScrollState()
     val colors = androidx.compose.material3.MaterialTheme.colorScheme
+    val usableBatteryObservation = batteryObservationResult?.takeIf { it.isUsableEvidence }
     val attachedReportLabel = listOfNotNull(
         selectedLevel.replace("Level ", "L"),
         "应用".takeIf { includeAppReport && ApiSession.apiKey.isNotBlank() },
         "使用习惯".takeIf { includeUsageReport && selectedLevel == "Level 0" && ApiSession.apiKey.isNotBlank() },
+        "续航观察（本地）".takeIf { usableBatteryObservation != null },
         "系统耗电诊断".takeIf { includePowerDiagnosticReport && powerDiagnostic != null }
     ).joinToString(" · ")
     val providerLabel = CloudProviderCatalog.find(ApiSession.provider)?.shortLabel ?: "未配置模型"
@@ -1389,10 +1447,16 @@ fun AgentChatScreen(
                 PowerDiagnosticPanel(
                     state = powerDiagnosticState,
                     snapshot = powerDiagnostic,
+                    observationStart = batteryObservationStart,
+                    observationResult = batteryObservationResult,
+                    observationNotice = batteryObservationNotice,
                     selected = includePowerDiagnosticReport,
                     rootAvailable = rootAvailable,
                     onCollect = onCollectPowerDiagnostic,
                     onImportBugReport = onImportBugReport,
+                    onStartObservation = onStartBatteryObservation,
+                    onFinishObservation = onFinishBatteryObservation,
+                    onClearObservation = onClearBatteryObservation,
                     onToggleSelected = { includePowerDiagnosticReport = !includePowerDiagnosticReport },
                     onRemove = onRemovePowerDiagnostic,
                     onCopyPackage = onCopyPackage
@@ -1424,10 +1488,20 @@ fun AgentChatScreen(
                             val blockingMessage = PowerAnalysisPreflight.blockingMessage(
                                 question = message,
                                 diagnosticAvailable = powerDiagnostic != null,
-                                diagnosticSelected = includePowerDiagnosticReport
+                                diagnosticSelected = includePowerDiagnosticReport,
+                                observationAvailable = usableBatteryObservation != null
                             )
                             if (blockingMessage != null) {
                                 onPreflightMessage(message, attachedReportLabel, blockingMessage)
+                            } else if (
+                                PowerAnalysisPreflight.classify(message) == PowerQuestionIntent.DRAIN_RATE &&
+                                usableBatteryObservation != null
+                            ) {
+                                onLocalEvidenceMessage(
+                                    message,
+                                    attachedReportLabel,
+                                    BatteryObservationReportBuilder.build(usableBatteryObservation)
+                                )
                             } else if (CloudProviderCatalog.find(ApiSession.provider) != null && ApiSession.apiKey.isNotBlank()) {
                                 onOnlineAnalyze(
                                     message,

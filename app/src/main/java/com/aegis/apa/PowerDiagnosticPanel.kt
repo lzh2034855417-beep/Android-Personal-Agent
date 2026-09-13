@@ -15,19 +15,29 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.aegis.apa.model.AdviceLevel
+import com.aegis.apa.model.BatteryObservationAnalyzer
+import com.aegis.apa.model.BatteryObservationPoint
+import com.aegis.apa.model.BatteryObservationResult
 import com.aegis.apa.model.DiagnosticConfidence
 import com.aegis.apa.model.DiagnosticSourceStatus
 import com.aegis.apa.model.PowerDiagnosticSnapshot
 import com.aegis.apa.model.RankedPowerCandidate
+import com.aegis.apa.model.SampleTime
 
 @Composable
 fun PowerDiagnosticPanel(
     state: PowerDiagnosticUiState,
     snapshot: PowerDiagnosticSnapshot?,
+    observationStart: BatteryObservationPoint?,
+    observationResult: BatteryObservationResult?,
+    observationNotice: String?,
     selected: Boolean,
     rootAvailable: Boolean,
     onCollect: () -> Unit,
     onImportBugReport: () -> Unit,
+    onStartObservation: () -> Unit,
+    onFinishObservation: () -> Unit,
+    onClearObservation: () -> Unit,
     onToggleSelected: () -> Unit,
     onRemove: () -> Unit,
     onCopyPackage: (String) -> Unit,
@@ -44,6 +54,49 @@ fun PowerDiagnosticPanel(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall
             )
+            Text("普通用户续航观察", style = MaterialTheme.typography.titleSmall)
+            when {
+                observationStart != null -> {
+                    Text(
+                        "观察中：${observationStart.levelPercent}% · ${SampleTime.format(observationStart.sampledAtInstant)}\n" +
+                            "保持不充电，至少 30 分钟后再结束。",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = onFinishObservation) { Text("结束观察并计算") }
+                        TextButton(onClick = onClearObservation) { Text("取消") }
+                    }
+                }
+                observationResult != null -> {
+                    val rate = observationResult.drainPercentPerHour
+                    Text(
+                        if (rate != null) {
+                            "下降 ${observationResult.dropPercent} 个百分点 · 平均 ${"%.2f".format(java.util.Locale.US, rate)}%/小时"
+                        } else {
+                            BatteryObservationAnalyzer.explanation(observationResult.validity)
+                        },
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = onStartObservation) { Text("重新开始") }
+                        TextButton(onClick = onClearObservation) { Text("清除") }
+                    }
+                }
+                else -> {
+                    Text(
+                        "记录两次电量和时间，APA 本地计算平均掉电速度；它不能定位具体耗电应用。",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Button(onClick = onStartObservation, modifier = Modifier.fillMaxWidth()) {
+                        Text("开始续航观察")
+                    }
+                }
+            }
+            observationNotice?.let {
+                Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+            }
+            Text("应用耗电归因", style = MaterialTheme.typography.titleSmall)
             when (state) {
                 PowerDiagnosticUiState.Idle -> Text("尚未导入或采集；普通用户可导入系统 Bug Report。")
                 PowerDiagnosticUiState.Importing -> Text("正在安全读取系统报告…")
