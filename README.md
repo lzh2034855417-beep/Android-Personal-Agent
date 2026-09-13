@@ -4,7 +4,7 @@
 
 [English](README_EN.md) · [路线图](ROADMAP.md) · [架构审计](docs/ARCHITECTURE.md) · [数据规范](docs/DATA_MODEL.md) · [技术债](docs/TECH_DEBT.md) · [测试](docs/TESTING.md)
 
-> 当前源码版本号仍为 `0.1.1`，此工作分支包含未发布变更。下载版具体功能以 [GitHub Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases) 的对应标签为准。本轮没有发布新版本。
+> 当前稳定版为 `0.1.2`。下载 APK 和查看对应更新说明，请前往 [GitHub Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases)。
 
 ## 能做什么
 
@@ -65,7 +65,7 @@ $env:ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"
 
 macOS/Linux 使用 `./gradlew` 执行相同任务。首次构建需要下载依赖；仅在已有缓存时加 `--offline`。
 
-- Debug：`com.aegis.apa.preview` / APA Preview，APK：`app/build/outputs/apk/debug/APA-v0.1.1-debug.apk`。
+- Debug：`com.aegis.apa.preview` / APA Preview，APK：`app/build/outputs/apk/debug/APA-v0.1.2-debug.apk`。
 - Release：`com.aegis.apa` / APA。预览版和正式版可同时存在，数据互不合并。
 - Debug 构建和 Lint/单元测试不需要发布密钥。APK/AAB 正式打包要求本地完整签名配置，不能把 Key 提交到 Git。
 - 本地 `keystore.properties` 使用 `storeFile`、`storePassword`、`keyAlias`、`keyPassword`；可用 `-Papa.signingProperties=本地文件` 指定替代配置，PowerShell 中整项加引号。相对 storeFile 按 app 模块目录解析。
