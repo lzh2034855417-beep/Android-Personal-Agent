@@ -36,7 +36,7 @@ fun QuickReportPanel(model: String, sampledAt: String, battery: BatteryInfo, dev
     val report = if (topic == "设备") deviceSummary else QuickReport.explain(topic, battery)
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("读懂你的手机", style = MaterialTheme.typography.headlineSmall)
+            Text("你的手机", style = MaterialTheme.typography.headlineSmall)
             Text("免 Key · 本地生成", color = MaterialTheme.colorScheme.primary)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("电池", "发热", "设备").forEach {
