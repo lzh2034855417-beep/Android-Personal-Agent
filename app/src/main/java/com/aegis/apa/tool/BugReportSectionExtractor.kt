@@ -112,32 +112,32 @@ object BugReportSectionExtractor {
                     if (!entry.isDirectory && entry.name.lowercase(Locale.ROOT).endsWith(".zip")) {
                         return BugReportReadResult.Rejected(BugReportRejectReason.NESTED_ARCHIVE)
                     }
-                    try {
-                        if (entry.isDirectory) continue
-                        when (
-                            val read = readBounded(
-                                input = zip,
-                                entryLimit = limits.maxEntryBytes,
-                                totalRemaining = limits.maxTotalBytes - totalBytes,
-                                isCancelled = isCancelled
-                            )
-                        ) {
-                            BoundedRead.Cancelled -> return BugReportReadResult.Cancelled
-                            BoundedRead.EntryTooLarge -> return BugReportReadResult.Rejected(BugReportRejectReason.ENTRY_TOO_LARGE)
-                            BoundedRead.TotalTooLarge -> return BugReportReadResult.Rejected(BugReportRejectReason.TOTAL_TOO_LARGE)
-                            is BoundedRead.Bytes -> {
-                                totalBytes += read.value.size
-                                if (isReportTextEntry(entry.name)) {
-                                    when (val parsed = sectionsResult(read.value, limits)) {
-                                        is BugReportReadResult.Success -> sections += parsed.sections
-                                        is BugReportReadResult.Rejected -> if (parsed.reason != BugReportRejectReason.EMPTY) return parsed
-                                        BugReportReadResult.Cancelled -> return parsed
-                                    }
+                    if (entry.isDirectory) {
+                        zip.closeEntry()
+                        continue
+                    }
+                    when (
+                        val read = readBounded(
+                            input = zip,
+                            entryLimit = limits.maxEntryBytes,
+                            totalRemaining = limits.maxTotalBytes - totalBytes,
+                            isCancelled = isCancelled
+                        )
+                    ) {
+                        BoundedRead.Cancelled -> return BugReportReadResult.Cancelled
+                        BoundedRead.EntryTooLarge -> return BugReportReadResult.Rejected(BugReportRejectReason.ENTRY_TOO_LARGE)
+                        BoundedRead.TotalTooLarge -> return BugReportReadResult.Rejected(BugReportRejectReason.TOTAL_TOO_LARGE)
+                        is BoundedRead.Bytes -> {
+                            totalBytes += read.value.size
+                            zip.closeEntry()
+                            if (isReportTextEntry(entry.name)) {
+                                when (val parsed = sectionsResult(read.value, limits)) {
+                                    is BugReportReadResult.Success -> sections += parsed.sections
+                                    is BugReportReadResult.Rejected -> if (parsed.reason != BugReportRejectReason.EMPTY) return parsed
+                                    BugReportReadResult.Cancelled -> return parsed
                                 }
                             }
                         }
-                    } finally {
-                        zip.closeEntry()
                     }
                 }
             }
