@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-13
+
 ### System power diagnostics
 
 - 以用户主动触发的 Root 只读系统耗电诊断替换 Scene CSV 导入入口；固定八类命令，不接受任意 shell 文本。
