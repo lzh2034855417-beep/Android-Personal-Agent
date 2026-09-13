@@ -45,4 +45,12 @@ class AgentPromptPolicyTest {
         assertTrue(prompt.contains("电流正负方向可能受厂商实现影响"))
         assertTrue(prompt.contains("以系统充电状态为主"))
     }
+
+    @Test
+    fun guidesMissingEvidenceToAndroidBugReportInsteadOfSceneReport() {
+        val prompt = AgentPromptPolicy.systemPrompt()
+
+        assertTrue(prompt.contains("不得要求用户导出或上传 Scene 报告"))
+        assertTrue(prompt.contains("生成并导入 Android 系统 Bug Report"))
+    }
 }

@@ -29,7 +29,7 @@ The configured catalog includes DeepSeek, OpenAI, Anthropic, MiMo and Kimi. See 
 
 Use **Agent → Select report → System power diagnostics → Start read-only diagnostics** and grant Root when prompted. APA runs only a fixed allowlist of power-related reads. Unsupported, denied or timed-out sources are reported without discarding successful sections. Results separate facts, interpretation, confidence and manual Scene advice. APA never freezes, throttles or changes settings.
 
-The compact diagnostic is off by default for every question. If explicitly selected, only the bounded human-readable summary is sent; raw Root output is neither sent nor retained in session state.
+After a successful import or collection, APA automatically selects the bounded human-readable diagnostic summary for the next question. The user can deselect it before sending. The raw system report and Root output are neither sent nor retained in session state.
 
 ## Capability levels
 
@@ -44,7 +44,8 @@ App visibility can limit enumeration. Root readings retain separate timestamps a
 ## Data handling
 
 - Basic readings and visible apps are collected **locally on entry and Activity resume**. Usage events are read if Usage Access was granted. Collection and transmission selection are different boundaries.
-- Explicit online Send triggers a direct provider request with a basic snapshot, selected Level report and optional app report; there is no APA relay server.
+- Explicit online Send triggers a direct provider request with a basic snapshot, selected Level report, optional app report and any diagnostic summary that remains selected after import or collection; there is no APA relay server.
+- A successful system diagnostic selects only its bounded human-readable summary and shows that attachment state clearly. The user can deselect it; the raw Bug Report ZIP and Root output remain local and are released after parsing.
 - Level 0 usage rankings have an independent send toggle, off by default. Granting Usage Access does not select transmission. The base report excludes grades derived from advanced profiles. The report picker explains transmission scope; historical answers may reference earlier data, and clearing the conversation removes that history.
 - Local messages, including Scene summaries, are excluded from cloud history. Switching providers does not forward another provider's history. Up to 12 eligible messages from the same provider can be included, potentially containing previous report details in answers.
 - Keys are encrypted per provider with Android Keystore AES/GCM and expire locally after seven days by default. This does not revoke the provider-issued key.

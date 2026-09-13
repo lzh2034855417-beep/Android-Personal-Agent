@@ -31,6 +31,7 @@ class AgentMessageCopyUiTest {
                     onAnalyze = { _, _, _ -> },
                     isOnlineAnalyzing = false,
                     onOnlineAnalyze = { _, _, _, _, _, _ -> },
+                    onPreflightMessage = { _, _, _ -> },
                     onClearConversation = {},
                     onOpenSettings = {},
                     powerDiagnosticState = PowerDiagnosticUiState.Idle,

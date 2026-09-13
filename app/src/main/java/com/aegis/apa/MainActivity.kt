@@ -66,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import com.aegis.apa.agent.MessageRole
+import com.aegis.apa.agent.PowerAnalysisPreflight
 import com.aegis.apa.agent.AgentReport
 import com.aegis.apa.agent.AgentPlainTextFormatter
 import com.aegis.apa.agent.AgentConversationMessage
@@ -197,13 +198,13 @@ class MainActivity : ComponentActivity() {
                                 }
                                 when (imported) {
                                     is BugReportReadResult.Success -> {
-                                        powerDiagnostic = PowerDiagnosticPipeline.analyze(
+                                        val analyzed = PowerDiagnosticPipeline.analyze(
                                             sections = imported.sections,
                                             inputSource = DiagnosticInputSource.BUGREPORT,
                                             sampledAt = Instant.now(),
                                             collectionDurationMillis = (System.nanoTime() - startedNanos) / 1_000_000
                                         )
-                                        powerDiagnosticState = PowerDiagnosticUiState.Ready
+                                        session.completePowerDiagnostic(analyzed)
                                     }
                                     is BugReportReadResult.Rejected -> {
                                         powerDiagnosticState = PowerDiagnosticUiState.Error(
@@ -264,8 +265,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                     }
                                 }
-                                powerDiagnostic = result
-                                powerDiagnosticState = PowerDiagnosticUiState.Ready
+                                session.completePowerDiagnostic(result)
                             } catch (cancelled: CancellationException) {
                                 powerDiagnosticState = PowerDiagnosticUiState.Interrupted
                                 throw cancelled
@@ -463,6 +463,20 @@ class MainActivity : ComponentActivity() {
                                             ))
                                         } finally { session.finishAnalysis(generation) }
                                     }
+                                },
+                                onPreflightMessage = { question, attachedReportLabel, message ->
+                                    chatMessages = chatMessages + listOf(
+                                        AgentConversationMessage(
+                                            role = MessageRole.USER,
+                                            content = question,
+                                            attachedReportLabel = attachedReportLabel
+                                        ),
+                                        AgentConversationMessage(
+                                            role = MessageRole.ASSISTANT,
+                                            content = message,
+                                            source = "LOCAL · INPUT CHECK"
+                                        )
+                                    )
                                 },
                                 onClearConversation = { chatMessages = emptyList() },
                                 onOpenSettings = { selectedPage = 4 },
@@ -1159,6 +1173,7 @@ fun AgentChatScreen(
     onAnalyze: (String, String, String?) -> Unit,
     isOnlineAnalyzing: Boolean,
     onOnlineAnalyze: (String, String, Boolean, Boolean, String, String?) -> Unit,
+    onPreflightMessage: (String, String, String) -> Unit,
     onClearConversation: () -> Unit,
     onOpenSettings: () -> Unit,
     powerDiagnosticState: PowerDiagnosticUiState,
@@ -1406,7 +1421,14 @@ fun AgentChatScreen(
                         val message = userMessage.trim()
                         if (message.isNotEmpty()) {
                             userMessage = ""
-                            if (CloudProviderCatalog.find(ApiSession.provider) != null && ApiSession.apiKey.isNotBlank()) {
+                            val blockingMessage = PowerAnalysisPreflight.blockingMessage(
+                                question = message,
+                                diagnosticAvailable = powerDiagnostic != null,
+                                diagnosticSelected = includePowerDiagnosticReport
+                            )
+                            if (blockingMessage != null) {
+                                onPreflightMessage(message, attachedReportLabel, blockingMessage)
+                            } else if (CloudProviderCatalog.find(ApiSession.provider) != null && ApiSession.apiKey.isNotBlank()) {
                                 onOnlineAnalyze(
                                     message,
                                     selectedLevel,

@@ -63,18 +63,28 @@ internal fun buildCloudAnalysisPrompt(
     appReport: String?,
     powerDiagnosticReport: String?
 ): String = buildString {
+    val powerIntent = PowerAnalysisPreflight.classify(userQuestion)
     appendLine("【用户问题】")
     appendLine(userQuestion)
     appendLine()
     if (powerDiagnosticReport != null) {
         appendLine("【回答任务：耗电诊断】")
         appendLine("只解释 APA 已完成的本地裁决，不重新归因，也不要自行增加嫌疑应用。")
-        appendLine("先用一句话给出本地裁决中的第一嫌疑；然后按证据强弱解释最多 3 个嫌疑应用。")
+        when (powerIntent) {
+            PowerQuestionIntent.DRAIN_RATE -> {
+                appendLine("先回答能否判断耗电速度；只有报告同时提供观察时长和电量变化时才可计算，缺少任一项都不得编造速度。")
+                appendLine("即使无法判断速度，仍可单独解释本地裁决已经确认的后台异常嫌疑。")
+            }
+            PowerQuestionIntent.ATTRIBUTION -> appendLine("先回答哪个应用存在后台异常证据；没有达到阈值时明确回答没有确认到后台异常。")
+            PowerQuestionIntent.OTHER -> appendLine("先用一句话直接回答问题，再解释本地裁决。")
+        }
+        appendLine("然后按证据强弱解释最多 3 个嫌疑应用。")
         appendLine("每个嫌疑必须写出应用名或包名、报告中的原始数值、原因和置信度。")
         appendLine("不得修改报告中的数值，不得把耗电总量排行改写成后台异常。")
         appendLine("不得超过报告给出的最高建议级别；尤其不得把观察或限制升级为冻结候选。")
         appendLine("每个嫌疑只解释报告给出的一项 Scene 手动操作，并说明预期作用、副作用和回退方法；不得声称已经执行。")
         appendLine("如果证据仍不足，不要复述所有缺失栏目，只给出一个最有价值的下一步采样动作。")
+        appendLine("输出固定使用这些纯文本字段：结论：、耗电速度：、耗电总量排行：、后台异常嫌疑：、Scene 建议：、证据缺口：。没有数据的字段写“无法判断”或“未确认”，不要省略。")
         appendLine()
     } else {
         appendLine("【回答任务】")

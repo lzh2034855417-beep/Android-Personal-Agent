@@ -48,7 +48,10 @@ fun PowerDiagnosticPanel(
                 PowerDiagnosticUiState.Idle -> Text("尚未导入或采集；普通用户可导入系统 Bug Report。")
                 PowerDiagnosticUiState.Importing -> Text("正在安全读取系统报告…")
                 is PowerDiagnosticUiState.Collecting -> Text("正在采集 ${state.completed}/${state.total}：${state.source}")
-                PowerDiagnosticUiState.Ready -> Text("本地读取完成；交给 AI 解释默认关闭。")
+                PowerDiagnosticUiState.Ready -> Text(
+                    if (selected) "本地读取完成；已附加诊断摘要，原始系统报告不会发送。"
+                    else "本地读取完成；本次没有附加诊断摘要。"
+                )
                 is PowerDiagnosticUiState.Error -> Text("读取失败：${state.message}")
                 PowerDiagnosticUiState.Interrupted -> Text("上次读取已中断，请手动重试。")
             }
@@ -110,7 +113,7 @@ fun PowerDiagnosticPanel(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = onToggleSelected) {
-                        Text(if (selected) "● 交给 AI 解释" else "交给 AI 解释（默认关闭）")
+                        Text(if (selected) "● 已附加诊断摘要" else "附加诊断摘要")
                     }
                     TextButton(onClick = onRemove) { Text("移除") }
                 }

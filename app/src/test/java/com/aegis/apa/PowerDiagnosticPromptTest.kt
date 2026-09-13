@@ -38,4 +38,26 @@ class PowerDiagnosticPromptTest {
         assertTrue(prompt.contains("不得声称已经执行"))
         assertFalse(prompt.contains("本次未附带"))
     }
+
+    @Test
+    fun drainRateQuestionRequiresDurationAndBatteryDelta() {
+        val prompt = buildCloudAnalysisPrompt(
+            context, "今天耗电快不快", "Level 0", "level", null, "本地裁决"
+        )
+
+        assertTrue(prompt.contains("先回答能否判断耗电速度"))
+        assertTrue(prompt.contains("观察时长和电量变化"))
+        assertTrue(prompt.contains("耗电速度："))
+        assertTrue(prompt.contains("后台异常嫌疑："))
+    }
+
+    @Test
+    fun attributionQuestionKeepsTotalUseSeparateFromBackgroundAnomaly() {
+        val prompt = buildCloudAnalysisPrompt(
+            context, "哪个应用造成后台耗电", "Level 0", "level", null, "本地裁决"
+        )
+
+        assertTrue(prompt.contains("先回答哪个应用存在后台异常证据"))
+        assertTrue(prompt.contains("不得把耗电总量排行改写成后台异常"))
+    }
 }

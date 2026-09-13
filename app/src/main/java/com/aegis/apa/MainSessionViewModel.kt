@@ -35,6 +35,12 @@ class MainSessionViewModel : ViewModel() {
     private var analysisGeneration = 0L
     private var onlineAnalysis = false
 
+    fun completePowerDiagnostic(snapshot: PowerDiagnosticSnapshot) {
+        powerDiagnostic.value = snapshot
+        powerDiagnosticState.value = PowerDiagnosticUiState.Ready
+        agent.includePowerDiagnosticReport.value = true
+    }
+
     fun beginAnalysis(online: Boolean = false): Long {
         onlineAnalysis = online
         analyzing.value = true

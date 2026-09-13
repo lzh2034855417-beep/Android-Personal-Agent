@@ -140,7 +140,7 @@ class StabilityUiTest {
         } finally { rule.runOnUiThread { ApiSession.update(credential) } }
     }
 
-    @Test fun systemPowerDiagnosticReplacesSceneImportAndDefaultsToNotSelected() {
+    @Test fun systemPowerDiagnosticReplacesSceneImportAndShowsAttachmentControl() {
         rule.waitUntil(15_000) { sampleLabel() != null }
         rule.runOnUiThread {
             val session = androidx.lifecycle.ViewModelProvider(rule.activity)[MainSessionViewModel::class.java]
@@ -158,7 +158,7 @@ class StabilityUiTest {
         rule.onNodeWithText("Agent").performClick()
         rule.onNodeWithText("选择报告").performClick()
         rule.onNodeWithText("系统耗电诊断").performScrollTo().assertIsDisplayed()
-        rule.onNodeWithText("随问题发送（默认关闭）").performScrollTo().assertIsDisplayed().assertIsEnabled()
+        rule.onNodeWithText("附加诊断摘要").performScrollTo().assertIsDisplayed().assertIsEnabled()
         rule.onNodeWithText("导入 Scene CSV").assertDoesNotExist()
     }
 
