@@ -8,6 +8,9 @@ import java.util.Locale
 object BugReportImportPolicy {
     private val directMimeTypes = setOf("application/zip", "text/plain")
 
+    fun acceptsUriScheme(scheme: String?): Boolean =
+        scheme?.equals(ContentResolver.SCHEME_CONTENT, ignoreCase = true) == true
+
     fun accepts(mimeType: String?, displayName: String?): Boolean {
         val mime = mimeType?.lowercase(Locale.ROOT)
         if (mime in directMimeTypes) return true
@@ -20,6 +23,9 @@ object BugReportImportPolicy {
 
 class BugReportImporter(private val resolver: ContentResolver) {
     fun import(uri: Uri, isCancelled: () -> Boolean = { false }): BugReportReadResult {
+        if (!BugReportImportPolicy.acceptsUriScheme(uri.scheme)) {
+            return BugReportReadResult.Rejected(BugReportRejectReason.UNSUPPORTED_FORMAT)
+        }
         val displayName = queryDisplayName(uri)
         if (!BugReportImportPolicy.accepts(resolver.getType(uri), displayName)) {
             return BugReportReadResult.Rejected(BugReportRejectReason.UNSUPPORTED_FORMAT)

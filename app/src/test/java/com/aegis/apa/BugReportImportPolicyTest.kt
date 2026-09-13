@@ -25,4 +25,13 @@ class BugReportImportPolicyTest {
         assertFalse(BugReportImportPolicy.accepts("image/jpeg", "bugreport.jpg"))
         assertFalse(BugReportImportPolicy.accepts("application/pdf", "bugreport.pdf"))
     }
+
+    @Test
+    fun acceptsOnlyUserGrantedContentUris() {
+        assertTrue(BugReportImportPolicy.acceptsUriScheme("content"))
+        assertTrue(BugReportImportPolicy.acceptsUriScheme("CONTENT"))
+        assertFalse(BugReportImportPolicy.acceptsUriScheme("file"))
+        assertFalse(BugReportImportPolicy.acceptsUriScheme("https"))
+        assertFalse(BugReportImportPolicy.acceptsUriScheme(null))
+    }
 }
