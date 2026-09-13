@@ -68,9 +68,12 @@ internal fun buildCloudAnalysisPrompt(
     appendLine()
     if (powerDiagnosticReport != null) {
         appendLine("【回答任务：耗电诊断】")
-        appendLine("先用一句话给出第一嫌疑；然后按证据强弱列出最多 3 个嫌疑应用。")
+        appendLine("只解释 APA 已完成的本地裁决，不重新归因，也不要自行增加嫌疑应用。")
+        appendLine("先用一句话给出本地裁决中的第一嫌疑；然后按证据强弱解释最多 3 个嫌疑应用。")
         appendLine("每个嫌疑必须写出应用名或包名、报告中的原始数值、原因和置信度。")
-        appendLine("每个嫌疑只给一项 Scene 手动操作，并说明预期作用、副作用和回退方法；不得声称已经执行。")
+        appendLine("不得修改报告中的数值，不得把耗电总量排行改写成后台异常。")
+        appendLine("不得超过报告给出的最高建议级别；尤其不得把观察或限制升级为冻结候选。")
+        appendLine("每个嫌疑只解释报告给出的一项 Scene 手动操作，并说明预期作用、副作用和回退方法；不得声称已经执行。")
         appendLine("如果证据仍不足，不要复述所有缺失栏目，只给出一个最有价值的下一步采样动作。")
         appendLine()
     } else {

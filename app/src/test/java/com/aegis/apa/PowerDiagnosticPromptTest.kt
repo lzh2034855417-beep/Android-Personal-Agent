@@ -31,6 +31,11 @@ class PowerDiagnosticPromptTest {
         assertTrue(prompt.contains("Scene 手动操作"))
         assertTrue(prompt.contains("副作用和回退方法"))
         assertTrue(prompt.contains("一个最有价值的下一步采样动作"))
+        assertTrue(prompt.contains("只解释 APA 已完成的本地裁决"))
+        assertTrue(prompt.contains("不得修改报告中的数值"))
+        assertTrue(prompt.contains("不得把耗电总量排行改写成后台异常"))
+        assertTrue(prompt.contains("不得超过报告给出的最高建议级别"))
+        assertTrue(prompt.contains("不得声称已经执行"))
         assertFalse(prompt.contains("本次未附带"))
     }
 }
