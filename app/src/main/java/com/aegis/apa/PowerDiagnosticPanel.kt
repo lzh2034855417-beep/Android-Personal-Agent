@@ -18,6 +18,7 @@ import com.aegis.apa.model.AdviceLevel
 import com.aegis.apa.model.DiagnosticConfidence
 import com.aegis.apa.model.DiagnosticSourceStatus
 import com.aegis.apa.model.PowerDiagnosticSnapshot
+import com.aegis.apa.model.RankedPowerCandidate
 
 @Composable
 fun PowerDiagnosticPanel(
@@ -70,16 +71,10 @@ fun PowerDiagnosticPanel(
                     }
                 }
             }
-            if (snapshot != null) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onToggleSelected) {
-                        Text(if (selected) "● 交给 AI 解释" else "交给 AI 解释（默认关闭）")
-                    }
-                    TextButton(onClick = onRemove) { Text("移除") }
-                }
-            }
             snapshot?.let { report ->
+                val display = PowerDiagnosticDisplayModel.from(report)
                 Text("采样：${report.sampledAtInstant} · ${report.collectionDurationMillis} ms", style = MaterialTheme.typography.labelSmall)
+                Text("来源：${display.sourceLabel}", style = MaterialTheme.typography.labelMedium)
                 val unavailable = report.sources.values.filter { it.status != DiagnosticSourceStatus.AVAILABLE }
                 if (unavailable.isNotEmpty()) {
                     Text(
@@ -88,25 +83,63 @@ fun PowerDiagnosticPanel(
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
-                if (report.findings.isEmpty()) {
-                    Text("当前证据不足，暂不建议限制或冻结任何应用。")
+                Text("本地结论（不联网也可用）", style = MaterialTheme.typography.titleSmall)
+                display.nextStep?.let { Text("证据不足：$it") }
+                Text("耗电总量排行", style = MaterialTheme.typography.titleSmall)
+                if (display.totalConsumption.isEmpty()) {
+                    Text("没有可比较的应用耗电量数据。")
                 } else {
-                    report.findings.forEach { finding ->
-                        Card(modifier = Modifier.fillMaxWidth()) {
-                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(finding.title, style = MaterialTheme.typography.titleSmall)
-                                Text("证据：${finding.evidence.joinToString("；")}")
-                                Text("解释：${finding.explanation}")
-                                Text("置信度：${finding.confidence.label()} · 建议：${finding.adviceLevel.label()}")
-                                Text("Scene：${finding.sceneAdvice}")
-                                Text("注意：${finding.caveat}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                finding.packageNames.firstOrNull()?.let { packageName ->
-                                    TextButton(onClick = { onCopyPackage(packageName) }) { Text("复制包名 $packageName") }
-                                }
-                            }
-                        }
+                    display.totalConsumption.forEach { candidate ->
+                        PowerCandidateCard(candidate, showAction = false, onCopyPackage)
                     }
                 }
+                Text("后台异常嫌疑", style = MaterialTheme.typography.titleSmall)
+                if (display.backgroundSuspects.isEmpty()) {
+                    Text("没有达到后台异常阈值的应用；耗电多不等于后台异常。")
+                } else {
+                    display.backgroundSuspects.forEach { candidate ->
+                        PowerCandidateCard(candidate, showAction = true, onCopyPackage)
+                    }
+                }
+                if (display.limits.isNotEmpty()) {
+                    Text(
+                        "证据覆盖与限制：${display.limits.joinToString("；")}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onToggleSelected) {
+                        Text(if (selected) "● 交给 AI 解释" else "交给 AI 解释（默认关闭）")
+                    }
+                    TextButton(onClick = onRemove) { Text("移除") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PowerCandidateCard(
+    candidate: RankedPowerCandidate,
+    showAction: Boolean,
+    onCopyPackage: (String) -> Unit
+) {
+    val name = candidate.packageNames.firstOrNull() ?: candidate.uid?.let { "UID $it" } ?: "未知应用"
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(name, style = MaterialTheme.typography.titleSmall)
+            Text("事实：${candidate.facts.joinToString("；")}")
+            Text("解释：${candidate.reason}")
+            Text("置信度：${candidate.confidence.label()} · 最高建议：${candidate.maxAdviceLevel.label()}")
+            if (showAction) {
+                candidate.sceneAction?.let { Text("Scene：$it") }
+                candidate.risk?.let { Text("风险：$it", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                candidate.rollback?.let { Text("回退：$it", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                candidate.retest?.let { Text("复测：$it", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+            candidate.packageNames.firstOrNull()?.let { packageName ->
+                TextButton(onClick = { onCopyPackage(packageName) }) { Text("复制包名 $packageName") }
             }
         }
     }
