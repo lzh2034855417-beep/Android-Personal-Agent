@@ -24,7 +24,9 @@ fun PowerDiagnosticPanel(
     state: PowerDiagnosticUiState,
     snapshot: PowerDiagnosticSnapshot?,
     selected: Boolean,
+    rootAvailable: Boolean,
     onCollect: () -> Unit,
+    onImportBugReport: () -> Unit,
     onToggleSelected: () -> Unit,
     onRemove: () -> Unit,
     onCopyPackage: (String) -> Unit,
@@ -42,19 +44,36 @@ fun PowerDiagnosticPanel(
                 style = MaterialTheme.typography.bodySmall
             )
             when (state) {
-                PowerDiagnosticUiState.Idle -> Text("尚未采集；需要 Root 授权。")
+                PowerDiagnosticUiState.Idle -> Text("尚未导入或采集；普通用户可导入系统 Bug Report。")
+                PowerDiagnosticUiState.Importing -> Text("正在安全读取系统报告…")
                 is PowerDiagnosticUiState.Collecting -> Text("正在采集 ${state.completed}/${state.total}：${state.source}")
-                PowerDiagnosticUiState.Ready -> Text("采集完成；随问题发送默认关闭。")
-                is PowerDiagnosticUiState.Error -> Text("采集失败：${state.message}")
-                PowerDiagnosticUiState.Interrupted -> Text("上次采集已中断，请手动重试。")
+                PowerDiagnosticUiState.Ready -> Text("本地读取完成；交给 AI 解释默认关闭。")
+                is PowerDiagnosticUiState.Error -> Text("读取失败：${state.message}")
+                PowerDiagnosticUiState.Interrupted -> Text("上次读取已中断，请手动重试。")
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onCollect, enabled = state !is PowerDiagnosticUiState.Collecting) {
-                    Text(if (snapshot == null) "开始只读诊断" else "重新采集")
+            val busy = state is PowerDiagnosticUiState.Collecting || state == PowerDiagnosticUiState.Importing
+            PowerDiagnosticEntryPoints.forRootAvailability(rootAvailable).forEach { entryPoint ->
+                when (entryPoint) {
+                    PowerDiagnosticEntryPoint.IMPORT_BUGREPORT -> Button(
+                        onClick = onImportBugReport,
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (snapshot == null) "导入系统报告" else "重新导入系统报告")
+                    }
+                    PowerDiagnosticEntryPoint.ROOT_READ_ONLY -> Button(
+                        onClick = onCollect,
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (snapshot == null) "开始只读诊断（Root）" else "重新采集（Root）")
+                    }
                 }
-                if (snapshot != null) {
+            }
+            if (snapshot != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = onToggleSelected) {
-                        Text(if (selected) "● 随问题发送" else "随问题发送（默认关闭）")
+                        Text(if (selected) "● 交给 AI 解释" else "交给 AI 解释（默认关闭）")
                     }
                     TextButton(onClick = onRemove) { Text("移除") }
                 }

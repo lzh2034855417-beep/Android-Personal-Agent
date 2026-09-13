@@ -1,10 +1,14 @@
 package com.aegis.apa
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -76,6 +80,7 @@ import com.aegis.apa.agent.AgentMessageCopyPolicy
 import com.aegis.apa.agent.DeviceContext
 import com.aegis.apa.agent.Level0ReportBuilder
 import com.aegis.apa.agent.LocalDeviceAnalyzer
+import com.aegis.apa.agent.PowerDiagnosticFindingEngine
 import com.aegis.apa.agent.PowerDiagnosticReportBuilder
 import com.aegis.apa.navigation.ShizukuDestination
 import com.aegis.apa.navigation.ShizukuNavigationPolicy
@@ -103,6 +108,10 @@ import com.aegis.apa.tool.RootTool
 import com.aegis.apa.tool.RootBatteryInfo
 import com.aegis.apa.tool.RootBatteryTool
 import com.aegis.apa.tool.SystemPowerDiagnosticsCollector
+import com.aegis.apa.tool.BugReportImporter
+import com.aegis.apa.tool.BugReportReadResult
+import com.aegis.apa.tool.BugReportRejectReason
+import com.aegis.apa.tool.PowerDiagnosticParser
 import com.aegis.apa.model.PowerDiagnosticSnapshot
 import com.aegis.apa.model.StorageInfo
 import com.aegis.apa.tool.StorageTool
@@ -114,6 +123,8 @@ import com.aegis.apa.model.DeviceSnapshot
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.text.SimpleDateFormat
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 
 
@@ -168,10 +179,68 @@ class MainActivity : ComponentActivity() {
                 var isOnlineAnalyzing by session.analyzing
                 var powerDiagnostic by session.powerDiagnostic
                 var powerDiagnosticState by session.powerDiagnosticState
+                val importBugReportUri: (Uri) -> Unit = { uri ->
+                    if (
+                        powerDiagnosticState !is PowerDiagnosticUiState.Collecting &&
+                        powerDiagnosticState != PowerDiagnosticUiState.Importing
+                    ) {
+                        session.agent.includePowerDiagnosticReport.value = false
+                        powerDiagnosticState = PowerDiagnosticUiState.Importing
+                        scope.launch {
+                            try {
+                                val startedNanos = System.nanoTime()
+                                val imported = withContext(Dispatchers.IO) {
+                                    val job = currentCoroutineContext()[Job]
+                                    BugReportImporter(contentResolver).import(uri) {
+                                        job?.isActive == false
+                                    }
+                                }
+                                when (imported) {
+                                    is BugReportReadResult.Success -> {
+                                        val parsed = PowerDiagnosticParser.parse(
+                                            sections = imported.sections,
+                                            sampledAt = Instant.now(),
+                                            collectionDurationMillis = (System.nanoTime() - startedNanos) / 1_000_000
+                                        )
+                                        powerDiagnostic = parsed.copy(
+                                            findings = PowerDiagnosticFindingEngine.find(parsed)
+                                        )
+                                        powerDiagnosticState = PowerDiagnosticUiState.Ready
+                                    }
+                                    is BugReportReadResult.Rejected -> {
+                                        powerDiagnosticState = PowerDiagnosticUiState.Error(
+                                            imported.reason.userMessage()
+                                        )
+                                    }
+                                    BugReportReadResult.Cancelled -> {
+                                        powerDiagnosticState = PowerDiagnosticUiState.Interrupted
+                                    }
+                                }
+                            } catch (cancelled: CancellationException) {
+                                powerDiagnosticState = PowerDiagnosticUiState.Interrupted
+                                throw cancelled
+                            } catch (_: Exception) {
+                                powerDiagnosticState = PowerDiagnosticUiState.Error(
+                                    "无法读取这个系统报告，请重新生成后再试。"
+                                )
+                            }
+                        }
+                    }
+                }
+                val bugReportPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+                    uri?.let(importBugReportUri)
+                }
+                val incomingSharedBugReportUri = remember { sharedBugReportUri(intent) }
+                LaunchedEffect(incomingSharedBugReportUri) {
+                    incomingSharedBugReportUri?.let(importBugReportUri)
+                }
                 DisposableEffect(session) {
                     onDispose {
                         session.interruptAnalysis()
-                        if (session.powerDiagnosticState.value is PowerDiagnosticUiState.Collecting) {
+                        if (
+                            session.powerDiagnosticState.value is PowerDiagnosticUiState.Collecting ||
+                            session.powerDiagnosticState.value == PowerDiagnosticUiState.Importing
+                        ) {
                             session.powerDiagnosticState.value = PowerDiagnosticUiState.Interrupted
                         }
                     }
@@ -401,7 +470,13 @@ class MainActivity : ComponentActivity() {
                                 onOpenSettings = { selectedPage = 4 },
                                 powerDiagnosticState = powerDiagnosticState,
                                 powerDiagnostic = powerDiagnostic,
+                                rootAvailable = currentSnapshot.rootStatus.hasSuBinary,
                                 onCollectPowerDiagnostic = onCollectPowerDiagnostic,
+                                onImportBugReport = {
+                                    bugReportPicker.launch(
+                                        arrayOf("application/zip", "text/plain", "application/octet-stream")
+                                    )
+                                },
                                 onRemovePowerDiagnostic = {
                                     powerDiagnostic = null
                                     powerDiagnosticState = PowerDiagnosticUiState.Idle
@@ -431,6 +506,27 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    private fun sharedBugReportUri(sourceIntent: Intent?): Uri? {
+        if (sourceIntent?.action != Intent.ACTION_SEND) return null
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            sourceIntent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            sourceIntent.getParcelableExtra(Intent.EXTRA_STREAM)
+        }
+    }
+
+    private fun BugReportRejectReason.userMessage(): String = when (this) {
+        BugReportRejectReason.EMPTY -> "报告里没有找到可识别的系统耗电段落。"
+        BugReportRejectReason.UNSUPPORTED_FORMAT -> "只支持系统生成的 Bug Report ZIP 或文本文件。"
+        BugReportRejectReason.CORRUPT_ARCHIVE -> "压缩包已损坏或无法安全读取，请重新生成报告。"
+        BugReportRejectReason.UNSAFE_ENTRY_NAME -> "报告压缩包包含不安全路径，已拒绝读取。"
+        BugReportRejectReason.NESTED_ARCHIVE -> "报告包含嵌套压缩包，已拒绝读取。"
+        BugReportRejectReason.TOO_MANY_ENTRIES -> "报告文件条目过多，已停止读取。"
+        BugReportRejectReason.ENTRY_TOO_LARGE -> "报告中的单个文件过大，已停止读取。"
+        BugReportRejectReason.TOTAL_TOO_LARGE -> "报告解压后的内容过大，已停止读取。"
     }
 
     private fun readDeviceSnapshot(): DeviceSnapshot {
@@ -1069,7 +1165,9 @@ fun AgentChatScreen(
     onOpenSettings: () -> Unit,
     powerDiagnosticState: PowerDiagnosticUiState,
     powerDiagnostic: PowerDiagnosticSnapshot?,
+    rootAvailable: Boolean,
     onCollectPowerDiagnostic: () -> Unit,
+    onImportBugReport: () -> Unit,
     onRemovePowerDiagnostic: () -> Unit,
     onCopyPackage: (String) -> Unit,
     onCopyMessage: (String) -> Unit,
@@ -1279,7 +1377,9 @@ fun AgentChatScreen(
                     state = powerDiagnosticState,
                     snapshot = powerDiagnostic,
                     selected = includePowerDiagnosticReport,
+                    rootAvailable = rootAvailable,
                     onCollect = onCollectPowerDiagnostic,
+                    onImportBugReport = onImportBugReport,
                     onToggleSelected = { includePowerDiagnosticReport = !includePowerDiagnosticReport },
                     onRemove = onRemovePowerDiagnostic,
                     onCopyPackage = onCopyPackage

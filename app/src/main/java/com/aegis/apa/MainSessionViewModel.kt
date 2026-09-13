@@ -12,6 +12,7 @@ import com.aegis.apa.tool.RootBatteryInfo
 
 sealed interface PowerDiagnosticUiState {
     data object Idle : PowerDiagnosticUiState
+    data object Importing : PowerDiagnosticUiState
     data class Collecting(val completed: Int, val total: Int, val source: String) : PowerDiagnosticUiState
     data object Ready : PowerDiagnosticUiState
     data class Error(val message: String) : PowerDiagnosticUiState

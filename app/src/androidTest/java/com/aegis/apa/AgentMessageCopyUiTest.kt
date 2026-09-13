@@ -35,7 +35,9 @@ class AgentMessageCopyUiTest {
                     onOpenSettings = {},
                     powerDiagnosticState = PowerDiagnosticUiState.Idle,
                     powerDiagnostic = null,
+                    rootAvailable = false,
                     onCollectPowerDiagnostic = {},
+                    onImportBugReport = {},
                     onRemovePowerDiagnostic = {},
                     onCopyPackage = {},
                     onCopyMessage = { copiedText = it }
