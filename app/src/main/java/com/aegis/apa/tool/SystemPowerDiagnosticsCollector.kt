@@ -1,6 +1,6 @@
 package com.aegis.apa.tool
 
-import com.aegis.apa.agent.PowerDiagnosticFindingEngine
+import com.aegis.apa.model.DiagnosticInputSource
 import com.aegis.apa.model.PowerDiagnosticSnapshot
 import java.time.Clock
 
@@ -17,11 +17,11 @@ class SystemPowerDiagnosticsCollector(
             result
         }
         val elapsedMillis = (System.nanoTime() - startedNanos) / 1_000_000
-        val parsed = PowerDiagnosticParser.parse(
+        return PowerDiagnosticPipeline.analyze(
             sections = RootDiagnosticAdapter.toSections(results),
+            inputSource = DiagnosticInputSource.ROOT,
             sampledAt = clock.instant(),
             collectionDurationMillis = elapsedMillis
         )
-        return parsed.copy(findings = PowerDiagnosticFindingEngine.find(parsed))
     }
 }

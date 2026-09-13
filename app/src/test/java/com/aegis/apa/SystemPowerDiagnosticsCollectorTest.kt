@@ -1,5 +1,6 @@
 package com.aegis.apa
 
+import com.aegis.apa.model.DiagnosticInputSource
 import com.aegis.apa.model.DiagnosticSourceStatus
 import com.aegis.apa.tool.AllowedRootCommand
 import com.aegis.apa.tool.DiagnosticCommandRunner
@@ -52,5 +53,7 @@ class SystemPowerDiagnosticsCollectorTest {
 
         assertEquals(AllowedRootCommand.entries.toList(), visited)
         assertTrue(snapshot.findings.isNotEmpty())
+        assertEquals(DiagnosticInputSource.ROOT, snapshot.inputSource)
+        assertTrue(snapshot.localVerdict?.totalConsumption?.isNotEmpty() == true)
     }
 }

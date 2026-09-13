@@ -26,6 +26,31 @@ data class EvidenceCoverage(
     val fields: Map<EvidenceField, EvidenceFieldStatus> = emptyMap()
 )
 
+enum class DiagnosticInputSource { BUGREPORT, ROOT }
+
+enum class PowerVerdictType { SUFFICIENT, INSUFFICIENT }
+
+data class RankedPowerCandidate(
+    val uid: Int?,
+    val packageNames: List<String>,
+    val facts: List<String>,
+    val confidence: DiagnosticConfidence,
+    val maxAdviceLevel: AdviceLevel,
+    val reason: String,
+    val sceneAction: String? = null,
+    val risk: String? = null,
+    val rollback: String? = null,
+    val retest: String? = null
+)
+
+data class LocalPowerVerdict(
+    val type: PowerVerdictType,
+    val totalConsumption: List<RankedPowerCandidate>,
+    val backgroundSuspects: List<RankedPowerCandidate>,
+    val nextStep: String?,
+    val limits: List<String>
+)
+
 data class DiagnosticSourceResult(
     val source: String,
     val status: DiagnosticSourceStatus,
@@ -77,5 +102,7 @@ data class PowerDiagnosticSnapshot(
     val apps: List<AppPowerEvidence>,
     val system: SystemPowerEvidence,
     val findings: List<PowerFinding>,
-    val evidenceCoverage: EvidenceCoverage = EvidenceCoverage()
+    val evidenceCoverage: EvidenceCoverage = EvidenceCoverage(),
+    val inputSource: DiagnosticInputSource? = null,
+    val localVerdict: LocalPowerVerdict? = null
 )

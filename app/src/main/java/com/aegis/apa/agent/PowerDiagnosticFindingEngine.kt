@@ -38,7 +38,7 @@ object PowerDiagnosticFindingEngine {
         val rawLevel = when {
             evidence.size >= 3 &&
                 (app.estimatedPowerMah ?: 0.0) >= 300.0 &&
-                (app.wakeLockDurationMillis ?: 0L) >= 30 * 60_000L -> AdviceLevel.FREEZE_CANDIDATE
+                (app.wakeLockDurationMillis ?: 0L) >= 30 * 60_000L -> AdviceLevel.RESTRICT
             evidence.size >= 2 -> AdviceLevel.RESTRICT
             else -> AdviceLevel.OBSERVE
         }

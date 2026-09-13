@@ -80,7 +80,6 @@ import com.aegis.apa.agent.AgentMessageCopyPolicy
 import com.aegis.apa.agent.DeviceContext
 import com.aegis.apa.agent.Level0ReportBuilder
 import com.aegis.apa.agent.LocalDeviceAnalyzer
-import com.aegis.apa.agent.PowerDiagnosticFindingEngine
 import com.aegis.apa.agent.PowerDiagnosticReportBuilder
 import com.aegis.apa.navigation.ShizukuDestination
 import com.aegis.apa.navigation.ShizukuNavigationPolicy
@@ -111,7 +110,8 @@ import com.aegis.apa.tool.SystemPowerDiagnosticsCollector
 import com.aegis.apa.tool.BugReportImporter
 import com.aegis.apa.tool.BugReportReadResult
 import com.aegis.apa.tool.BugReportRejectReason
-import com.aegis.apa.tool.PowerDiagnosticParser
+import com.aegis.apa.tool.PowerDiagnosticPipeline
+import com.aegis.apa.model.DiagnosticInputSource
 import com.aegis.apa.model.PowerDiagnosticSnapshot
 import com.aegis.apa.model.StorageInfo
 import com.aegis.apa.tool.StorageTool
@@ -197,13 +197,11 @@ class MainActivity : ComponentActivity() {
                                 }
                                 when (imported) {
                                     is BugReportReadResult.Success -> {
-                                        val parsed = PowerDiagnosticParser.parse(
+                                        powerDiagnostic = PowerDiagnosticPipeline.analyze(
                                             sections = imported.sections,
+                                            inputSource = DiagnosticInputSource.BUGREPORT,
                                             sampledAt = Instant.now(),
                                             collectionDurationMillis = (System.nanoTime() - startedNanos) / 1_000_000
-                                        )
-                                        powerDiagnostic = parsed.copy(
-                                            findings = PowerDiagnosticFindingEngine.find(parsed)
                                         )
                                         powerDiagnosticState = PowerDiagnosticUiState.Ready
                                     }

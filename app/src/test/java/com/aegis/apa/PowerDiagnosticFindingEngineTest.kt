@@ -58,6 +58,24 @@ class PowerDiagnosticFindingEngineTest {
         assertEquals(DiagnosticConfidence.LOW, findings.single().confidence)
     }
 
+    @Test
+    fun firstVersionNeverPromotesStrongEvidenceToFreezeCandidate() {
+        val findings = PowerDiagnosticFindingEngine.find(
+            snapshotFor(
+                AppPowerEvidence(
+                    uid = 10123,
+                    packageNames = listOf("com.example.social"),
+                    estimatedPowerMah = 600.0,
+                    wakeLockDurationMillis = 90 * 60_000L,
+                    wakeupCount = 800,
+                    jobCount = 500
+                )
+            )
+        )
+
+        assertEquals(AdviceLevel.RESTRICT, findings.single().adviceLevel)
+    }
+
     private fun snapshotFor(app: AppPowerEvidence) = PowerDiagnosticSnapshot(
         sampledAtInstant = Instant.EPOCH,
         collectionDurationMillis = 100,
