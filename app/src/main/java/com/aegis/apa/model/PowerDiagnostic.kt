@@ -11,6 +11,21 @@ enum class DiagnosticSourceStatus {
     PARSE_FAILED
 }
 
+enum class EvidenceField {
+    UID_PACKAGES,
+    POWER_MAH,
+    FOREGROUND_TIME,
+    WAKELOCK_TIME,
+    WAKEUP_ALARMS,
+    JOBS
+}
+
+enum class EvidenceFieldStatus { PARSED, NOT_PRESENT, NOT_PARSED, SOURCE_UNAVAILABLE, TRUNCATED }
+
+data class EvidenceCoverage(
+    val fields: Map<EvidenceField, EvidenceFieldStatus> = emptyMap()
+)
+
 data class DiagnosticSourceResult(
     val source: String,
     val status: DiagnosticSourceStatus,
@@ -29,7 +44,10 @@ data class AppPowerEvidence(
     val wakeLockDurationMillis: Long? = null,
     val wakeupCount: Long? = null,
     val alarmCount: Long? = null,
-    val jobCount: Long? = null
+    val jobCount: Long? = null,
+    val foregroundDurationMillis: Long? = null,
+    val backgroundDurationMillis: Long? = null,
+    val sharedUid: Boolean = false
 )
 
 data class SystemPowerEvidence(
@@ -58,5 +76,6 @@ data class PowerDiagnosticSnapshot(
     val sources: Map<String, DiagnosticSourceResult>,
     val apps: List<AppPowerEvidence>,
     val system: SystemPowerEvidence,
-    val findings: List<PowerFinding>
+    val findings: List<PowerFinding>,
+    val evidenceCoverage: EvidenceCoverage = EvidenceCoverage()
 )

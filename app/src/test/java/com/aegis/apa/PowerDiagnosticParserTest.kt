@@ -1,6 +1,8 @@
 package com.aegis.apa
 
 import com.aegis.apa.model.DiagnosticSourceStatus
+import com.aegis.apa.model.EvidenceField
+import com.aegis.apa.model.EvidenceFieldStatus
 import com.aegis.apa.tool.PowerDiagnosticParser
 import com.aegis.apa.tool.RawDiagnosticSection
 import org.junit.Assert.assertEquals
@@ -89,5 +91,47 @@ class PowerDiagnosticParserTest {
         assertEquals(true, snapshot.system.deviceIdleMode)
         assertNull(snapshot.system.thermalStatus)
         assertTrue(snapshot.findings.isEmpty())
+    }
+
+    @Test
+    fun mergesIndependentEvidenceByUidAndReportsFieldCoverage() {
+        val snapshot = PowerDiagnosticParser.parse(
+            sections = listOf(
+                RawDiagnosticSection("packages", DiagnosticSourceStatus.AVAILABLE, "package:com.example.chat uid:10123"),
+                RawDiagnosticSection(
+                    "batterystats",
+                    DiagnosticSourceStatus.AVAILABLE,
+                    """
+                        Estimated power use (mAh):
+                          UID u0a123: 240.0
+                        Uid u0a123:
+                          Wake lock sync: 12m 0s partial (2 times) realtime
+                    """.trimIndent()
+                ),
+                RawDiagnosticSection("alarm", DiagnosticSourceStatus.AVAILABLE, "UID u0a123: 180 wakeups, 200 alarms"),
+                RawDiagnosticSection("jobscheduler", DiagnosticSourceStatus.AVAILABLE, "JOB #u0a123/1: com.example.chat/.SyncJob")
+            ),
+            sampledAt = Instant.EPOCH
+        )
+
+        val app = snapshot.apps.single()
+        assertEquals(listOf("com.example.chat"), app.packageNames)
+        assertEquals(240.0, app.estimatedPowerMah!!, 0.001)
+        assertEquals(12 * 60_000L, app.wakeLockDurationMillis)
+        assertEquals(180L, app.wakeupCount)
+        assertEquals(200L, app.alarmCount)
+        assertEquals(1L, app.jobCount)
+        assertEquals(EvidenceFieldStatus.PARSED, snapshot.evidenceCoverage.fields.getValue(EvidenceField.JOBS))
+    }
+
+    @Test
+    fun availableButUnrecognizedSourceIsNotReportedAsZero() {
+        val snapshot = PowerDiagnosticParser.parse(
+            listOf(RawDiagnosticSection("alarm", DiagnosticSourceStatus.AVAILABLE, "vendor format unknown")),
+            Instant.EPOCH
+        )
+
+        assertTrue(snapshot.apps.isEmpty())
+        assertEquals(EvidenceFieldStatus.NOT_PARSED, snapshot.evidenceCoverage.fields.getValue(EvidenceField.WAKEUP_ALARMS))
     }
 }

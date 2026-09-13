@@ -3,6 +3,9 @@ package com.aegis.apa.tool
 import com.aegis.apa.model.AppPowerEvidence
 import com.aegis.apa.model.DiagnosticSourceResult
 import com.aegis.apa.model.DiagnosticSourceStatus
+import com.aegis.apa.model.EvidenceCoverage
+import com.aegis.apa.model.EvidenceField
+import com.aegis.apa.model.EvidenceFieldStatus
 import com.aegis.apa.model.PowerDiagnosticSnapshot
 import com.aegis.apa.model.SystemPowerEvidence
 import java.time.Instant
@@ -16,9 +19,6 @@ data class RawDiagnosticSection(
 )
 
 object PowerDiagnosticParser {
-    private val packagePattern = Regex("package:(\\S+)\\s+uid:(\\d+)")
-    private const val ESTIMATED_POWER_HEADER = "Estimated power use (mAh):"
-    private val uidPowerPattern = Regex("(?m)^\\s*UID\\s+(\\S+):\\s*([0-9]+(?:\\.[0-9]+)?)")
 
     fun parse(
         sections: List<RawDiagnosticSection>,
@@ -26,25 +26,33 @@ object PowerDiagnosticParser {
         collectionDurationMillis: Long = 0L
     ): PowerDiagnosticSnapshot {
         val byName = sections.associateBy { it.source }
-        val packagesByUid = packagePattern.findAll(byName["packages"]?.output.orEmpty())
-            .groupBy(
-                keySelector = { it.groupValues[2].toInt() },
-                valueTransform = { it.groupValues[1] }
-            )
-            .mapValues { (_, packages) -> packages.distinct().sorted() }
-
-        val estimatedPowerSection = extractEstimatedPowerSection(byName["batterystats"]?.output.orEmpty())
-        val apps = uidPowerPattern.findAll(estimatedPowerSection)
-            .mapNotNull { match ->
-                val uid = parseUid(match.groupValues[1]) ?: return@mapNotNull null
-                val power = match.groupValues[2].toDoubleOrNull() ?: return@mapNotNull null
+        val packagesByUid = PackageUidResolver.resolve(byName["packages"]?.output.orEmpty())
+        val batteryEvidence = BatteryStatsEvidenceParser.parse(byName["batterystats"]?.output.orEmpty())
+        val alarmEvidence = AlarmEvidenceParser.parse(byName["alarm"]?.output.orEmpty())
+        val jobEvidence = JobSchedulerEvidenceParser.parse(byName["jobscheduler"]?.output.orEmpty())
+        val evidenceByUid = linkedMapOf<Int, PartialAppEvidence>()
+        listOf(batteryEvidence, alarmEvidence, jobEvidence).forEach { parsed ->
+            parsed.apps.values.forEach { partial ->
+                evidenceByUid[partial.uid] = mergePartialEvidence(evidenceByUid[partial.uid], partial)
+            }
+        }
+        val apps = evidenceByUid.values
+            .sortedBy { it.uid }
+            .map { evidence ->
+                val packages = packagesByUid[evidence.uid].orEmpty()
                 AppPowerEvidence(
-                    uid = uid,
-                    packageNames = packagesByUid[uid].orEmpty(),
-                    estimatedPowerMah = power
+                    uid = evidence.uid,
+                    packageNames = packages,
+                    estimatedPowerMah = evidence.estimatedPowerMah,
+                    wakeLockDurationMillis = evidence.wakeLockDurationMillis,
+                    wakeupCount = evidence.wakeupCount,
+                    alarmCount = evidence.alarmCount,
+                    jobCount = evidence.jobCount,
+                    foregroundDurationMillis = evidence.foregroundDurationMillis,
+                    backgroundDurationMillis = evidence.backgroundDurationMillis,
+                    sharedUid = packages.size > 1
                 )
             }
-            .toList()
 
         val powerOutput = byName["power"]?.output.orEmpty()
         val wakefulness = findValue(powerOutput, "mWakefulness")
@@ -73,6 +81,17 @@ object PowerDiagnosticParser {
             section.source to DiagnosticSourceResult(section.source, status, section.detail)
         }
 
+        val coverage = EvidenceCoverage(
+            fields = mapOf(
+                EvidenceField.UID_PACKAGES to fieldStatus(byName["packages"], packagesByUid.isNotEmpty()),
+                EvidenceField.POWER_MAH to fieldStatus(byName["batterystats"], EvidenceField.POWER_MAH in batteryEvidence.parsedFields),
+                EvidenceField.FOREGROUND_TIME to fieldStatus(byName["batterystats"], EvidenceField.FOREGROUND_TIME in batteryEvidence.parsedFields),
+                EvidenceField.WAKELOCK_TIME to fieldStatus(byName["batterystats"], EvidenceField.WAKELOCK_TIME in batteryEvidence.parsedFields),
+                EvidenceField.WAKEUP_ALARMS to fieldStatus(byName["alarm"], EvidenceField.WAKEUP_ALARMS in alarmEvidence.parsedFields),
+                EvidenceField.JOBS to fieldStatus(byName["jobscheduler"], EvidenceField.JOBS in jobEvidence.parsedFields)
+            )
+        )
+
         return PowerDiagnosticSnapshot(
             sampledAtInstant = sampledAt,
             collectionDurationMillis = collectionDurationMillis,
@@ -85,50 +104,18 @@ object PowerDiagnosticParser {
                 thermalStatus = thermalStatus,
                 topWakeupSources = wakeupSources
             ),
-            findings = emptyList()
+            findings = emptyList(),
+            evidenceCoverage = coverage
         )
     }
 
-    /**
-     * Android's batterystats output contains unrelated title-case `Uid` rows later in the
-     * document (for example packet counts). Only the uppercase `UID` rows belonging to the
-     * estimated-power section represent mAh values.
-     */
-    private fun extractEstimatedPowerSection(output: String): String {
-        val lines = output.lines()
-        val headerIndex = lines.indexOfFirst { it.trim() == ESTIMATED_POWER_HEADER }
-        if (headerIndex < 0) return ""
-
-        val headerIndent = lines[headerIndex].leadingWhitespaceCount()
-        val sectionLines = mutableListOf<String>()
-        for (line in lines.drop(headerIndex + 1)) {
-            val trimmed = line.trim()
-            if (
-                trimmed.isNotEmpty() &&
-                line.leadingWhitespaceCount() <= headerIndent &&
-                !trimmed.startsWith("UID ")
-            ) {
-                break
-            }
-            sectionLines += line
-        }
-        return sectionLines.joinToString("\n")
-    }
-
-    private fun String.leadingWhitespaceCount(): Int {
-        val firstContentIndex = indexOfFirst { !it.isWhitespace() }
-        return if (firstContentIndex < 0) length else firstContentIndex
-    }
-
-    private fun parseUid(token: String): Int? {
-        token.toIntOrNull()?.let { return it }
-        Regex("u(\\d+)a(\\d+)").matchEntire(token)?.let { match ->
-            return match.groupValues[1].toInt() * 100_000 + 10_000 + match.groupValues[2].toInt()
-        }
-        Regex("u(\\d+)s(\\d+)").matchEntire(token)?.let { match ->
-            return match.groupValues[1].toInt() * 100_000 + match.groupValues[2].toInt()
-        }
-        return null
+    private fun fieldStatus(section: RawDiagnosticSection?, parsed: Boolean): EvidenceFieldStatus = when {
+        section == null -> EvidenceFieldStatus.SOURCE_UNAVAILABLE
+        section.status != DiagnosticSourceStatus.AVAILABLE && section.status != DiagnosticSourceStatus.TRUNCATED ->
+            EvidenceFieldStatus.SOURCE_UNAVAILABLE
+        section.truncated || section.status == DiagnosticSourceStatus.TRUNCATED -> EvidenceFieldStatus.TRUNCATED
+        parsed -> EvidenceFieldStatus.PARSED
+        else -> EvidenceFieldStatus.NOT_PARSED
     }
 
     private fun findValue(output: String, key: String): String? =
