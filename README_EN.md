@@ -4,7 +4,7 @@ An experimental Android app that explains battery, heat and resource readings us
 
 [中文](README.md) · [Roadmap](ROADMAP.md) · [Architecture audit](docs/ARCHITECTURE.md) · [Data contract](docs/DATA_MODEL.md) · [Technical debt](docs/TECH_DEBT.md) · [Testing](docs/TESTING.md)
 
-> The current stable release is `0.1.2`. Download the APK and read its release notes on [GitHub Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases).
+> The current development source is `0.2.0-preview` and has not been released. The latest stable release remains `0.1.2`; download its APK and read the release notes on [GitHub Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases).
 
 ## Features
 
@@ -63,7 +63,7 @@ Android 8/API 26+; compile SDK 36.1, target SDK 36. Use the committed Gradle wra
 
 On Windows use `gradlew.bat` and configure JAVA_HOME/ANDROID_HOME. Initial dependency downloads require network; use `--offline` only with a populated cache.
 
-- Debug package: `com.aegis.apa.preview` (APA Preview); APK: `app/build/outputs/apk/debug/APA-v0.1.2-debug.apk`.
+- Debug package: `com.aegis.apa.preview` (APA Preview); APK: `app/build/outputs/apk/debug/APA-v0.2.0-debug.apk`, installed version `0.2.0-preview`.
 - Release package: `com.aegis.apa` (APA). The two installations have separate data.
 - Debug and source checks require no release credentials. Release APK/AAB packaging requires complete local signing properties and an existing keystore.
 - Ignored `keystore.properties` contains storeFile, storePassword, keyAlias, keyPassword. Optional `-Papa.signingProperties=local-file` selects another properties file; quote the whole argument in PowerShell. Relative storeFile paths resolve from the app module.
