@@ -4,6 +4,7 @@ import com.aegis.apa.model.BatteryObservationAnalyzer
 import com.aegis.apa.model.BatteryObservationPoint
 import com.aegis.apa.model.BatteryObservationReportBuilder
 import com.aegis.apa.model.BatteryObservationValidity
+import com.aegis.apa.model.BatteryInfo
 import java.time.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -13,6 +14,22 @@ import org.junit.Test
 
 class BatteryObservationAnalyzerTest {
     private val start = Instant.parse("2026-09-14T00:00:00Z")
+
+    @Test
+    fun batteryPointRequiresExplicitPlugState() {
+        val unknown = BatteryObservationPoint.from(
+            BatteryInfo(level = 80, status = "正在放电", plugged = null),
+            start
+        )
+        val unplugged = BatteryObservationPoint.from(
+            BatteryInfo(level = 80, status = "正在放电", plugged = "未外接电源"),
+            start
+        )
+
+        assertFalse(unknown.powerStateKnown)
+        assertTrue(unplugged.powerStateKnown)
+        assertFalse(unplugged.charging)
+    }
 
     @Test
     fun computesMeasuredDrainRateFromTwoDischargingSamples() {

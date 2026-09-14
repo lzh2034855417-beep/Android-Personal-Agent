@@ -13,16 +13,22 @@ data class BatteryObservationPoint(
 ) {
     companion object {
         fun from(snapshot: DeviceSnapshot, elapsedRealtimeMillis: Long? = null): BatteryObservationPoint {
-            val battery = snapshot.batteryInfo
+            return from(snapshot.batteryInfo, snapshot.sampledAtInstant, elapsedRealtimeMillis)
+        }
+
+        fun from(
+            battery: BatteryInfo,
+            sampledAtInstant: Instant,
+            elapsedRealtimeMillis: Long? = null
+        ): BatteryObservationPoint {
             val explicitlyCharging = battery.status == "正在充电" || battery.status == "已充满"
-            val explicitlyDischarging = battery.status == "正在放电" || battery.status == "未充电"
             val externallyPowered = battery.plugged != null && battery.plugged != "未外接电源"
             val explicitlyUnplugged = battery.plugged == "未外接电源"
             return BatteryObservationPoint(
-                sampledAtInstant = snapshot.sampledAtInstant,
+                sampledAtInstant = sampledAtInstant,
                 levelPercent = battery.level,
                 charging = explicitlyCharging || externallyPowered,
-                powerStateKnown = explicitlyCharging || explicitlyDischarging || externallyPowered || explicitlyUnplugged,
+                powerStateKnown = explicitlyCharging || externallyPowered || explicitlyUnplugged,
                 elapsedRealtimeMillis = elapsedRealtimeMillis
             )
         }

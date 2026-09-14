@@ -2,6 +2,7 @@ package com.aegis.apa
 
 import com.aegis.apa.agent.PowerAnalysisPreflight
 import com.aegis.apa.agent.PowerQuestionIntent
+import com.aegis.apa.agent.PowerQuestionSignals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -18,6 +19,24 @@ class PowerAnalysisPreflightTest {
         assertEquals(PowerQuestionIntent.ATTRIBUTION, PowerAnalysisPreflight.classify("哪个软件最费电"))
         assertEquals(PowerQuestionIntent.ATTRIBUTION, PowerAnalysisPreflight.classify("电量损耗是谁造成的"))
         assertEquals(PowerQuestionIntent.OTHER, PowerAnalysisPreflight.classify("电池温度正常吗"))
+    }
+
+    @Test
+    fun detectionRequiresBatteryContextAndKeepsMixedIntents() {
+        assertEquals(PowerQuestionSignals(), PowerAnalysisPreflight.detect("哪个软件占内存最多"))
+        assertEquals(PowerQuestionSignals(), PowerAnalysisPreflight.detect("游戏帧率掉了"))
+        assertEquals(
+            PowerQuestionSignals(asksDrainRate = true),
+            PowerAnalysisPreflight.detect("电池掉得很快")
+        )
+        assertEquals(
+            PowerQuestionSignals(asksDrainRate = true),
+            PowerAnalysisPreflight.detect("手机太费电了")
+        )
+        assertEquals(
+            PowerQuestionSignals(asksDrainRate = true, asksAttribution = true),
+            PowerAnalysisPreflight.detect("为什么今天耗电这么快")
+        )
     }
 
     @Test
@@ -87,5 +106,19 @@ class PowerAnalysisPreflightTest {
 
         assertTrue(selected.orEmpty().contains("开始续航观察"))
         assertTrue(excluded.orEmpty().contains("开始续航观察"))
+    }
+
+    @Test
+    fun mixedQuestionIsNeverSilentlyReducedToOneAnswer() {
+        val message = PowerAnalysisPreflight.blockingMessage(
+            question = "为什么今天耗电这么快",
+            diagnosticAvailable = true,
+            diagnosticSelected = true,
+            observationAvailable = true
+        )
+
+        assertTrue(message.orEmpty().contains("两个问题"))
+        assertTrue(message.orEmpty().contains("掉电速度"))
+        assertTrue(message.orEmpty().contains("具体应用"))
     }
 }

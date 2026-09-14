@@ -300,36 +300,28 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 val onStartBatteryObservation: () -> Unit = {
-                    scope.launch {
-                        try {
-                            session.startBatteryObservation(
-                                BatteryObservationPoint.from(
-                                    refreshSnapshot(),
-                                    android.os.SystemClock.elapsedRealtime()
-                                )
+                    runCatching {
+                        val battery = BatteryTool.read(this@MainActivity)
+                        session.startBatteryObservation(
+                            BatteryObservationPoint.from(
+                                battery = battery,
+                                sampledAtInstant = Instant.now(),
+                                elapsedRealtimeMillis = android.os.SystemClock.elapsedRealtime()
                             )
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (_: Exception) {
-                            batteryObservationNotice = "无法读取当前电量，请重试。"
-                        }
-                    }
+                        )
+                    }.onFailure { batteryObservationNotice = "无法读取当前电量，请重试。" }
                 }
                 val onFinishBatteryObservation: () -> Unit = {
-                    scope.launch {
-                        try {
-                            session.finishBatteryObservation(
-                                BatteryObservationPoint.from(
-                                    refreshSnapshot(),
-                                    android.os.SystemClock.elapsedRealtime()
-                                )
+                    runCatching {
+                        val battery = BatteryTool.read(this@MainActivity)
+                        session.finishBatteryObservation(
+                            BatteryObservationPoint.from(
+                                battery = battery,
+                                sampledAtInstant = Instant.now(),
+                                elapsedRealtimeMillis = android.os.SystemClock.elapsedRealtime()
                             )
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (_: Exception) {
-                            batteryObservationNotice = "无法读取结束电量，请重试；观察仍在继续。"
-                        }
-                    }
+                        )
+                    }.onFailure { batteryObservationNotice = "无法读取结束电量，请重试；观察仍在继续。" }
                 }
                 val onReadDeviceProfile = {
                     if (!isDeviceProfileReading) {
