@@ -3,4 +3,7 @@
 <full-backup-content>
     <exclude domain="sharedpref" path="apa_api_credentials.xml" />
     <exclude domain="device_sharedpref" path="apa_api_credentials.xml" />
+    <!-- A stale observation checkpoint must never move to another device. -->
+    <exclude domain="sharedpref" path="apa_battery_observation.xml" />
+    <exclude domain="device_sharedpref" path="apa_battery_observation.xml" />
 </full-backup-content>

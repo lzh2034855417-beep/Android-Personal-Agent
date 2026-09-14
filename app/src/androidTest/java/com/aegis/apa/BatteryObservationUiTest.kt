@@ -3,6 +3,8 @@ package com.aegis.apa
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.performClick
 import com.aegis.apa.model.BatteryObservationAnalyzer
 import com.aegis.apa.model.BatteryObservationPoint
@@ -10,15 +12,38 @@ import com.aegis.apa.ui.theme.AndroidPersonalAgentTheme
 import java.time.Instant
 import org.junit.Rule
 import org.junit.Test
+import org.junit.Assert.assertEquals
 
 class BatteryObservationUiTest {
     @get:Rule val rule = createComposeRule()
 
-    @Test fun ordinaryUserCanSeeTheStartEntryPoint() {
+    @Test fun bugReportIsPrimaryAndObservationIsCollapsedByDefault() {
         rule.setContent { ObservationPanel() }
 
-        rule.onNodeWithText("普通用户续航观察").assertExists()
-        rule.onNodeWithText("开始续航观察").assertExists()
+        rule.onNodeWithText("导入系统报告").assertExists()
+        rule.onNodeWithText("辅助：粗略续航测量").assertExists()
+        rule.onAllNodesWithText("开始粗略测量").assertCountEquals(0)
+
+        rule.onNodeWithText("辅助：粗略续航测量").performClick()
+
+        rule.onNodeWithText("开始粗略测量").assertExists()
+    }
+
+    @Test fun finishingRequiresExplicitChargingConfirmation() {
+        val start = BatteryObservationPoint(Instant.parse("2026-09-14T00:00:00Z"), 80, charging = false)
+        var userReportedCharging: Boolean? = null
+        rule.setContent {
+            ObservationPanel(
+                observationStart = start,
+                onFinish = { userReportedCharging = it }
+            )
+        }
+
+        rule.onNodeWithText("结束观察并计算").performClick()
+        rule.onNodeWithText("期间是否充过电？").assertExists()
+        rule.onNodeWithText("充过电或不确定，本次作废").performClick()
+
+        assertEquals(true, userReportedCharging)
     }
 
     @Test fun completedObservationShowsTheMeasuredRate() {
@@ -45,12 +70,16 @@ class BatteryObservationUiTest {
     }
 
     @Composable
-    private fun ObservationPanel(result: com.aegis.apa.model.BatteryObservationResult? = null) {
+    private fun ObservationPanel(
+        result: com.aegis.apa.model.BatteryObservationResult? = null,
+        observationStart: BatteryObservationPoint? = null,
+        onFinish: (Boolean) -> Unit = {}
+    ) {
         AndroidPersonalAgentTheme {
             PowerDiagnosticPanel(
                 state = PowerDiagnosticUiState.Idle,
                 snapshot = null,
-                observationStart = null,
+                observationStart = observationStart,
                 observationResult = result,
                 observationNotice = null,
                 selected = false,
@@ -58,7 +87,7 @@ class BatteryObservationUiTest {
                 onCollect = {},
                 onImportBugReport = {},
                 onStartObservation = {},
-                onFinishObservation = {},
+                onFinishObservation = onFinish,
                 onClearObservation = {},
                 onToggleSelected = {},
                 onRemove = {},

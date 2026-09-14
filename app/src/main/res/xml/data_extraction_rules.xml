@@ -4,9 +4,13 @@
     <cloud-backup>
         <exclude domain="sharedpref" path="apa_api_credentials.xml" />
         <exclude domain="device_sharedpref" path="apa_api_credentials.xml" />
+        <exclude domain="sharedpref" path="apa_battery_observation.xml" />
+        <exclude domain="device_sharedpref" path="apa_battery_observation.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="apa_api_credentials.xml" />
         <exclude domain="device_sharedpref" path="apa_api_credentials.xml" />
+        <exclude domain="sharedpref" path="apa_battery_observation.xml" />
+        <exclude domain="device_sharedpref" path="apa_battery_observation.xml" />
     </device-transfer>
 </data-extraction-rules>

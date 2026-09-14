@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -40,7 +41,7 @@ fun PowerDiagnosticPanel(
     onCollect: () -> Unit,
     onImportBugReport: () -> Unit,
     onStartObservation: () -> Unit,
-    onFinishObservation: () -> Unit,
+    onFinishObservation: (Boolean) -> Unit,
     onClearObservation: () -> Unit,
     onToggleSelected: () -> Unit,
     onRemove: () -> Unit,
@@ -48,6 +49,31 @@ fun PowerDiagnosticPanel(
     modifier: Modifier = Modifier
 ) {
     var showImportHelp by rememberSaveable { mutableStateOf(false) }
+    var showObservation by rememberSaveable {
+        mutableStateOf(observationStart != null || observationResult != null)
+    }
+    var showFinishConfirmation by rememberSaveable { mutableStateOf(false) }
+    if (showFinishConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showFinishConfirmation = false },
+            title = { Text("期间是否充过电？") },
+            text = {
+                Text("APA 不需要常驻后台，因此无法保证记录到所有充电事件。请按实际情况确认；不确定时按“充过电”处理。")
+            },
+            confirmButton = {
+                Button(onClick = {
+                    showFinishConfirmation = false
+                    onFinishObservation(false)
+                }) { Text("没有充过电，计算") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showFinishConfirmation = false
+                    onFinishObservation(true)
+                }) { Text("充过电或不确定，本次作废") }
+            }
+        )
+    }
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
@@ -59,51 +85,6 @@ fun PowerDiagnosticPanel(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall
             )
-            Text("普通用户续航观察", style = MaterialTheme.typography.titleSmall)
-            when {
-                observationStart != null -> {
-                    Text(
-                        "观察中：${observationStart.levelPercent}% · ${SampleTime.format(observationStart.sampledAtInstant)}\n" +
-                            "保持不充电，至少 30 分钟后再结束。",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = onFinishObservation) { Text("结束观察并计算") }
-                        TextButton(onClick = onClearObservation) { Text("取消") }
-                    }
-                }
-                observationResult != null -> {
-                    val rate = observationResult.drainPercentPerHour
-                    Text(
-                        if (rate != null) {
-                            val quality = observationResult.measurementQuality
-                                ?.let(BatteryObservationAnalyzer::qualityLabel)
-                                ?: "未知"
-                            "下降 ${observationResult.dropPercent} 个百分点 · 平均 ${"%.2f".format(java.util.Locale.US, rate)}%/小时 · 测量可靠性：$quality"
-                        } else {
-                            BatteryObservationAnalyzer.explanation(observationResult.validity)
-                        },
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = onStartObservation) { Text("重新开始") }
-                        TextButton(onClick = onClearObservation) { Text("清除") }
-                    }
-                }
-                else -> {
-                    Text(
-                        "记录两次电量和时间，APA 本地计算平均掉电速度；它不能定位具体耗电应用。",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Button(onClick = onStartObservation, modifier = Modifier.fillMaxWidth()) {
-                        Text("开始续航观察")
-                    }
-                }
-            }
-            observationNotice?.let {
-                Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
-            }
             Text("应用耗电归因", style = MaterialTheme.typography.titleSmall)
             when (state) {
                 PowerDiagnosticUiState.Idle -> Text("尚未导入或采集；普通用户可导入系统 Bug Report。")
@@ -115,6 +96,25 @@ fun PowerDiagnosticPanel(
                 )
                 is PowerDiagnosticUiState.Error -> Text("读取失败：${state.message}")
                 PowerDiagnosticUiState.Interrupted -> Text("上次读取已中断，请手动重试。")
+            }
+            val busy = state is PowerDiagnosticUiState.Collecting || state == PowerDiagnosticUiState.Importing
+            PowerDiagnosticEntryPoints.forRootAvailability(rootAvailable).forEach { entryPoint ->
+                when (entryPoint) {
+                    PowerDiagnosticEntryPoint.IMPORT_BUGREPORT -> Button(
+                        onClick = onImportBugReport,
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (snapshot == null) "导入系统报告" else "重新导入系统报告")
+                    }
+                    PowerDiagnosticEntryPoint.ROOT_READ_ONLY -> Button(
+                        onClick = onCollect,
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (snapshot == null) "开始只读诊断（Root）" else "重新采集（Root）")
+                    }
+                }
             }
             TextButton(onClick = { showImportHelp = !showImportHelp }) {
                 Text(if (showImportHelp) "收起生成步骤" else "怎么生成系统报告")
@@ -134,23 +134,51 @@ fun PowerDiagnosticPanel(
                     style = MaterialTheme.typography.bodySmall
                 )
             }
-            val busy = state is PowerDiagnosticUiState.Collecting || state == PowerDiagnosticUiState.Importing
-            PowerDiagnosticEntryPoints.forRootAvailability(rootAvailable).forEach { entryPoint ->
-                when (entryPoint) {
-                    PowerDiagnosticEntryPoint.IMPORT_BUGREPORT -> Button(
-                        onClick = onImportBugReport,
-                        enabled = !busy,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(if (snapshot == null) "导入系统报告" else "重新导入系统报告")
+            TextButton(onClick = { showObservation = !showObservation }) {
+                Text(if (showObservation) "收起辅助续航测量" else "辅助：粗略续航测量")
+            }
+            if (showObservation) {
+                Text(
+                    "只比较起止电量，不能定位具体耗电应用；系统报告才是普通用户归因的主入口。",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                when {
+                    observationStart != null -> {
+                        Text(
+                            "观察中：${observationStart.levelPercent}% · ${SampleTime.format(observationStart.sampledAtInstant)}\n" +
+                                "可以退出 APA；保持不充电，至少 30 分钟后回来结束。",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { showFinishConfirmation = true }) { Text("结束观察并计算") }
+                            TextButton(onClick = onClearObservation) { Text("取消") }
+                        }
                     }
-                    PowerDiagnosticEntryPoint.ROOT_READ_ONLY -> Button(
-                        onClick = onCollect,
-                        enabled = !busy,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(if (snapshot == null) "开始只读诊断（Root）" else "重新采集（Root）")
+                    observationResult != null -> {
+                        val rate = observationResult.drainPercentPerHour
+                        Text(
+                            if (rate != null) {
+                                val quality = observationResult.measurementQuality
+                                    ?.let(BatteryObservationAnalyzer::qualityLabel)
+                                    ?: "未知"
+                                "下降 ${observationResult.dropPercent} 个百分点 · 平均 ${"%.2f".format(java.util.Locale.US, rate)}%/小时 · 测量可靠性：$quality"
+                            } else {
+                                BatteryObservationAnalyzer.explanation(observationResult.validity)
+                            },
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = onStartObservation) { Text("重新开始") }
+                            TextButton(onClick = onClearObservation) { Text("清除") }
+                        }
                     }
+                    else -> Button(onClick = onStartObservation, modifier = Modifier.fillMaxWidth()) {
+                        Text("开始粗略测量")
+                    }
+                }
+                observationNotice?.let {
+                    Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
                 }
             }
             snapshot?.let { report ->

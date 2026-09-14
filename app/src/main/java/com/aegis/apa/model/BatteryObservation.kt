@@ -55,17 +55,24 @@ enum class BatteryObservationQuality {
     STABLE
 }
 
+enum class BatteryObservationContinuity {
+    PROCESS_OBSERVED,
+    USER_CONFIRMED_AFTER_RESTORE
+}
+
 data class BatteryObservationResult(
     val start: BatteryObservationPoint,
     val end: BatteryObservationPoint,
     val validity: BatteryObservationValidity,
     val durationMillis: Long,
     val dropPercent: Int?,
-    val drainPercentPerHour: Double?
+    val drainPercentPerHour: Double?,
+    val continuity: BatteryObservationContinuity = BatteryObservationContinuity.PROCESS_OBSERVED
 ) {
     val isUsableEvidence: Boolean get() = validity == BatteryObservationValidity.VALID
     val measurementQuality: BatteryObservationQuality?
         get() = if (!isUsableEvidence || dropPercent == null) null else when {
+            continuity == BatteryObservationContinuity.USER_CONFIRMED_AFTER_RESTORE -> BatteryObservationQuality.ROUGH
             durationMillis >= Duration.ofHours(4).toMillis() && dropPercent >= 10 -> BatteryObservationQuality.STABLE
             durationMillis >= Duration.ofHours(2).toMillis() && dropPercent >= 5 -> BatteryObservationQuality.MODERATE
             else -> BatteryObservationQuality.ROUGH
@@ -86,7 +93,7 @@ object BatteryObservationAnalyzer {
         start: BatteryObservationPoint,
         end: BatteryObservationPoint,
         chargingObserved: Boolean = false,
-        continuityLost: Boolean = false
+        continuity: BatteryObservationContinuity = BatteryObservationContinuity.PROCESS_OBSERVED
     ): BatteryObservationResult {
         val durationMillis = if (start.elapsedRealtimeMillis != null && end.elapsedRealtimeMillis != null) {
             end.elapsedRealtimeMillis - start.elapsedRealtimeMillis
@@ -97,12 +104,11 @@ object BatteryObservationAnalyzer {
             start.levelPercent - end.levelPercent
         } else null
         val validity = when {
+            chargingObserved -> BatteryObservationValidity.CHARGING_DURING_OBSERVATION
             start.levelPercent == null || end.levelPercent == null -> BatteryObservationValidity.MISSING_BATTERY_LEVEL
             !start.powerStateKnown || !end.powerStateKnown -> BatteryObservationValidity.UNKNOWN_POWER_STATE
             start.charging -> BatteryObservationValidity.STARTED_WHILE_CHARGING
-            chargingObserved -> BatteryObservationValidity.CHARGING_DURING_OBSERVATION
             end.charging -> BatteryObservationValidity.ENDED_WHILE_CHARGING
-            continuityLost -> BatteryObservationValidity.CONTINUITY_LOST
             durationMillis <= 0 -> BatteryObservationValidity.INVALID_TIME_RANGE
             drop != null && drop < 0 -> BatteryObservationValidity.BATTERY_INCREASED
             durationMillis < minimumDuration.toMillis() -> BatteryObservationValidity.TOO_SHORT
@@ -112,7 +118,7 @@ object BatteryObservationAnalyzer {
         val rate = if (validity == BatteryObservationValidity.VALID && drop != null) {
             drop * Duration.ofHours(1).toMillis().toDouble() / durationMillis
         } else null
-        return BatteryObservationResult(start, end, validity, durationMillis, drop, rate)
+        return BatteryObservationResult(start, end, validity, durationMillis, drop, rate, continuity)
     }
 
     fun explanation(validity: BatteryObservationValidity): String = when (validity) {
@@ -148,6 +154,9 @@ object BatteryObservationReportBuilder {
         }
         result.measurementQuality?.let {
             appendLine("测量可靠性：${BatteryObservationAnalyzer.qualityLabel(it)}（观察越长、掉电跨度越大，整数电量误差越小）")
+        }
+        if (result.continuity == BatteryObservationContinuity.USER_CONFIRMED_AFTER_RESTORE) {
+            appendLine("连续性：APA 未持续驻留；结果依赖用户确认期间没有充电，因此只作粗略参考。")
         }
         appendLine("有效性：${BatteryObservationAnalyzer.explanation(result.validity)}")
         appendLine("限制：该观察只能说明这段时间的平均掉电速度，不能据此归因到具体应用；应用归因仍需系统耗电诊断。")

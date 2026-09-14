@@ -9,43 +9,63 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MainSessionViewModelTest {
-    @Test fun activeBatteryObservationRestoresFromSavedState() {
+    @Test fun activeBatteryObservationDoesNotRestoreWithoutDiskCheckpoint() {
         val handle = SavedStateHandle()
         val firstSession = MainSessionViewModel(handle)
-        val start = BatteryObservationPoint(Instant.parse("2026-09-14T00:00:00Z"), 80, charging = false)
+        val start = BatteryObservationPoint(
+            Instant.parse("2026-09-14T00:00:00Z"),
+            80,
+            charging = false,
+            elapsedRealtimeMillis = 50_000
+        )
         firstSession.startBatteryObservation(start)
 
         val restoredSession = MainSessionViewModel(handle)
 
-        assertEquals(start, restoredSession.batteryObservationStart.value)
-        assertTrue(restoredSession.batteryObservationNotice.value.orEmpty().contains("已恢复"))
+        restoredSession.reconcileBatteryObservation(null)
+
+        assertNull(restoredSession.batteryObservationStart.value)
     }
 
-    @Test fun restoredActiveObservationFailsClosedBecauseContinuityWasLost() {
-        val handle = SavedStateHandle()
-        val firstSession = MainSessionViewModel(handle)
+    @Test fun restoredActiveObservationUsesUserConfirmedRoughResult() {
         val startedAt = Instant.parse("2026-09-14T00:00:00Z")
-        firstSession.startBatteryObservation(BatteryObservationPoint(startedAt, 80, charging = false))
-        val restoredSession = MainSessionViewModel(handle)
+        val restoredSession = MainSessionViewModel()
+        restoredSession.reconcileBatteryObservation(
+            BatteryObservationPoint(startedAt, 80, charging = false),
+            chargingWasObserved = false
+        )
 
         restoredSession.finishBatteryObservation(
-            BatteryObservationPoint(startedAt.plusSeconds(3600), 77, charging = false)
+            BatteryObservationPoint(startedAt.plusSeconds(3600), 77, charging = false),
+            userReportedCharging = false
         )
 
         assertEquals(
-            com.aegis.apa.model.BatteryObservationValidity.CONTINUITY_LOST,
+            com.aegis.apa.model.BatteryObservationValidity.VALID,
             restoredSession.batteryObservationResult.value?.validity
         )
-        assertFalse(restoredSession.batteryObservationResult.value?.isUsableEvidence ?: true)
+        assertEquals(
+            com.aegis.apa.model.BatteryObservationQuality.ROUGH,
+            restoredSession.batteryObservationResult.value?.measurementQuality
+        )
+        assertTrue(restoredSession.batteryObservationResult.value?.isUsableEvidence == true)
     }
 
     @Test fun completedBatteryObservationRestoresFromSavedState() {
         val handle = SavedStateHandle()
         val firstSession = MainSessionViewModel(handle)
         val start = Instant.parse("2026-09-14T00:00:00Z")
-        firstSession.startBatteryObservation(BatteryObservationPoint(start, 80, charging = false))
+        firstSession.startBatteryObservation(
+            BatteryObservationPoint(start, 80, charging = false, elapsedRealtimeMillis = 1_000)
+        )
         firstSession.finishBatteryObservation(
-            BatteryObservationPoint(start.plusSeconds(2 * 60 * 60), 74, charging = false)
+            BatteryObservationPoint(
+                start.plusSeconds(2 * 60 * 60),
+                74,
+                charging = false,
+                elapsedRealtimeMillis = 3_601_000
+            ),
+            userReportedCharging = false
         )
 
         val restored = MainSessionViewModel(handle).batteryObservationResult.value
@@ -71,7 +91,8 @@ class MainSessionViewModelTest {
         session.startBatteryObservation(BatteryObservationPoint(startedAt, 80, charging = false))
 
         session.finishBatteryObservation(
-            BatteryObservationPoint(startedAt.plusSeconds(2 * 60 * 60), 74, charging = false)
+            BatteryObservationPoint(startedAt.plusSeconds(2 * 60 * 60), 74, charging = false),
+            userReportedCharging = false
         )
 
         assertNull(session.batteryObservationStart.value)
@@ -86,7 +107,8 @@ class MainSessionViewModelTest {
         session.startBatteryObservation(start)
 
         session.finishBatteryObservation(
-            BatteryObservationPoint(startedAt.plusSeconds(10 * 60), 79, charging = false)
+            BatteryObservationPoint(startedAt.plusSeconds(10 * 60), 79, charging = false),
+            userReportedCharging = false
         )
 
         assertEquals(start, session.batteryObservationStart.value)
@@ -113,10 +135,81 @@ class MainSessionViewModelTest {
         session.markBatteryObservationChargingObserved()
 
         session.finishBatteryObservation(
-            BatteryObservationPoint(startedAt.plusSeconds(3600), 77, charging = false)
+            BatteryObservationPoint(startedAt.plusSeconds(3600), 77, charging = false),
+            userReportedCharging = false
         )
 
         assertNull(session.batteryObservationStart.value)
+        assertEquals(
+            com.aegis.apa.model.BatteryObservationValidity.CHARGING_DURING_OBSERVATION,
+            session.batteryObservationResult.value?.validity
+        )
+    }
+
+    @Test fun userReportedChargingInvalidatesObservationEvenWithoutReceiverEvent() {
+        val session = MainSessionViewModel()
+        val startedAt = Instant.parse("2026-09-14T00:00:00Z")
+        session.startBatteryObservation(BatteryObservationPoint(startedAt, 80, charging = false))
+
+        session.finishBatteryObservation(
+            BatteryObservationPoint(
+                startedAt.plusSeconds(3600),
+                levelPercent = null,
+                charging = false,
+                powerStateKnown = false
+            ),
+            userReportedCharging = true
+        )
+
+        assertEquals(
+            com.aegis.apa.model.BatteryObservationValidity.CHARGING_DURING_OBSERVATION,
+            session.batteryObservationResult.value?.validity
+        )
+        assertFalse(session.batteryObservationResult.value?.isUsableEvidence ?: true)
+    }
+
+    @Test fun diskCheckpointRestoreUsesWallClockAndRoughQuality() {
+        val session = MainSessionViewModel()
+        val startedAt = Instant.parse("2026-09-14T00:00:00Z")
+        session.reconcileBatteryObservation(
+            BatteryObservationPoint(
+                sampledAtInstant = startedAt,
+                levelPercent = 80,
+                charging = false,
+                elapsedRealtimeMillis = 5_000
+            ),
+            chargingWasObserved = false
+        )
+
+        session.finishBatteryObservation(
+            BatteryObservationPoint(
+                sampledAtInstant = startedAt.plusSeconds(2 * 60 * 60),
+                levelPercent = 74,
+                charging = false,
+                elapsedRealtimeMillis = 60_000
+            ),
+            userReportedCharging = false
+        )
+
+        val result = session.batteryObservationResult.value
+        assertEquals(2 * 60 * 60 * 1000L, result?.durationMillis)
+        assertEquals(com.aegis.apa.model.BatteryObservationQuality.ROUGH, result?.measurementQuality)
+    }
+
+    @Test fun repeatedReconciliationCannotReplaceCurrentCheckpointButMergesChargingEvidence() {
+        val session = MainSessionViewModel()
+        val first = BatteryObservationPoint(Instant.parse("2026-09-14T00:00:00Z"), 80, charging = false)
+        val different = BatteryObservationPoint(Instant.parse("2026-09-14T01:00:00Z"), 70, charging = false)
+        session.reconcileBatteryObservation(first)
+
+        session.reconcileBatteryObservation(different, chargingWasObserved = true)
+        assertEquals(first, session.batteryObservationStart.value)
+
+        session.reconcileBatteryObservation(first, chargingWasObserved = true)
+        session.finishBatteryObservation(
+            BatteryObservationPoint(first.sampledAtInstant.plusSeconds(3600), 77, charging = false),
+            userReportedCharging = false
+        )
         assertEquals(
             com.aegis.apa.model.BatteryObservationValidity.CHARGING_DURING_OBSERVATION,
             session.batteryObservationResult.value?.validity

@@ -94,6 +94,8 @@ import com.aegis.apa.model.BatteryObservationPoint
 import com.aegis.apa.model.BatteryObservationReportBuilder
 import com.aegis.apa.model.BatteryObservationResult
 import com.aegis.apa.tool.BatteryTool
+import com.aegis.apa.tool.BatteryObservationStore
+import com.aegis.apa.tool.ChargingEvidenceWriteResult
 import com.aegis.apa.model.DeviceInfo
 import com.aegis.apa.tool.DeviceProfileAccess
 import com.aegis.apa.tool.DeviceProfileCollector
@@ -136,9 +138,21 @@ import kotlinx.coroutines.delay
 @OptIn(ExperimentalLayoutApi::class)
 class MainActivity : ComponentActivity() {
     private val session by lazy { androidx.lifecycle.ViewModelProvider(this)[MainSessionViewModel::class.java] }
+    private val batteryObservationStore by lazy { BatteryObservationStore(this) }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ApiSession.update(ApiKeyStore.load(this))
+        val persistedObservation = batteryObservationStore.load()
+        session.reconcileBatteryObservation(
+            persistedObservation?.start,
+            persistedObservation?.chargingObserved ?: false
+        )
+        val apaApplication = application as ApaApplication
+        if (apaApplication.chargingEvidenceWriteFailed && session.batteryObservationStart.value != null) {
+            session.markBatteryObservationChargingObserved()
+            session.batteryObservationNotice.value =
+                "检测到连接电源，本次观察已作废；充电标记写入失败，请结束或取消后重试。"
+        }
         enableEdgeToEdge()
         setContent {
             AndroidPersonalAgentTheme {
@@ -192,6 +206,10 @@ class MainActivity : ComponentActivity() {
                         override fun onReceive(context: android.content.Context?, intent: Intent?) {
                             if (intent?.action == Intent.ACTION_POWER_CONNECTED) {
                                 session.markBatteryObservationChargingObserved()
+                                if (apaApplication.persistChargingEvidence() == ChargingEvidenceWriteResult.WRITE_FAILED) {
+                                    batteryObservationNotice =
+                                        "检测到连接电源，本次观察已作废；充电标记写入失败，请结束或取消后重试。"
+                                }
                             }
                         }
                     }
@@ -302,26 +320,65 @@ class MainActivity : ComponentActivity() {
                 val onStartBatteryObservation: () -> Unit = {
                     runCatching {
                         val battery = BatteryTool.read(this@MainActivity)
-                        session.startBatteryObservation(
-                            BatteryObservationPoint.from(
-                                battery = battery,
-                                sampledAtInstant = Instant.now(),
-                                elapsedRealtimeMillis = android.os.SystemClock.elapsedRealtime()
-                            )
+                        val point = BatteryObservationPoint.from(
+                            battery = battery,
+                            sampledAtInstant = Instant.now(),
+                            elapsedRealtimeMillis = android.os.SystemClock.elapsedRealtime()
                         )
+                        if (session.startBatteryObservation(point)) {
+                            if (!batteryObservationStore.saveStart(point)) {
+                                session.clearBatteryObservation()
+                                batteryObservationNotice = "无法在本机保存观察起点，请检查存储状态后重试。"
+                            } else {
+                                apaApplication.clearChargingEvidenceWriteFailure()
+                            }
+                        }
                     }.onFailure { batteryObservationNotice = "无法读取当前电量，请重试。" }
                 }
-                val onFinishBatteryObservation: () -> Unit = {
-                    runCatching {
-                        val battery = BatteryTool.read(this@MainActivity)
-                        session.finishBatteryObservation(
-                            BatteryObservationPoint.from(
-                                battery = battery,
-                                sampledAtInstant = Instant.now(),
-                                elapsedRealtimeMillis = android.os.SystemClock.elapsedRealtime()
+                val onFinishBatteryObservation: (Boolean) -> Unit = { userReportedCharging ->
+                    if (userReportedCharging) {
+                        // Mark contaminated before clearing so a storage failure can never make this interval valid again.
+                        session.markBatteryObservationChargingObserved()
+                        val chargingWriteResult = apaApplication.persistChargingEvidence()
+                        if (batteryObservationStore.clear()) {
+                            session.clearBatteryObservation()
+                            apaApplication.clearChargingEvidenceWriteFailure()
+                            batteryObservationNotice = "已按“充过电或不确定”作废本次测量。"
+                        } else {
+                            batteryObservationNotice = if (chargingWriteResult == ChargingEvidenceWriteResult.WRITE_FAILED) {
+                                "本次已在当前会话作废，但充电标记写入和起点清除都失败；请勿继续计算，检查存储后取消重试。"
+                            } else {
+                                "本次已作废，但本机观察起点清除失败；请取消后重试。"
+                            }
+                        }
+                    } else {
+                        runCatching {
+                            val battery = BatteryTool.read(this@MainActivity)
+                            session.finishBatteryObservation(
+                                BatteryObservationPoint.from(
+                                    battery = battery,
+                                    sampledAtInstant = Instant.now(),
+                                    elapsedRealtimeMillis = android.os.SystemClock.elapsedRealtime()
+                                ),
+                                userReportedCharging = false
                             )
-                        )
-                    }.onFailure { batteryObservationNotice = "无法读取结束电量，请重试；观察仍在继续。" }
+                            if (session.batteryObservationStart.value == null) {
+                                if (!batteryObservationStore.clear()) {
+                                    batteryObservationNotice = "结果已计算，但旧观察起点清除失败；请点“清除”后再开始下一次。"
+                                } else {
+                                    apaApplication.clearChargingEvidenceWriteFailure()
+                                }
+                            }
+                        }.onFailure { batteryObservationNotice = "无法读取结束电量，请重试；观察仍在继续。" }
+                    }
+                }
+                val onClearBatteryObservation: () -> Unit = {
+                    if (batteryObservationStore.clear()) {
+                        session.clearBatteryObservation()
+                        apaApplication.clearChargingEvidenceWriteFailure()
+                    } else {
+                        batteryObservationNotice = "无法清除本机观察起点，请重试。"
+                    }
                 }
                 val onReadDeviceProfile = {
                     if (!isDeviceProfileReading) {
@@ -556,7 +613,7 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onStartBatteryObservation = onStartBatteryObservation,
                                 onFinishBatteryObservation = onFinishBatteryObservation,
-                                onClearBatteryObservation = session::clearBatteryObservation,
+                                onClearBatteryObservation = onClearBatteryObservation,
                                 onRemovePowerDiagnostic = {
                                     powerDiagnostic = null
                                     powerDiagnosticState = PowerDiagnosticUiState.Idle
@@ -1254,7 +1311,7 @@ fun AgentChatScreen(
     onCollectPowerDiagnostic: () -> Unit,
     onImportBugReport: () -> Unit,
     onStartBatteryObservation: () -> Unit,
-    onFinishBatteryObservation: () -> Unit,
+    onFinishBatteryObservation: (Boolean) -> Unit,
     onClearBatteryObservation: () -> Unit,
     onRemovePowerDiagnostic: () -> Unit,
     onCopyPackage: (String) -> Unit,

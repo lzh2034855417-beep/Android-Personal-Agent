@@ -11,7 +11,7 @@ An experimental Android app that explains battery, heat and resource readings us
 - Local device/display/battery/RAM/storage readings, limited local rules and previewable PNG report cards, without a model key.
 - Structured device identity: original system identifiers, resolved display name and lookup source. Unknown models fall back to the system value.
 - User-triggered cloud analysis with a personally configured provider key; limited local rules when no valid configuration is available.
-- Root-free battery observation that records unplugged start/end samples and computes the measured drain rate locally; charging, intervals under 30 minutes, rising charge, and unmeasurable drops are rejected.
+- Root-free Android Bug Report import is the primary app-attribution path; a collapsed two-point battery measurement remains only as an auxiliary interval-rate tool.
 - User-triggered, read-only Root power diagnostics with evidence, confidence and manual Scene recommendations.
 - Optional Usage Access, Shizuku and Root; ordinary Android APIs work independently.
 
@@ -28,9 +28,9 @@ The configured catalog includes DeepSeek, OpenAI, Anthropic, MiMo and Kimi. See 
 
 ### System power diagnostics
 
-For “how fast did this interval drain?” use **Agent → Select report → System power diagnostics → Start battery observation**. Unplug first, use the phone normally for at least 30 minutes, then finish the observation. APA computes the average rate locally and labels measurement quality as rough, moderate or stable from interval length and battery-level span. This does not identify a responsible app. A small checkpoint participates in Android saved-state restoration; if process interruption prevents APA from proving the interval stayed unplugged, it rejects the result and asks for a new observation.
+For app attribution, ordinary users should first use **Agent → Select report → System power diagnostics → Import system report**. The collapsed **Auxiliary: rough battery measurement** only answers “how fast did this interval drain?” Unplug first, start it, then leave APA and use the phone normally for at least 30 minutes. APA stores only one local start checkpoint. It can resume after process death or reboot, but the user must confirm whether charging occurred; restored measurements are always labelled rough. Reporting charging or uncertainty invalidates the measurement. This tool does not identify a responsible app.
 
-For “which app or system component caused the drain?”, import an Android system Bug Report or use the Root read-only collector below. APA treats rate measurement and app attribution as different evidence and no longer substitutes a single instantaneous battery snapshot.
+Root users may instead use the read-only collector below. APA treats rate measurement and app attribution as different evidence and no longer substitutes a single instantaneous battery snapshot.
 
 The report panel now includes expandable generation instructions. Some Xiaomi, Redmi and POCO builds generate a Bug Report ZIP after entering `*#*#284#*#*` in the system dialer. On other Android builds, enable Developer options and search Settings for “Take bug report” or the OEM equivalent, then choose an interactive report. OEM menus and output locations vary. Bug reports can contain sensitive data: do not publish them. APA extracts only an allowlisted diagnostic subset locally and does not send the raw file to a model.
 
@@ -58,7 +58,7 @@ App visibility can limit enumeration. Root readings retain separate timestamps a
 - Local messages, including Scene summaries, are excluded from cloud history. Switching providers does not forward another provider's history. Up to 12 eligible messages from the same provider can be included, potentially containing previous report details in answers.
 - Keys are encrypted per provider with Android Keystore AES/GCM and expire locally after seven days by default. This does not revoke the provider-issued key.
 - `allowBackup=false` is configured. Legacy cloud backup, Android 31+ cloud backup and device transfer explicitly exclude the credential preferences file. Actual OEM restore behavior remains unverified.
-- An in-memory ViewModel retains Agent drafts, report selections, conversations and diagnostic summaries across page changes and configuration recreation. Only the small battery-observation checkpoint additionally enters Android SavedState to detect interruption and prevent a discontinuous interval from being accepted; it is not a long-term database. If uninterrupted charging state cannot be established, the observation must be repeated. Force-stop or task removal does not guarantee restoration of the wider session. Recreation interrupts an active analysis with a retry message; no automatic resend occurs. See TESTING for current device-validation coverage.
+- An in-memory ViewModel retains Agent drafts, report selections, conversations and diagnostic summaries across page changes and configuration recreation. An active auxiliary battery measurement stores only one start point and an observed-charging flag in a dedicated local preference file; it stores no trajectory, is excluded from backup, and is not a long-term database. Restored measurements use wall-clock time, require explicit charging confirmation and are always downgraded to rough. Force-stop or task removal does not guarantee restoration of the wider session. Recreation interrupts an active analysis with a retry message; no automatic resend occurs. See TESTING for current device-validation coverage.
 
 Do not post keys, account details or unique device identifiers in issues, logs or screenshots. Treat model output as a limited explanation, not a repair verdict.
 
