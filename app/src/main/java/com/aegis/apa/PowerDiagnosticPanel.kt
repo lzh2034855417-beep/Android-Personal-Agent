@@ -76,7 +76,10 @@ fun PowerDiagnosticPanel(
                     val rate = observationResult.drainPercentPerHour
                     Text(
                         if (rate != null) {
-                            "下降 ${observationResult.dropPercent} 个百分点 · 平均 ${"%.2f".format(java.util.Locale.US, rate)}%/小时"
+                            val quality = observationResult.measurementQuality
+                                ?.let(BatteryObservationAnalyzer::qualityLabel)
+                                ?: "未知"
+                            "下降 ${observationResult.dropPercent} 个百分点 · 平均 ${"%.2f".format(java.util.Locale.US, rate)}%/小时 · $quality"
                         } else {
                             BatteryObservationAnalyzer.explanation(observationResult.validity)
                         },

@@ -28,7 +28,7 @@ The configured catalog includes DeepSeek, OpenAI, Anthropic, MiMo and Kimi. See 
 
 ### System power diagnostics
 
-For “how fast did this interval drain?” use **Agent → Select report → System power diagnostics → Start battery observation**. Unplug first, use the phone normally for at least 30 minutes, then finish the observation. APA computes the average rate locally from the two samples. This does not identify a responsible app. A small checkpoint participates in Android saved-state restoration; if process interruption prevents APA from proving the interval stayed unplugged, it rejects the result and asks for a new observation.
+For “how fast did this interval drain?” use **Agent → Select report → System power diagnostics → Start battery observation**. Unplug first, use the phone normally for at least 30 minutes, then finish the observation. APA computes the average rate locally and labels measurement quality as rough, moderate or stable from interval length and battery-level span. This does not identify a responsible app. A small checkpoint participates in Android saved-state restoration; if process interruption prevents APA from proving the interval stayed unplugged, it rejects the result and asks for a new observation.
 
 For “which app or system component caused the drain?”, import an Android system Bug Report or use the Root read-only collector below. APA treats rate measurement and app attribution as different evidence and no longer substitutes a single instantaneous battery snapshot.
 

@@ -49,6 +49,12 @@ enum class BatteryObservationValidity {
     NO_MEASURABLE_DROP
 }
 
+enum class BatteryObservationQuality {
+    ROUGH,
+    MODERATE,
+    STABLE
+}
+
 data class BatteryObservationResult(
     val start: BatteryObservationPoint,
     val end: BatteryObservationPoint,
@@ -58,6 +64,12 @@ data class BatteryObservationResult(
     val drainPercentPerHour: Double?
 ) {
     val isUsableEvidence: Boolean get() = validity == BatteryObservationValidity.VALID
+    val measurementQuality: BatteryObservationQuality?
+        get() = if (!isUsableEvidence || dropPercent == null) null else when {
+            durationMillis >= Duration.ofHours(4).toMillis() && dropPercent >= 10 -> BatteryObservationQuality.STABLE
+            durationMillis >= Duration.ofHours(2).toMillis() && dropPercent >= 5 -> BatteryObservationQuality.MODERATE
+            else -> BatteryObservationQuality.ROUGH
+        }
 }
 
 object BatteryObservationAnalyzer {
@@ -116,6 +128,12 @@ object BatteryObservationAnalyzer {
         BatteryObservationValidity.BATTERY_INCREASED -> "结束电量高于开始电量，期间可能充过电，本次观察无效。"
         BatteryObservationValidity.NO_MEASURABLE_DROP -> "电量尚未下降至少 1%，暂时无法计算掉电速度。"
     }
+
+    fun qualityLabel(quality: BatteryObservationQuality): String = when (quality) {
+        BatteryObservationQuality.ROUGH -> "粗略"
+        BatteryObservationQuality.MODERATE -> "较稳定"
+        BatteryObservationQuality.STABLE -> "稳定"
+    }
 }
 
 object BatteryObservationReportBuilder {
@@ -128,8 +146,12 @@ object BatteryObservationReportBuilder {
         result.drainPercentPerHour?.let {
             appendLine("平均掉电速度：${String.format(Locale.US, "%.2f", it)}%/小时")
         }
+        result.measurementQuality?.let {
+            appendLine("测量可靠性：${BatteryObservationAnalyzer.qualityLabel(it)}（观察越长、掉电跨度越大，整数电量误差越小）")
+        }
         appendLine("有效性：${BatteryObservationAnalyzer.explanation(result.validity)}")
-        append("限制：该观察只能说明这段时间的平均掉电速度，不能据此归因到具体应用；应用归因仍需系统耗电诊断。")
+        appendLine("限制：该观察只能说明这段时间的平均掉电速度，不能据此归因到具体应用；应用归因仍需系统耗电诊断。")
+        append("下一步：若这段时间主要是熄屏待机且你仍觉得掉电异常，请导入系统 Bug Report 定位后台来源；若是亮屏高负载，请在相同使用条件下再测一轮作对照。")
     }
 
     private fun durationText(durationMillis: Long): String {

@@ -4,6 +4,7 @@ import com.aegis.apa.model.BatteryObservationAnalyzer
 import com.aegis.apa.model.BatteryObservationPoint
 import com.aegis.apa.model.BatteryObservationReportBuilder
 import com.aegis.apa.model.BatteryObservationValidity
+import com.aegis.apa.model.BatteryObservationQuality
 import com.aegis.apa.model.BatteryInfo
 import java.time.Instant
 import org.junit.Assert.assertEquals
@@ -41,6 +42,7 @@ class BatteryObservationAnalyzerTest {
         assertEquals(BatteryObservationValidity.VALID, result.validity)
         assertEquals(12, result.dropPercent)
         assertEquals(3.0, result.drainPercentPerHour!!, 0.001)
+        assertEquals(BatteryObservationQuality.STABLE, result.measurementQuality)
         assertTrue(result.isUsableEvidence)
     }
 
@@ -132,7 +134,29 @@ class BatteryObservationAnalyzerTest {
         val report = BatteryObservationReportBuilder.build(result)
 
         assertTrue(report.contains("平均掉电速度：3.00%/小时"))
+        assertTrue(report.contains("测量可靠性：较稳定"))
+        assertTrue(report.contains("下一步："))
         assertTrue(report.contains("不能据此归因到具体应用"))
         assertFalse(report.contains("Scene 报告"))
+    }
+
+    @Test
+    fun qualityReflectsDurationAndBatteryResolution() {
+        val rough = BatteryObservationAnalyzer.finish(
+            BatteryObservationPoint(start, 80, charging = false),
+            BatteryObservationPoint(start.plusSeconds(30 * 60), 79, charging = false)
+        )
+        val moderate = BatteryObservationAnalyzer.finish(
+            BatteryObservationPoint(start, 80, charging = false),
+            BatteryObservationPoint(start.plusSeconds(2 * 60 * 60), 74, charging = false)
+        )
+        val stable = BatteryObservationAnalyzer.finish(
+            BatteryObservationPoint(start, 80, charging = false),
+            BatteryObservationPoint(start.plusSeconds(6 * 60 * 60), 65, charging = false)
+        )
+
+        assertEquals(BatteryObservationQuality.ROUGH, rough.measurementQuality)
+        assertEquals(BatteryObservationQuality.MODERATE, moderate.measurementQuality)
+        assertEquals(BatteryObservationQuality.STABLE, stable.measurementQuality)
     }
 }
