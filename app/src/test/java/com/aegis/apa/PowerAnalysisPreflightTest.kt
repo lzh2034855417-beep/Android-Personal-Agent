@@ -15,7 +15,7 @@ class PowerAnalysisPreflightTest {
         assertEquals(PowerQuestionIntent.DRAIN_RATE, PowerAnalysisPreflight.classify("今天耗电快吗"))
         assertEquals(PowerQuestionIntent.ATTRIBUTION, PowerAnalysisPreflight.classify("哪个应用在后台耗电"))
         assertEquals(PowerQuestionIntent.ATTRIBUTION, PowerAnalysisPreflight.classify("为什么今天耗电这么快"))
-        assertEquals(PowerQuestionIntent.DRAIN_RATE, PowerAnalysisPreflight.classify("一小时掉了 5%，正常吗"))
+        assertEquals(PowerQuestionIntent.DRAIN_RATE, PowerAnalysisPreflight.classify("电量一小时掉了 5%，正常吗"))
         assertEquals(PowerQuestionIntent.ATTRIBUTION, PowerAnalysisPreflight.classify("哪个软件最费电"))
         assertEquals(PowerQuestionIntent.ATTRIBUTION, PowerAnalysisPreflight.classify("电量损耗是谁造成的"))
         assertEquals(PowerQuestionIntent.OTHER, PowerAnalysisPreflight.classify("电池温度正常吗"))
@@ -25,6 +25,8 @@ class PowerAnalysisPreflightTest {
     fun detectionRequiresBatteryContextAndKeepsMixedIntents() {
         assertEquals(PowerQuestionSignals(), PowerAnalysisPreflight.detect("哪个软件占内存最多"))
         assertEquals(PowerQuestionSignals(), PowerAnalysisPreflight.detect("游戏帧率掉了"))
+        assertEquals(PowerQuestionSignals(), PowerAnalysisPreflight.detect("为什么电池温度高"))
+        assertEquals(PowerQuestionSignals(), PowerAnalysisPreflight.detect("下载速度一小时掉了 5%"))
         assertEquals(
             PowerQuestionSignals(asksDrainRate = true),
             PowerAnalysisPreflight.detect("电池掉得很快")
@@ -36,6 +38,18 @@ class PowerAnalysisPreflightTest {
         assertEquals(
             PowerQuestionSignals(asksDrainRate = true, asksAttribution = true),
             PowerAnalysisPreflight.detect("为什么今天耗电这么快")
+        )
+        assertEquals(
+            PowerQuestionSignals(asksAttribution = true),
+            PowerAnalysisPreflight.detect("这个应用很耗电吗")
+        )
+        assertEquals(
+            PowerQuestionSignals(asksDrainRate = true, asksAttribution = true),
+            PowerAnalysisPreflight.detect("哪个应用导致耗电快")
+        )
+        assertEquals(
+            PowerQuestionSignals(asksDrainRate = true, asksAttribution = true),
+            PowerAnalysisPreflight.detect("电量每小时掉 5%，哪个应用造成的")
         )
     }
 

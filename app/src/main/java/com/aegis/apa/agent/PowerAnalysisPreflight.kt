@@ -12,8 +12,9 @@ data class PowerQuestionSignals(
 )
 
 object PowerAnalysisPreflight {
-    private val batteryContextMarkers = listOf(
-        "电池", "电量", "耗电", "掉电", "费电", "续航", "待机"
+    private val drainContextMarkers = listOf(
+        "耗电", "掉电", "费电", "续航", "待机耗电", "电量损耗", "电量下降",
+        "电量掉", "电池掉", "电池耗"
     )
     private val explicitRateMarkers = listOf(
         "耗电快", "掉电快", "掉得快", "掉得很快", "耗电速度", "掉电速度", "续航",
@@ -24,23 +25,32 @@ object PowerAnalysisPreflight {
         "为什么耗电", "耗电原因", "谁在耗电", "谁耗电", "后台耗电", "异常耗电",
         "哪个应用耗电", "哪些应用耗电", "耗电大户", "耗电排行", "最费电",
         "费电应用", "耗电软件", "哪个软件", "哪个app", "哪个 app", "谁造成",
-        "谁导致", "什么导致", "为什么", "什么原因"
+        "谁导致", "什么导致", "为什么", "什么原因", "哪个应用", "哪些应用",
+        "哪个程序", "哪些程序", "这个应用", "这款应用", "这个软件", "这款软件"
+    )
+    private val appSpecificCues = listOf(
+        "哪个应用", "哪些应用", "哪个程序", "哪些程序", "这个应用", "这款应用",
+        "哪个软件", "这个软件", "这款软件", "哪个app", "哪个 app"
     )
 
     fun detect(question: String): PowerQuestionSignals {
         val normalized = question.trim().lowercase()
-        val hasBatteryContext = batteryContextMarkers.any(normalized::contains)
+        val hasDrainContext = drainContextMarkers.any(normalized::contains)
         val hasAttributionCue = attributionCues.any(normalized::contains)
-        val quantitativeDrop = (normalized.contains("%") || normalized.contains("％")) &&
+        val hasAppSpecificCue = appSpecificCues.any(normalized::contains)
+        val hasBatteryLevelContext = normalized.contains("电量") || normalized.contains("电池")
+        val quantitativeDrop = hasBatteryLevelContext &&
+            (normalized.contains("%") || normalized.contains("％")) &&
             normalized.contains("小时") &&
             (normalized.contains("掉") || normalized.contains("降"))
         val barePowerComplaint = listOf("费电", "耗电").any(normalized::contains) &&
             listOf("太", "很", "比较", "有点").any(normalized::contains)
         val asksAboutSpeed = normalized.contains("快") &&
             listOf("耗电", "掉电", "电量", "电池").any(normalized::contains)
-        val asksAttribution = hasBatteryContext && hasAttributionCue
-        val asksRate = quantitativeDrop || hasBatteryContext && (
-            explicitRateMarkers.any(normalized::contains) || barePowerComplaint || asksAboutSpeed
+        val asksAttribution = (hasDrainContext || quantitativeDrop) && hasAttributionCue
+        val asksRate = quantitativeDrop || hasDrainContext && (
+            explicitRateMarkers.any(normalized::contains) || asksAboutSpeed ||
+                barePowerComplaint && !hasAppSpecificCue
             )
         return PowerQuestionSignals(
             asksDrainRate = asksRate && !(hasAttributionCue && normalized.contains("最费电")),
