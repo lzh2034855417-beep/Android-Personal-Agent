@@ -12,6 +12,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.aegis.apa.model.AdviceLevel
@@ -43,6 +47,7 @@ fun PowerDiagnosticPanel(
     onCopyPackage: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var showImportHelp by rememberSaveable { mutableStateOf(false) }
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
@@ -107,6 +112,24 @@ fun PowerDiagnosticPanel(
                 )
                 is PowerDiagnosticUiState.Error -> Text("读取失败：${state.message}")
                 PowerDiagnosticUiState.Interrupted -> Text("上次读取已中断，请手动重试。")
+            }
+            TextButton(onClick = { showImportHelp = !showImportHelp }) {
+                Text(if (showImportHelp) "收起生成步骤" else "怎么生成系统报告")
+            }
+            if (showImportHelp) {
+                Text(
+                    "部分小米 / Redmi / POCO：在系统拨号盘输入 *#*#284#*#*，等待系统生成 Bug Report ZIP；再回到 APA 点“导入系统报告”选择该文件。不同系统版本的保存位置可能不同。",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "其他 Android：先开启开发者选项，在设置中搜索“获取错误报告”或“提交错误报告”，选择互动式报告；生成完成后回到 APA 导入 ZIP。",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "系统报告可能包含账号、通知或设备标识等敏感内容。请只使用自己的报告，不要公开上传；APA 只在本机提取耗电诊断白名单段落，原始文件不会发送给模型。",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
             val busy = state is PowerDiagnosticUiState.Collecting || state == PowerDiagnosticUiState.Importing
             PowerDiagnosticEntryPoints.forRootAvailability(rootAvailable).forEach { entryPoint ->

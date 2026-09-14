@@ -187,6 +187,23 @@ class MainActivity : ComponentActivity() {
                 var batteryObservationStart by session.batteryObservationStart
                 var batteryObservationResult by session.batteryObservationResult
                 var batteryObservationNotice by session.batteryObservationNotice
+                DisposableEffect(session) {
+                    val powerReceiver = object : android.content.BroadcastReceiver() {
+                        override fun onReceive(context: android.content.Context?, intent: Intent?) {
+                            if (intent?.action == Intent.ACTION_POWER_CONNECTED) {
+                                session.markBatteryObservationChargingObserved()
+                            }
+                        }
+                    }
+                    val powerFilter = android.content.IntentFilter(Intent.ACTION_POWER_CONNECTED)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        registerReceiver(powerReceiver, powerFilter, RECEIVER_NOT_EXPORTED)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        registerReceiver(powerReceiver, powerFilter)
+                    }
+                    onDispose { runCatching { unregisterReceiver(powerReceiver) } }
+                }
                 val importBugReportUri: (Uri) -> Unit = { uri ->
                     if (
                         powerDiagnosticState !is PowerDiagnosticUiState.Collecting &&
@@ -285,7 +302,12 @@ class MainActivity : ComponentActivity() {
                 val onStartBatteryObservation: () -> Unit = {
                     scope.launch {
                         try {
-                            session.startBatteryObservation(BatteryObservationPoint.from(refreshSnapshot()))
+                            session.startBatteryObservation(
+                                BatteryObservationPoint.from(
+                                    refreshSnapshot(),
+                                    android.os.SystemClock.elapsedRealtime()
+                                )
+                            )
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (_: Exception) {
@@ -296,7 +318,12 @@ class MainActivity : ComponentActivity() {
                 val onFinishBatteryObservation: () -> Unit = {
                     scope.launch {
                         try {
-                            session.finishBatteryObservation(BatteryObservationPoint.from(refreshSnapshot()))
+                            session.finishBatteryObservation(
+                                BatteryObservationPoint.from(
+                                    refreshSnapshot(),
+                                    android.os.SystemClock.elapsedRealtime()
+                                )
+                            )
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (_: Exception) {

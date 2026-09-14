@@ -14,6 +14,9 @@ class PowerAnalysisPreflightTest {
         assertEquals(PowerQuestionIntent.DRAIN_RATE, PowerAnalysisPreflight.classify("今天耗电快吗"))
         assertEquals(PowerQuestionIntent.ATTRIBUTION, PowerAnalysisPreflight.classify("哪个应用在后台耗电"))
         assertEquals(PowerQuestionIntent.ATTRIBUTION, PowerAnalysisPreflight.classify("为什么今天耗电这么快"))
+        assertEquals(PowerQuestionIntent.DRAIN_RATE, PowerAnalysisPreflight.classify("一小时掉了 5%，正常吗"))
+        assertEquals(PowerQuestionIntent.ATTRIBUTION, PowerAnalysisPreflight.classify("哪个软件最费电"))
+        assertEquals(PowerQuestionIntent.ATTRIBUTION, PowerAnalysisPreflight.classify("电量损耗是谁造成的"))
         assertEquals(PowerQuestionIntent.OTHER, PowerAnalysisPreflight.classify("电池温度正常吗"))
     }
 
@@ -65,5 +68,24 @@ class PowerAnalysisPreflightTest {
             observationAvailable = true
         )
         assertTrue(attribution.orEmpty().contains("系统报告"))
+    }
+
+    @Test
+    fun loadedDiagnosticCannotReplaceObservationForDrainRate() {
+        val selected = PowerAnalysisPreflight.blockingMessage(
+            question = "今天耗电快吗",
+            diagnosticAvailable = true,
+            diagnosticSelected = true,
+            observationAvailable = false
+        )
+        val excluded = PowerAnalysisPreflight.blockingMessage(
+            question = "今天耗电快吗",
+            diagnosticAvailable = true,
+            diagnosticSelected = false,
+            observationAvailable = false
+        )
+
+        assertTrue(selected.orEmpty().contains("开始续航观察"))
+        assertTrue(excluded.orEmpty().contains("开始续航观察"))
     }
 }

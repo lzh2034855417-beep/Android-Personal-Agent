@@ -55,6 +55,57 @@ class BatteryObservationAnalyzerTest {
     }
 
     @Test
+    fun batteryIncreaseInvalidatesEvenWhenIntervalIsShort() {
+        val result = BatteryObservationAnalyzer.finish(
+            BatteryObservationPoint(start, 80, charging = false),
+            BatteryObservationPoint(start.plusSeconds(10 * 60), 81, charging = false)
+        )
+
+        assertEquals(BatteryObservationValidity.BATTERY_INCREASED, result.validity)
+    }
+
+    @Test
+    fun rejectsChargingSeenBetweenEndpointsAndUnknownPowerState() {
+        val startPoint = BatteryObservationPoint(start, 80, charging = false)
+        val endPoint = BatteryObservationPoint(start.plusSeconds(3600), 77, charging = false)
+
+        val contaminated = BatteryObservationAnalyzer.finish(
+            startPoint,
+            endPoint,
+            chargingObserved = true
+        )
+        val unknown = BatteryObservationAnalyzer.finish(
+            startPoint.copy(powerStateKnown = false),
+            endPoint
+        )
+
+        assertEquals(BatteryObservationValidity.CHARGING_DURING_OBSERVATION, contaminated.validity)
+        assertEquals(BatteryObservationValidity.UNKNOWN_POWER_STATE, unknown.validity)
+        assertNull(contaminated.drainPercentPerHour)
+        assertTrue(
+            BatteryObservationAnalyzer.startError(startPoint.copy(powerStateKnown = false))
+                .orEmpty()
+                .contains("是否连接电源")
+        )
+    }
+
+    @Test
+    fun usesMonotonicDurationWhenAvailable() {
+        val result = BatteryObservationAnalyzer.finish(
+            BatteryObservationPoint(start, 80, charging = false, elapsedRealtimeMillis = 1_000),
+            BatteryObservationPoint(
+                start.plusSeconds(10 * 60 * 60),
+                77,
+                charging = false,
+                elapsedRealtimeMillis = 3_601_000
+            )
+        )
+
+        assertEquals(60 * 60 * 1000L, result.durationMillis)
+        assertEquals(3.0, result.drainPercentPerHour!!, 0.001)
+    }
+
+    @Test
     fun reportStatesMeasurementAndItsAttributionLimit() {
         val result = BatteryObservationAnalyzer.finish(
             BatteryObservationPoint(start, 90, charging = false),

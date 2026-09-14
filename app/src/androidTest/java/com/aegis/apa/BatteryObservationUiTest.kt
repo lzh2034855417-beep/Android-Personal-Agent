@@ -3,6 +3,7 @@ package com.aegis.apa
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import com.aegis.apa.model.BatteryObservationAnalyzer
 import com.aegis.apa.model.BatteryObservationPoint
 import com.aegis.apa.ui.theme.AndroidPersonalAgentTheme
@@ -31,6 +32,16 @@ class BatteryObservationUiTest {
         rule.onNodeWithText("平均 3.00%/小时", substring = true).assertExists()
         rule.onNodeWithText("重新开始").assertExists()
         rule.onNodeWithText("清除").assertExists()
+    }
+
+    @Test fun importHelpExplainsBothXiaomiAndStandardAndroidPaths() {
+        rule.setContent { ObservationPanel() }
+
+        rule.onNodeWithText("怎么生成系统报告").performClick()
+
+        rule.onNodeWithText("*#*#284#*#*", substring = true).assertExists()
+        rule.onNodeWithText("开发者选项", substring = true).assertExists()
+        rule.onNodeWithText("敏感内容", substring = true).assertExists()
     }
 
     @Composable

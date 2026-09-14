@@ -7,16 +7,23 @@ import java.util.Locale
 data class BatteryObservationPoint(
     val sampledAtInstant: Instant,
     val levelPercent: Int?,
-    val charging: Boolean
+    val charging: Boolean,
+    val powerStateKnown: Boolean = true,
+    val elapsedRealtimeMillis: Long? = null
 ) {
     companion object {
-        fun from(snapshot: DeviceSnapshot): BatteryObservationPoint {
+        fun from(snapshot: DeviceSnapshot, elapsedRealtimeMillis: Long? = null): BatteryObservationPoint {
             val battery = snapshot.batteryInfo
+            val explicitlyCharging = battery.status == "正在充电" || battery.status == "已充满"
+            val explicitlyDischarging = battery.status == "正在放电" || battery.status == "未充电"
             val externallyPowered = battery.plugged != null && battery.plugged != "未外接电源"
+            val explicitlyUnplugged = battery.plugged == "未外接电源"
             return BatteryObservationPoint(
                 sampledAtInstant = snapshot.sampledAtInstant,
                 levelPercent = battery.level,
-                charging = battery.status == "正在充电" || battery.status == "已充满" || externallyPowered
+                charging = explicitlyCharging || externallyPowered,
+                powerStateKnown = explicitlyCharging || explicitlyDischarging || externallyPowered || explicitlyUnplugged,
+                elapsedRealtimeMillis = elapsedRealtimeMillis
             )
         }
     }
@@ -25,8 +32,11 @@ data class BatteryObservationPoint(
 enum class BatteryObservationValidity {
     VALID,
     MISSING_BATTERY_LEVEL,
+    UNKNOWN_POWER_STATE,
     STARTED_WHILE_CHARGING,
+    CHARGING_DURING_OBSERVATION,
     ENDED_WHILE_CHARGING,
+    CONTINUITY_LOST,
     INVALID_TIME_RANGE,
     TOO_SHORT,
     BATTERY_INCREASED,
@@ -49,22 +59,35 @@ object BatteryObservationAnalyzer {
 
     fun startError(point: BatteryObservationPoint): String? = when {
         point.levelPercent == null -> "未读取到电量，无法开始观察。"
+        !point.powerStateKnown -> "系统没有明确返回是否连接电源，无法安全开始观察。"
         point.charging -> "请先拔掉充电器，再开始续航观察。"
         else -> null
     }
 
-    fun finish(start: BatteryObservationPoint, end: BatteryObservationPoint): BatteryObservationResult {
-        val durationMillis = Duration.between(start.sampledAtInstant, end.sampledAtInstant).toMillis()
+    fun finish(
+        start: BatteryObservationPoint,
+        end: BatteryObservationPoint,
+        chargingObserved: Boolean = false,
+        continuityLost: Boolean = false
+    ): BatteryObservationResult {
+        val durationMillis = if (start.elapsedRealtimeMillis != null && end.elapsedRealtimeMillis != null) {
+            end.elapsedRealtimeMillis - start.elapsedRealtimeMillis
+        } else {
+            Duration.between(start.sampledAtInstant, end.sampledAtInstant).toMillis()
+        }
         val drop = if (start.levelPercent != null && end.levelPercent != null) {
             start.levelPercent - end.levelPercent
         } else null
         val validity = when {
             start.levelPercent == null || end.levelPercent == null -> BatteryObservationValidity.MISSING_BATTERY_LEVEL
+            !start.powerStateKnown || !end.powerStateKnown -> BatteryObservationValidity.UNKNOWN_POWER_STATE
             start.charging -> BatteryObservationValidity.STARTED_WHILE_CHARGING
+            chargingObserved -> BatteryObservationValidity.CHARGING_DURING_OBSERVATION
             end.charging -> BatteryObservationValidity.ENDED_WHILE_CHARGING
+            continuityLost -> BatteryObservationValidity.CONTINUITY_LOST
             durationMillis <= 0 -> BatteryObservationValidity.INVALID_TIME_RANGE
-            durationMillis < minimumDuration.toMillis() -> BatteryObservationValidity.TOO_SHORT
             drop != null && drop < 0 -> BatteryObservationValidity.BATTERY_INCREASED
+            durationMillis < minimumDuration.toMillis() -> BatteryObservationValidity.TOO_SHORT
             drop == 0 -> BatteryObservationValidity.NO_MEASURABLE_DROP
             else -> BatteryObservationValidity.VALID
         }
@@ -77,8 +100,11 @@ object BatteryObservationAnalyzer {
     fun explanation(validity: BatteryObservationValidity): String = when (validity) {
         BatteryObservationValidity.VALID -> "观察有效，可用于判断这段时间的平均掉电速度。"
         BatteryObservationValidity.MISSING_BATTERY_LEVEL -> "系统没有返回起点或终点电量，本次观察无效。"
+        BatteryObservationValidity.UNKNOWN_POWER_STATE -> "系统没有明确返回是否连接电源，本次观察无效。"
         BatteryObservationValidity.STARTED_WHILE_CHARGING -> "开始时处于充电状态，本次观察无效。"
+        BatteryObservationValidity.CHARGING_DURING_OBSERVATION -> "观察期间检测到连接电源，本次观察无效，请拔电后重新开始。"
         BatteryObservationValidity.ENDED_WHILE_CHARGING -> "结束时连接了电源，本次观察无效。"
+        BatteryObservationValidity.CONTINUITY_LOST -> "观察期间应用进程被系统重建，无法确认全程未充电，请重新开始。"
         BatteryObservationValidity.INVALID_TIME_RANGE -> "起止时间异常，本次观察无效。"
         BatteryObservationValidity.TOO_SHORT -> "观察不足 30 分钟，整数电量误差过大，请继续观察。"
         BatteryObservationValidity.BATTERY_INCREASED -> "结束电量高于开始电量，期间可能充过电，本次观察无效。"

@@ -21,6 +21,24 @@ class MainSessionViewModelTest {
         assertTrue(restoredSession.batteryObservationNotice.value.orEmpty().contains("已恢复"))
     }
 
+    @Test fun restoredActiveObservationFailsClosedBecauseContinuityWasLost() {
+        val handle = SavedStateHandle()
+        val firstSession = MainSessionViewModel(handle)
+        val startedAt = Instant.parse("2026-09-14T00:00:00Z")
+        firstSession.startBatteryObservation(BatteryObservationPoint(startedAt, 80, charging = false))
+        val restoredSession = MainSessionViewModel(handle)
+
+        restoredSession.finishBatteryObservation(
+            BatteryObservationPoint(startedAt.plusSeconds(3600), 77, charging = false)
+        )
+
+        assertEquals(
+            com.aegis.apa.model.BatteryObservationValidity.CONTINUITY_LOST,
+            restoredSession.batteryObservationResult.value?.validity
+        )
+        assertFalse(restoredSession.batteryObservationResult.value?.isUsableEvidence ?: true)
+    }
+
     @Test fun completedBatteryObservationRestoresFromSavedState() {
         val handle = SavedStateHandle()
         val firstSession = MainSessionViewModel(handle)
@@ -86,6 +104,23 @@ class MainSessionViewModelTest {
 
         assertEquals(first, session.batteryObservationStart.value)
         assertTrue(session.batteryObservationNotice.value.orEmpty().contains("已经在进行中"))
+    }
+
+    @Test fun chargingEventContaminatesAndEndsObservation() {
+        val session = MainSessionViewModel()
+        val startedAt = Instant.parse("2026-09-14T00:00:00Z")
+        session.startBatteryObservation(BatteryObservationPoint(startedAt, 80, charging = false))
+        session.markBatteryObservationChargingObserved()
+
+        session.finishBatteryObservation(
+            BatteryObservationPoint(startedAt.plusSeconds(3600), 77, charging = false)
+        )
+
+        assertNull(session.batteryObservationStart.value)
+        assertEquals(
+            com.aegis.apa.model.BatteryObservationValidity.CHARGING_DURING_OBSERVATION,
+            session.batteryObservationResult.value?.validity
+        )
     }
 
     @Test fun onlineInterruptionExplainsThatRetryIsANewRequest() {
