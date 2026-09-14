@@ -6,7 +6,11 @@ import android.provider.OpenableColumns
 import java.util.Locale
 
 object BugReportImportPolicy {
-    private val directMimeTypes = setOf("application/zip", "text/plain")
+    private val directMimeTypes = setOf(
+        "application/zip",
+        "application/x-zip-compressed",
+        "text/plain"
+    )
 
     fun acceptsUriScheme(scheme: String?): Boolean =
         scheme?.equals(ContentResolver.SCHEME_CONTENT, ignoreCase = true) == true
@@ -17,7 +21,7 @@ object BugReportImportPolicy {
         if (mime != null && mime != "application/octet-stream") return false
 
         val name = displayName?.lowercase(Locale.ROOT) ?: return false
-        return name.startsWith("bugreport") && (name.endsWith(".zip") || name.endsWith(".txt"))
+        return name.endsWith(".zip") || name.endsWith(".txt")
     }
 }
 

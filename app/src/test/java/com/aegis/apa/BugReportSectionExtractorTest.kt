@@ -4,6 +4,7 @@ import com.aegis.apa.tool.BugReportReadLimits
 import com.aegis.apa.tool.BugReportReadResult
 import com.aegis.apa.tool.BugReportRejectReason
 import com.aegis.apa.tool.BugReportSectionExtractor
+import com.aegis.apa.model.DiagnosticSourceStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -39,6 +40,27 @@ class BugReportSectionExtractorTest {
     }
 
     @Test
+    fun extractsWhitelistedSectionsFromPriorityServiceMarkers() {
+        val priorityReport = """
+            DUMP OF SERVICE CRITICAL power:
+            Wake Locks: size=2
+            DUMP OF SERVICE HIGH thermalservice:
+            Thermal Status: 1
+        """.trimIndent()
+
+        val result = BugReportSectionExtractor.extract(
+            input = priorityReport.byteInputStream(),
+            displayName = "bugreport-priority.txt"
+        )
+
+        assertTrue(result is BugReportReadResult.Success)
+        assertEquals(
+            listOf("power", "thermalservice"),
+            (result as BugReportReadResult.Success).sections.map { it.source }
+        )
+    }
+
+    @Test
     fun readsReportTextInsideZip() {
         val result = BugReportSectionExtractor.extract(
             input = zipOf("bugreport-device.txt" to reportText).inputStream(),
@@ -49,6 +71,169 @@ class BugReportSectionExtractorTest {
         assertEquals(
             listOf("batterystats", "alarm"),
             (result as BugReportReadResult.Success).sections.map { it.source }
+        )
+    }
+
+    @Test
+    fun ignoresOversizedUnrelatedAttachmentBeforeMainReport() {
+        val result = BugReportSectionExtractor.extract(
+            input = zipBytesOf(
+                "FS/data.bin" to ByteArray(512) { 7 },
+                "bugreport-device.txt" to reportText.toByteArray()
+            ).inputStream(),
+            displayName = "bugreport-device.zip",
+            limits = BugReportReadLimits(maxEntryBytes = 256)
+        )
+
+        assertTrue(result is BugReportReadResult.Success)
+        assertEquals(
+            listOf("batterystats", "alarm"),
+            (result as BugReportReadResult.Success).sections.map { it.source }
+        )
+    }
+
+    @Test
+    fun unrelatedAttachmentDoesNotConsumeMainReportBudget() {
+        val result = BugReportSectionExtractor.extract(
+            input = zipBytesOf(
+                "FS/data.bin" to ByteArray(512) { 7 },
+                "bugreport-device.txt" to reportText.toByteArray()
+            ).inputStream(),
+            displayName = "bugreport-device.zip",
+            limits = BugReportReadLimits(
+                maxEntryBytes = 256,
+                maxTotalBytes = 256,
+                maxSkippedBytes = 1024
+            )
+        )
+
+        assertTrue(result is BugReportReadResult.Success)
+    }
+
+    @Test
+    fun rejectsWhenDiscardedAttachmentsExceedTheirOwnBudget() {
+        val result = BugReportSectionExtractor.extract(
+            input = zipBytesOf(
+                "FS/data.bin" to ByteArray(513) { 7 },
+                "bugreport-device.txt" to reportText.toByteArray()
+            ).inputStream(),
+            displayName = "bugreport-device.zip",
+            limits = BugReportReadLimits(maxSkippedBytes = 512)
+        )
+
+        assertEquals(rejected(BugReportRejectReason.TOTAL_TOO_LARGE), result)
+    }
+
+    @Test
+    fun directoryPayloadCannotBypassDiscardBudget() {
+        val result = BugReportSectionExtractor.extract(
+            input = zipBytesOf(
+                "FS/" to ByteArray(513) { 7 },
+                "bugreport-device.txt" to reportText.toByteArray()
+            ).inputStream(),
+            displayName = "bugreport-device.zip",
+            limits = BugReportReadLimits(maxSkippedBytes = 512)
+        )
+
+        assertEquals(rejected(BugReportRejectReason.TOTAL_TOO_LARGE), result)
+    }
+
+    @Test
+    fun cancellationStopsDiscardingDirectoryPayloadPromptly() {
+        val payload = ByteArray(1024 * 1024).also { Random(13).nextBytes(it) }
+        val archive = zipBytesOf(
+            "FS/" to payload,
+            "bugreport-device.txt" to reportText.toByteArray()
+        )
+        val counted = CountingInputStream(archive.inputStream())
+
+        val result = BugReportSectionExtractor.extract(
+            input = counted,
+            displayName = "bugreport-device.zip",
+            isCancelled = { counted.bytesRead > 16 * 1024 }
+        )
+
+        assertEquals(BugReportReadResult.Cancelled, result)
+        assertTrue(
+            "Cancellation should not drain a directory payload",
+            counted.bytesRead < archive.size / 2
+        )
+    }
+
+    @Test
+    fun ignoresTextWhoseNameOnlyStartsWithBugreportWord() {
+        val misleading = """
+            DUMP OF SERVICE power:
+            should not be selected
+        """.trimIndent()
+        val result = BugReportSectionExtractor.extract(
+            input = zipOf(
+                "bugreportjunk.txt" to misleading,
+                "bugreport-device.txt" to reportText
+            ).inputStream(),
+            displayName = "bugreport-device.zip"
+        )
+
+        assertTrue(result is BugReportReadResult.Success)
+        assertEquals(
+            listOf("batterystats", "alarm"),
+            (result as BugReportReadResult.Success).sections.map { it.source }
+        )
+    }
+
+    @Test
+    fun cancellationStopsDiscardingUnrelatedAttachmentPromptly() {
+        val attachment = ByteArray(1024 * 1024).also { Random(11).nextBytes(it) }
+        val archive = zipBytesOf(
+            "FS/random.bin" to attachment,
+            "bugreport-device.txt" to reportText.toByteArray()
+        )
+        val counted = CountingInputStream(archive.inputStream())
+
+        val result = BugReportSectionExtractor.extract(
+            input = counted,
+            displayName = "bugreport-device.zip",
+            isCancelled = { counted.bytesRead > 16 * 1024 }
+        )
+
+        assertEquals(BugReportReadResult.Cancelled, result)
+        assertTrue(
+            "Cancellation should not drain an unrelated compressed attachment",
+            counted.bytesRead < archive.size / 2
+        )
+    }
+
+    @Test
+    fun ignoresOversizedSystraceTextAttachmentBeforeMainReport() {
+        val result = BugReportSectionExtractor.extract(
+            input = zipOf(
+                "systrace.txt" to "trace".repeat(128),
+                "bugreport-device.txt" to reportText
+            ).inputStream(),
+            displayName = "bugreport-device.zip",
+            limits = BugReportReadLimits(maxEntryBytes = 256)
+        )
+
+        assertTrue(result is BugReportReadResult.Success)
+        assertEquals(
+            listOf("batterystats", "alarm"),
+            (result as BugReportReadResult.Success).sections.map { it.source }
+        )
+    }
+
+    @Test
+    fun acceptsMainReportLargerThanLegacyEightMiBLimit() {
+        val largeReport = reportText + "\n" + "x".repeat(8 * 1024 * 1024)
+
+        val result = BugReportSectionExtractor.extract(
+            input = zipOf("bugreport-large.txt" to largeReport).inputStream(),
+            displayName = "bugreport-large.zip"
+        )
+
+        assertTrue(result is BugReportReadResult.Success)
+        assertEquals(
+            DiagnosticSourceStatus.TRUNCATED,
+            (result as BugReportReadResult.Success).sections.last().status
         )
     }
 
@@ -79,6 +264,17 @@ class BugReportSectionExtractorTest {
             input = zipOf("bugreport.txt" to "x".repeat(17)).inputStream(),
             displayName = "bugreport.zip",
             limits = BugReportReadLimits(maxEntryBytes = 16)
+        )
+
+        assertEquals(rejected(BugReportRejectReason.ENTRY_TOO_LARGE), result)
+    }
+
+    @Test
+    fun plainTextAlsoRespectsPerReportByteLimit() {
+        val result = BugReportSectionExtractor.extract(
+            input = reportText.byteInputStream(),
+            displayName = "bugreport.txt",
+            limits = BugReportReadLimits(maxEntryBytes = 32, maxTotalBytes = 1024)
         )
 
         assertEquals(rejected(BugReportRejectReason.ENTRY_TOO_LARGE), result)

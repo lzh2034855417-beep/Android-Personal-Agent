@@ -79,7 +79,7 @@ fun PowerDiagnosticPanel(
                             val quality = observationResult.measurementQuality
                                 ?.let(BatteryObservationAnalyzer::qualityLabel)
                                 ?: "未知"
-                            "下降 ${observationResult.dropPercent} 个百分点 · 平均 ${"%.2f".format(java.util.Locale.US, rate)}%/小时 · $quality"
+                            "下降 ${observationResult.dropPercent} 个百分点 · 平均 ${"%.2f".format(java.util.Locale.US, rate)}%/小时 · 测量可靠性：$quality"
                         } else {
                             BatteryObservationAnalyzer.explanation(observationResult.validity)
                         },

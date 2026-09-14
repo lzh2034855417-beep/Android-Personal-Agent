@@ -1,19 +1,20 @@
 package com.aegis.apa.tool
 
 import com.aegis.apa.model.DiagnosticSourceStatus
-import java.io.ByteArrayOutputStream
+import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
+import java.io.InputStreamReader
 import java.io.PushbackInputStream
-import java.nio.charset.StandardCharsets
 import java.util.Locale
 import java.util.zip.ZipException
 import java.util.zip.ZipInputStream
 
 data class BugReportReadLimits(
     val maxEntries: Int = 128,
-    val maxEntryBytes: Long = 8L * 1024 * 1024,
-    val maxTotalBytes: Long = 32L * 1024 * 1024,
+    val maxEntryBytes: Long = 64L * 1024 * 1024,
+    val maxTotalBytes: Long = 96L * 1024 * 1024,
+    val maxSkippedBytes: Long = 256L * 1024 * 1024,
     val maxSectionChars: Int = 2 * 1024 * 1024
 )
 
@@ -37,7 +38,10 @@ enum class BugReportRejectReason {
 object BugReportSectionExtractor {
     private val zipSignature = byteArrayOf(0x50, 0x4B, 0x03, 0x04)
     private val dumSysMarker = Regex("^------\\s+DUMPSYS\\s+([A-Za-z0-9_.-]+)\\s+.*------\\s*$", RegexOption.IGNORE_CASE)
-    private val serviceMarker = Regex("^DUMP OF SERVICE\\s+([A-Za-z0-9_.-]+):\\s*$", RegexOption.IGNORE_CASE)
+    private val serviceMarker = Regex(
+        "^DUMP OF SERVICE\\s+(?:(?:CRITICAL|HIGH|NORMAL)\\s+)?([A-Za-z0-9_.-]+):\\s*$",
+        RegexOption.IGNORE_CASE
+    )
     private val drivePrefix = Regex("^[A-Za-z]:")
     private val allowedSources = setOf(
         "batterystats",
@@ -81,11 +85,21 @@ object BugReportSectionExtractor {
         if (!isTextName(displayName)) {
             return BugReportReadResult.Rejected(BugReportRejectReason.UNSUPPORTED_FORMAT)
         }
-        return when (val read = readBounded(input, limits.maxTotalBytes, limits.maxTotalBytes, isCancelled)) {
-            BoundedRead.Cancelled -> BugReportReadResult.Cancelled
-            BoundedRead.EntryTooLarge,
-            BoundedRead.TotalTooLarge -> BugReportReadResult.Rejected(BugReportRejectReason.TOTAL_TOO_LARGE)
-            is BoundedRead.Bytes -> sectionsResult(read.value, limits)
+        return when (
+            val read = readSectionsStreaming(
+                input = input,
+                entryLimit = limits.maxEntryBytes,
+                totalRemaining = limits.maxTotalBytes,
+                limits = limits,
+                isCancelled = isCancelled
+            )
+        ) {
+            CandidateRead.Cancelled -> BugReportReadResult.Cancelled
+            CandidateRead.EntryTooLarge -> BugReportReadResult.Rejected(BugReportRejectReason.ENTRY_TOO_LARGE)
+            CandidateRead.TotalTooLarge -> BugReportReadResult.Rejected(BugReportRejectReason.TOTAL_TOO_LARGE)
+            CandidateRead.Unsupported -> BugReportReadResult.Rejected(BugReportRejectReason.UNSUPPORTED_FORMAT)
+            is CandidateRead.Empty -> BugReportReadResult.Rejected(BugReportRejectReason.EMPTY)
+            is CandidateRead.Sections -> BugReportReadResult.Success(read.value)
         }
     }
 
@@ -94,9 +108,9 @@ object BugReportSectionExtractor {
         limits: BugReportReadLimits,
         isCancelled: () -> Boolean
     ): BugReportReadResult {
-        val sections = mutableListOf<RawDiagnosticSection>()
         var entryCount = 0
-        var totalBytes = 0L
+        var reportBytes = 0L
+        var skippedBytes = 0L
         return try {
             ZipInputStream(input).use { zip ->
                 while (true) {
@@ -112,36 +126,48 @@ object BugReportSectionExtractor {
                     if (!entry.isDirectory && entry.name.lowercase(Locale.ROOT).endsWith(".zip")) {
                         return BugReportReadResult.Rejected(BugReportRejectReason.NESTED_ARCHIVE)
                     }
-                    if (entry.isDirectory) {
+                    if (!isReportTextEntry(entry.name)) {
+                        when (val skipped = skipBounded(zip, limits.maxSkippedBytes - skippedBytes, isCancelled)) {
+                            BoundedSkip.Cancelled -> return BugReportReadResult.Cancelled
+                            BoundedSkip.TotalTooLarge -> {
+                                return BugReportReadResult.Rejected(BugReportRejectReason.TOTAL_TOO_LARGE)
+                            }
+                            is BoundedSkip.Bytes -> skippedBytes += skipped.value
+                        }
                         zip.closeEntry()
                         continue
                     }
                     when (
-                        val read = readBounded(
+                        val read = readSectionsStreaming(
                             input = zip,
                             entryLimit = limits.maxEntryBytes,
-                            totalRemaining = limits.maxTotalBytes - totalBytes,
+                            totalRemaining = limits.maxTotalBytes - reportBytes,
+                            limits = limits,
                             isCancelled = isCancelled
                         )
                     ) {
-                        BoundedRead.Cancelled -> return BugReportReadResult.Cancelled
-                        BoundedRead.EntryTooLarge -> return BugReportReadResult.Rejected(BugReportRejectReason.ENTRY_TOO_LARGE)
-                        BoundedRead.TotalTooLarge -> return BugReportReadResult.Rejected(BugReportRejectReason.TOTAL_TOO_LARGE)
-                        is BoundedRead.Bytes -> {
-                            totalBytes += read.value.size
+                        CandidateRead.Cancelled -> return BugReportReadResult.Cancelled
+                        CandidateRead.EntryTooLarge -> {
+                            return BugReportReadResult.Rejected(BugReportRejectReason.ENTRY_TOO_LARGE)
+                        }
+                        CandidateRead.TotalTooLarge -> {
+                            return BugReportReadResult.Rejected(BugReportRejectReason.TOTAL_TOO_LARGE)
+                        }
+                        CandidateRead.Unsupported -> {
+                            return BugReportReadResult.Rejected(BugReportRejectReason.UNSUPPORTED_FORMAT)
+                        }
+                        is CandidateRead.Empty -> {
+                            reportBytes += read.bytesRead
                             zip.closeEntry()
-                            if (isReportTextEntry(entry.name)) {
-                                when (val parsed = sectionsResult(read.value, limits)) {
-                                    is BugReportReadResult.Success -> sections += parsed.sections
-                                    is BugReportReadResult.Rejected -> if (parsed.reason != BugReportRejectReason.EMPTY) return parsed
-                                    BugReportReadResult.Cancelled -> return parsed
-                                }
-                            }
+                        }
+                        is CandidateRead.Sections -> {
+                            zip.closeEntry()
+                            return BugReportReadResult.Success(read.value)
                         }
                     }
                 }
             }
-            mergeSections(sections, limits)
+            BugReportReadResult.Rejected(BugReportRejectReason.EMPTY)
         } catch (_: ZipException) {
             BugReportReadResult.Rejected(BugReportRejectReason.CORRUPT_ARCHIVE)
         } catch (_: IOException) {
@@ -149,75 +175,92 @@ object BugReportSectionExtractor {
         }
     }
 
-    private fun sectionsResult(bytes: ByteArray, limits: BugReportReadLimits): BugReportReadResult {
-        if (bytes.isEmpty()) return BugReportReadResult.Rejected(BugReportRejectReason.EMPTY)
-        if (bytes.any { it == 0.toByte() }) {
-            return BugReportReadResult.Rejected(BugReportRejectReason.UNSUPPORTED_FORMAT)
-        }
-        val text = String(bytes, StandardCharsets.UTF_8)
-        val sections = extractSections(text, limits)
-        return if (sections.isEmpty()) {
-            BugReportReadResult.Rejected(BugReportRejectReason.EMPTY)
-        } else {
-            BugReportReadResult.Success(sections)
-        }
-    }
-
-    private fun extractSections(text: String, limits: BugReportReadLimits): List<RawDiagnosticSection> {
+    private fun readSectionsStreaming(
+        input: InputStream,
+        entryLimit: Long,
+        totalRemaining: Long,
+        limits: BugReportReadLimits,
+        isCancelled: () -> Boolean
+    ): CandidateRead {
+        if (totalRemaining <= 0) return CandidateRead.TotalTooLarge
         val outputs = linkedMapOf<String, StringBuilder>()
         val truncated = mutableSetOf<String>()
         var currentSource: String? = null
+        val line = StringBuilder()
+        var lineTruncated = false
 
-        text.lineSequence().forEach { line ->
-            val markerSource = markerSource(line)
+        fun consumeLine() {
+            val value = line.toString().removeSuffix("\r")
+            val markerSource = if (lineTruncated) null else markerSource(value)
             if (markerSource != null) {
                 currentSource = markerSource.takeIf(allowedSources::contains)
                 currentSource?.let { outputs.putIfAbsent(it, StringBuilder()) }
-                return@forEach
-            }
-            currentSource?.let { source ->
-                val output = outputs.getValue(source)
-                val separatorLength = if (output.isEmpty()) 0 else 1
-                val available = limits.maxSectionChars - output.length - separatorLength
-                if (available <= 0) {
-                    truncated += source
-                } else {
-                    if (separatorLength == 1) output.append('\n')
-                    output.append(line.take(available))
-                    if (line.length > available) truncated += source
+            } else {
+                currentSource?.let { source ->
+                    val output = outputs.getValue(source)
+                    val separatorLength = if (output.isEmpty()) 0 else 1
+                    val available = limits.maxSectionChars - output.length - separatorLength
+                    if (available <= 0) {
+                        truncated += source
+                    } else {
+                        if (separatorLength == 1) output.append('\n')
+                        output.append(value.take(available))
+                        if (lineTruncated || value.length > available) truncated += source
+                    }
                 }
             }
+            line.clear()
+            lineTruncated = false
         }
 
-        return outputs.map { (source, output) ->
-            val wasTruncated = source in truncated
-            RawDiagnosticSection(
-                source = source,
-                status = if (wasTruncated) DiagnosticSourceStatus.TRUNCATED else DiagnosticSourceStatus.AVAILABLE,
-                output = output.toString(),
-                truncated = wasTruncated,
-                detail = if (wasTruncated) "导入段落超过大小限制" else null
-            )
+        val bounded = CheckedInputStream(input, entryLimit, totalRemaining, isCancelled)
+        return try {
+            val reader = InputStreamReader(bounded, Charsets.UTF_8)
+            val chars = CharArray(16 * 1024)
+            while (true) {
+                val count = reader.read(chars)
+                if (count < 0) break
+                for (index in 0 until count) {
+                    when (val char = chars[index]) {
+                        '\u0000' -> return CandidateRead.Unsupported
+                        '\n' -> consumeLine()
+                        else -> {
+                            if (line.length < MAX_BUFFERED_LINE_CHARS) line.append(char)
+                            else lineTruncated = true
+                        }
+                    }
+                }
+            }
+            if (line.isNotEmpty() || lineTruncated) consumeLine()
+            if (bounded.bytesRead == 0L || outputs.isEmpty()) {
+                CandidateRead.Empty(bounded.bytesRead)
+            } else {
+                CandidateRead.Sections(
+                    outputs.map { (source, output) ->
+                        val wasTruncated = source in truncated
+                        RawDiagnosticSection(
+                            source = source,
+                            status = if (wasTruncated) {
+                                DiagnosticSourceStatus.TRUNCATED
+                            } else {
+                                DiagnosticSourceStatus.AVAILABLE
+                            },
+                            output = output.toString(),
+                            truncated = wasTruncated,
+                            detail = if (wasTruncated) "导入段落超过大小限制" else null
+                        )
+                    },
+                    bounded.bytesRead
+                )
+            }
+        } catch (_: CancelledReadException) {
+            CandidateRead.Cancelled
+        } catch (error: LimitReadException) {
+            when (error.reason) {
+                BugReportRejectReason.ENTRY_TOO_LARGE -> CandidateRead.EntryTooLarge
+                else -> CandidateRead.TotalTooLarge
+            }
         }
-    }
-
-    private fun mergeSections(
-        sections: List<RawDiagnosticSection>,
-        limits: BugReportReadLimits
-    ): BugReportReadResult {
-        if (sections.isEmpty()) return BugReportReadResult.Rejected(BugReportRejectReason.EMPTY)
-        val merged = sections.groupBy { it.source }.map { (source, values) ->
-            val text = values.joinToString("\n") { it.output }.take(limits.maxSectionChars)
-            val truncated = values.any { it.truncated } || values.sumOf { it.output.length.toLong() } > limits.maxSectionChars
-            RawDiagnosticSection(
-                source = source,
-                status = if (truncated) DiagnosticSourceStatus.TRUNCATED else DiagnosticSourceStatus.AVAILABLE,
-                output = text,
-                truncated = truncated,
-                detail = if (truncated) "导入段落超过大小限制" else null
-            )
-        }
-        return BugReportReadResult.Success(merged)
     }
 
     private fun markerSource(line: String): String? {
@@ -239,7 +282,8 @@ object BugReportSectionExtractor {
 
     private fun isReportTextEntry(name: String): Boolean {
         val basename = name.substringAfterLast('/').lowercase(Locale.ROOT)
-        return basename.startsWith("bugreport") || basename.endsWith(".txt")
+        return basename == "bugreport.txt" ||
+            (basename.startsWith("bugreport-") && basename.endsWith(".txt"))
     }
 
     private fun isTextName(name: String?): Boolean {
@@ -258,34 +302,82 @@ object BugReportSectionExtractor {
         return offset
     }
 
-    private fun readBounded(
+    private fun skipBounded(
         input: InputStream,
-        entryLimit: Long,
         totalRemaining: Long,
         isCancelled: () -> Boolean
-    ): BoundedRead {
-        val output = ByteArrayOutputStream()
+    ): BoundedSkip {
+        if (totalRemaining <= 0) return BoundedSkip.TotalTooLarge
         val buffer = ByteArray(16 * 1024)
         var size = 0L
         while (true) {
-            if (isCancelled()) return BoundedRead.Cancelled
+            if (isCancelled()) return BoundedSkip.Cancelled
             val read = input.read(buffer)
             if (read < 0) break
             size += read
-            if (size > entryLimit) return BoundedRead.EntryTooLarge
-            if (size > totalRemaining) return BoundedRead.TotalTooLarge
-            output.write(buffer, 0, read)
+            if (size > totalRemaining) return BoundedSkip.TotalTooLarge
         }
-        return BoundedRead.Bytes(output.toByteArray())
+        return BoundedSkip.Bytes(size)
     }
 
     private fun BugReportReadLimits.areValid(): Boolean =
-        maxEntries > 0 && maxEntryBytes > 0 && maxTotalBytes > 0 && maxSectionChars > 0
+        maxEntries > 0 && maxEntryBytes > 0 && maxTotalBytes > 0 && maxSkippedBytes > 0 && maxSectionChars > 0
 
-    private sealed interface BoundedRead {
-        data class Bytes(val value: ByteArray) : BoundedRead
-        data object Cancelled : BoundedRead
-        data object EntryTooLarge : BoundedRead
-        data object TotalTooLarge : BoundedRead
+    private sealed interface BoundedSkip {
+        data class Bytes(val value: Long) : BoundedSkip
+        data object Cancelled : BoundedSkip
+        data object TotalTooLarge : BoundedSkip
     }
+
+    private sealed interface CandidateRead {
+        data class Sections(val value: List<RawDiagnosticSection>, val bytesRead: Long) : CandidateRead
+        data class Empty(val bytesRead: Long) : CandidateRead
+        data object Cancelled : CandidateRead
+        data object Unsupported : CandidateRead
+        data object EntryTooLarge : CandidateRead
+        data object TotalTooLarge : CandidateRead
+    }
+
+    private class CheckedInputStream(
+        input: InputStream,
+        private val entryLimit: Long,
+        private val totalRemaining: Long,
+        private val isCancelled: () -> Boolean
+    ) : FilterInputStream(input) {
+        var bytesRead: Long = 0
+            private set
+
+        override fun read(): Int {
+            checkCancelled()
+            return super.read().also { if (it >= 0) record(1) }
+        }
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+            checkCancelled()
+            return super.read(buffer, offset, length).also { if (it > 0) record(it.toLong()) }
+        }
+
+        private fun checkCancelled() {
+            if (isCancelled()) throw CancelledReadException()
+        }
+
+        private fun record(count: Long) {
+            bytesRead += count
+            val entryExceeded = bytesRead > entryLimit
+            val totalExceeded = bytesRead > totalRemaining
+            if (entryExceeded || totalExceeded) {
+                val reason = if (entryExceeded && entryLimit <= totalRemaining) {
+                    BugReportRejectReason.ENTRY_TOO_LARGE
+                } else {
+                    BugReportRejectReason.TOTAL_TOO_LARGE
+                }
+                throw LimitReadException(reason)
+            }
+        }
+    }
+
+    private class CancelledReadException : IOException()
+    private class LimitReadException(val reason: BugReportRejectReason) : IOException()
+
+    private const val MAX_BUFFERED_LINE_CHARS = 64 * 1024
 }
