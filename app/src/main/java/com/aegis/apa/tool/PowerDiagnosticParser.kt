@@ -26,7 +26,6 @@ object PowerDiagnosticParser {
         collectionDurationMillis: Long = 0L
     ): PowerDiagnosticSnapshot {
         val byName = sections.associateBy { it.source }
-        val packagesByUid = PackageUidResolver.resolve(byName["packages"]?.output.orEmpty())
         val batteryEvidence = BatteryStatsEvidenceParser.parse(byName["batterystats"]?.output.orEmpty())
         val alarmEvidence = AlarmEvidenceParser.parse(byName["alarm"]?.output.orEmpty())
         val jobEvidence = JobSchedulerEvidenceParser.parse(byName["jobscheduler"]?.output.orEmpty())
@@ -36,6 +35,10 @@ object PowerDiagnosticParser {
                 evidenceByUid[partial.uid] = mergePartialEvidence(evidenceByUid[partial.uid], partial)
             }
         }
+        val packagesByUid = PackageUidResolver.resolve(
+            output = byName["packages"]?.output.orEmpty(),
+            targetUids = evidenceByUid.keys
+        )
         val apps = evidenceByUid.values
             .sortedBy { it.uid }
             .map { evidence ->
