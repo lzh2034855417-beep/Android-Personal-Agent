@@ -24,8 +24,16 @@ object RootTool {
         return RootStatus(
             hasSuBinary = suPaths.any { File(it).canExecute() },
             isShizukuInstalled = isInstalled("moe.shizuku.privileged.api"),
-            isKernelSuManagerInstalled = isInstalled("me.weishu.kernelsu"),
+            kernelSuManagerPackage = resolveKernelSuManagerPackage(::isInstalled),
             isMagiskManagerInstalled = isInstalled("com.topjohnwu.magisk")
         )
     }
 }
+
+internal val KERNEL_SU_MANAGER_PACKAGES = listOf(
+    "me.weishu.kernelsu",
+    "me.weishu.kernelsu.next"
+)
+
+internal fun resolveKernelSuManagerPackage(isInstalled: (String) -> Boolean): String? =
+    KERNEL_SU_MANAGER_PACKAGES.firstOrNull(isInstalled)

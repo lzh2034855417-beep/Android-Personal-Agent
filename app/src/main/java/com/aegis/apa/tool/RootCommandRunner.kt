@@ -3,6 +3,7 @@ package com.aegis.apa.tool
 import com.aegis.apa.model.DiagnosticSourceStatus
 import java.io.ByteArrayOutputStream
 import java.util.Locale
+import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
@@ -33,11 +34,27 @@ data class RootCommandResult(
 
 fun interface DiagnosticCommandRunner {
     fun run(command: AllowedRootCommand): RootCommandResult
+
+    fun run(
+        command: AllowedRootCommand,
+        cancellationRequested: () -> Boolean
+    ): RootCommandResult = run(command)
 }
 
 object RootCommandRunner : DiagnosticCommandRunner {
-    override fun run(command: AllowedRootCommand): RootCommandResult {
-        val execution = execute(command.shell, command.timeoutMillis, command.maxBytes)
+    override fun run(command: AllowedRootCommand): RootCommandResult =
+        run(command, cancellationRequested = { false })
+
+    override fun run(
+        command: AllowedRootCommand,
+        cancellationRequested: () -> Boolean
+    ): RootCommandResult {
+        val execution = execute(
+            command.shell,
+            command.timeoutMillis,
+            command.maxBytes,
+            cancellationRequested
+        )
             ?: return RootCommandResult(
                 command,
                 DiagnosticSourceStatus.PERMISSION_DENIED,
@@ -51,7 +68,7 @@ object RootCommandRunner : DiagnosticCommandRunner {
     }
 
     internal fun runBatteryHealth(): FixedRootResult {
-        val execution = execute(BATTERY_HEALTH_COMMAND, 8_000, 32 * 1024)
+        val execution = execute(BATTERY_HEALTH_COMMAND, 8_000, 32 * 1024) { false }
             ?: return FixedRootResult(DiagnosticSourceStatus.PERMISSION_DENIED, "", "无法启动 Root 命令")
         if (execution.timedOut) {
             return FixedRootResult(DiagnosticSourceStatus.TIMED_OUT, "", "Root 授权超时")
@@ -107,7 +124,12 @@ object RootCommandRunner : DiagnosticCommandRunner {
         }
     }
 
-    private fun execute(shell: String, timeoutMillis: Long, maxBytes: Int): Execution? {
+    private fun execute(
+        shell: String,
+        timeoutMillis: Long,
+        maxBytes: Int,
+        cancellationRequested: () -> Boolean
+    ): Execution? {
         val process = runCatching {
             ProcessBuilder("su", "-c", shell)
                 .redirectErrorStream(true)
@@ -131,10 +153,18 @@ object RootCommandRunner : DiagnosticCommandRunner {
             }
         }
 
-        if (!process.waitFor(timeoutMillis, TimeUnit.MILLISECONDS)) {
-            process.destroyForcibly()
-            reader.join(500)
-            return Execution(-1, "", truncated.get(), timedOut = true)
+        when (waitForRootProcess(process, timeoutMillis, cancellationRequested)) {
+            RootProcessWaitOutcome.CANCELLED -> {
+                runCatching { process.inputStream.close() }
+                reader.join(500)
+                throw CancellationException("Root command collection cancelled")
+            }
+            RootProcessWaitOutcome.TIMED_OUT -> {
+                runCatching { process.inputStream.close() }
+                reader.join(500)
+                return Execution(-1, "", truncated.get(), timedOut = true)
+            }
+            RootProcessWaitOutcome.FINISHED -> Unit
         }
         reader.join(1_000)
         return Execution(
@@ -169,3 +199,45 @@ object RootCommandRunner : DiagnosticCommandRunner {
         done
     """.trimIndent()
 }
+
+internal enum class RootProcessWaitOutcome {
+    FINISHED,
+    TIMED_OUT,
+    CANCELLED
+}
+
+internal fun waitForRootProcess(
+    process: Process,
+    timeoutMillis: Long,
+    cancellationRequested: () -> Boolean
+): RootProcessWaitOutcome {
+    var remainingMillis = timeoutMillis.coerceAtLeast(0)
+    while (remainingMillis > 0) {
+        if (cancellationRequested()) {
+            process.destroyForcibly()
+            return RootProcessWaitOutcome.CANCELLED
+        }
+        val sliceMillis = minOf(remainingMillis, ROOT_PROCESS_POLL_MILLIS)
+        val finished = try {
+            process.waitFor(sliceMillis, TimeUnit.MILLISECONDS)
+        } catch (interrupted: InterruptedException) {
+            process.destroyForcibly()
+            Thread.currentThread().interrupt()
+            throw CancellationException("Root command wait interrupted").also {
+                it.initCause(interrupted)
+            }
+        }
+        if (finished) {
+            return RootProcessWaitOutcome.FINISHED
+        }
+        remainingMillis -= sliceMillis
+    }
+    if (cancellationRequested()) {
+        process.destroyForcibly()
+        return RootProcessWaitOutcome.CANCELLED
+    }
+    process.destroyForcibly()
+    return RootProcessWaitOutcome.TIMED_OUT
+}
+
+private const val ROOT_PROCESS_POLL_MILLIS = 100L

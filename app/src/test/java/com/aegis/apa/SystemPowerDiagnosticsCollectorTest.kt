@@ -12,6 +12,7 @@ import org.junit.Test
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import java.util.concurrent.CancellationException
 
 class SystemPowerDiagnosticsCollectorTest {
     @Test
@@ -55,5 +56,27 @@ class SystemPowerDiagnosticsCollectorTest {
         assertTrue(snapshot.findings.isNotEmpty())
         assertEquals(DiagnosticInputSource.ROOT, snapshot.inputSource)
         assertTrue(snapshot.localVerdict?.totalConsumption?.isNotEmpty() == true)
+    }
+
+    @Test
+    fun cancellationStopsBeforeTheNextRootCommand() {
+        val visited = mutableListOf<AllowedRootCommand>()
+        var cancelled = false
+        val runner = DiagnosticCommandRunner { command ->
+            visited += command
+            cancelled = true
+            RootCommandResult(command, DiagnosticSourceStatus.AVAILABLE, "")
+        }
+
+        try {
+            SystemPowerDiagnosticsCollector(runner = runner).collect(
+                cancellationRequested = { cancelled }
+            )
+            throw AssertionError("Expected collection cancellation")
+        } catch (_: CancellationException) {
+            // Expected: a cancelled collection must not produce a partial report.
+        }
+
+        assertEquals(listOf(AllowedRootCommand.BATTERYSTATS), visited)
     }
 }

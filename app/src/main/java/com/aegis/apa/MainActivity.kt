@@ -124,6 +124,8 @@ import com.aegis.apa.model.StorageInfo
 import com.aegis.apa.tool.StorageTool
 import com.aegis.apa.tool.UsageStatsTool
 import com.aegis.apa.model.UsageSummary
+import com.aegis.apa.agent.AdviceCapabilityPolicy
+import com.aegis.apa.agent.AgentAttachmentPolicy
 import com.aegis.apa.ui.theme.AndroidPersonalAgentTheme
 import java.util.Locale
 import com.aegis.apa.model.DeviceSnapshot
@@ -273,7 +275,11 @@ class MainActivity : ComponentActivity() {
                 }
                 val incomingSharedBugReportUri = remember { sharedBugReportUri(intent) }
                 LaunchedEffect(incomingSharedBugReportUri) {
-                    incomingSharedBugReportUri?.let(importBugReportUri)
+                    incomingSharedBugReportUri?.let { uri ->
+                        if (session.consumeSharedBugReport(uri.toString())) {
+                            importBugReportUri(uri)
+                        }
+                    }
                 }
                 DisposableEffect(session) {
                     onDispose {
@@ -301,11 +307,15 @@ class MainActivity : ComponentActivity() {
                         scope.launch {
                             try {
                                 val result = withContext(Dispatchers.IO) {
-                                    SystemPowerDiagnosticsCollector().collect { completed, total, source ->
-                                        this@MainActivity.runOnUiThread {
-                                            powerDiagnosticState = PowerDiagnosticUiState.Collecting(completed, total, source)
-                                        }
-                                    }
+                                    val collectionJob = currentCoroutineContext()[Job]
+                                    SystemPowerDiagnosticsCollector().collect(
+                                        onProgress = { completed, total, source ->
+                                            this@MainActivity.runOnUiThread {
+                                                powerDiagnosticState = PowerDiagnosticUiState.Collecting(completed, total, source)
+                                            }
+                                        },
+                                        cancellationRequested = { collectionJob?.isActive == false }
+                                    )
                                 }
                                 session.completePowerDiagnostic(result)
                             } catch (cancelled: CancellationException) {
@@ -470,11 +480,9 @@ class MainActivity : ComponentActivity() {
                                 isDeviceProfileReading = isDeviceProfileReading,
                                 onOpenShizuku = { openShizuku() },
                                 onOpenRootManager = {
-                                    val rootManagerPackage = if (currentSnapshot.rootStatus.isKernelSuManagerInstalled) {
-                                        "me.weishu.kernelsu"
-                                    } else {
-                                        "com.topjohnwu.magisk"
-                                    }
+                                    val rootManagerPackage =
+                                        currentSnapshot.rootStatus.kernelSuManagerPackage
+                                            ?: "com.topjohnwu.magisk"
                                     openRootManager(rootManagerPackage)
                                 },
                                 onReadRootBattery = {
@@ -493,6 +501,10 @@ class MainActivity : ComponentActivity() {
                             3 -> AgentChatScreen(
                                 state = session.agent,
                                 messages = chatMessages,
+                                rootAdviceAuthorized = AdviceCapabilityPolicy.hasSuccessfulRootEvidence(
+                                    readAttempted = rootBatteryInfo != null,
+                                    error = rootBatteryInfo?.error
+                                ),
                                 onAnalyze = { question, attachedReportLabel, attachedPowerDiagnosticReport ->
                                     chatMessages = chatMessages + AgentConversationMessage(
                                         role = MessageRole.USER, content = question, attachedReportLabel = attachedReportLabel
@@ -531,6 +543,14 @@ class MainActivity : ComponentActivity() {
                                     val requestedProvider = ApiSession.provider
                                     val attachedRootBattery = rootBatteryInfo
                                     val attachedDeviceProfile = deviceProfile
+                                    val effectiveLevel = AdviceCapabilityPolicy.effectiveLevel(
+                                        requestedLevel = selectedLevel,
+                                        shizukuAuthorized = false,
+                                        rootAuthorized = AdviceCapabilityPolicy.hasSuccessfulRootEvidence(
+                                            readAttempted = attachedRootBattery != null,
+                                            error = attachedRootBattery?.error
+                                        )
+                                    )
                                     chatMessages = chatMessages + AgentConversationMessage(
                                         role = MessageRole.USER, content = question, attachedReportLabel = attachedReportLabel, cloudProvider = requestedProvider
                                     )
@@ -546,9 +566,9 @@ class MainActivity : ComponentActivity() {
                                                 CloudLlmProvider.analyze(
                                                     context = fresh.toDeviceContext(),
                                                     userQuestion = question,
-                                                    selectedLevel = selectedLevel,
+                                                    selectedLevel = effectiveLevel,
                                                     levelReport = fresh.buildLevelReport(
-                                                        selectedLevel, attachedRootBattery, attachedDeviceProfile, includeUsageReport
+                                                        effectiveLevel, attachedRootBattery, attachedDeviceProfile, includeUsageReport
                                                     ),
                                                     appReport = fresh.buildAppReport().takeIf { includeAppReport },
                                                     powerDiagnosticReport = attachedPowerDiagnosticReport,
@@ -1308,6 +1328,7 @@ fun AgentChatScreen(
     batteryObservationResult: BatteryObservationResult?,
     batteryObservationNotice: String?,
     rootAvailable: Boolean,
+    rootAdviceAuthorized: Boolean = false,
     onCollectPowerDiagnostic: () -> Unit,
     onImportBugReport: () -> Unit,
     onStartBatteryObservation: () -> Unit,
@@ -1326,11 +1347,17 @@ fun AgentChatScreen(
     var userMessage by state.draft
     val chatScrollState = rememberScrollState()
     val colors = androidx.compose.material3.MaterialTheme.colorScheme
+    val isOnlineMode = ApiSession.apiKey.isNotBlank()
     val usableBatteryObservation = batteryObservationResult?.takeIf { it.isUsableEvidence }
+    val effectiveSelectedLevel = AdviceCapabilityPolicy.effectiveLevel(
+        requestedLevel = selectedLevel,
+        shizukuAuthorized = false,
+        rootAuthorized = rootAdviceAuthorized
+    )
     val attachedReportLabel = listOfNotNull(
-        selectedLevel.replace("Level ", "L"),
+        effectiveSelectedLevel.replace("Level ", "L"),
         "应用".takeIf { includeAppReport && ApiSession.apiKey.isNotBlank() },
-        "使用习惯".takeIf { includeUsageReport && selectedLevel == "Level 0" && ApiSession.apiKey.isNotBlank() },
+        "使用习惯".takeIf { includeUsageReport && effectiveSelectedLevel == "Level 0" && ApiSession.apiKey.isNotBlank() },
         "续航观察（本地）".takeIf { usableBatteryObservation != null },
         "系统耗电诊断".takeIf { includePowerDiagnosticReport && powerDiagnostic != null }
     ).joinToString(" · ")
@@ -1341,6 +1368,9 @@ fun AgentChatScreen(
             state.lastAutoScrollMessageCount = messages.size
             chatScrollState.animateScrollTo(chatScrollState.maxValue)
         }
+    }
+    LaunchedEffect(effectiveSelectedLevel) {
+        if (selectedLevel != effectiveSelectedLevel) selectedLevel = effectiveSelectedLevel
     }
 
     Column(
@@ -1488,36 +1518,47 @@ fun AgentChatScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     listOf("Level 0", "Level 1", "Level 2").forEach { level ->
+                        val isAllowed = AdviceCapabilityPolicy.allowsLevel(
+                            level = level,
+                            shizukuAuthorized = false,
+                            rootAuthorized = rootAdviceAuthorized
+                        )
                         Button(
                             onClick = { selectedLevel = level },
+                            enabled = isAllowed,
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text(text = if (selectedLevel == level) "● $level" else level)
+                            Text(text = if (effectiveSelectedLevel == level) "● $level" else level)
                         }
                     }
                 }
+                Text(
+                    text = "L1 尚未接入 Shizuku 授权；L2 需先在能力页成功读取 Root 数据。",
+                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant
+                )
                 Text(text = "附加报告（可多选）", color = colors.onSurfaceVariant)
-                if (ApiSession.apiKey.isNotBlank() && selectedLevel == "Level 0") {
+                if (ApiSession.apiKey.isNotBlank() && effectiveSelectedLevel == "Level 0") {
                     TextButton(onClick = { includeUsageReport = !includeUsageReport }) {
                         Text(if (includeUsageReport) "● 发送使用习惯排行" else "发送使用习惯排行（默认关闭）")
                     }
                 }
                 Text(
-                    text = if (ApiSession.apiKey.isNotBlank())
-                        "在线发送：问题、基础快照、明确选中的系统耗电诊断及同一服务最近最多 12 条对话。原始 Root 输出不会发送。"
-                    else "本地分析使用基础快照及明确选中的系统耗电诊断；只给建议，不执行 Scene 操作。",
+                    text = AgentAttachmentPolicy.disclosure(isOnlineMode),
                     style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant
                 )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = { includeAppReport = !includeAppReport },
-                        modifier = Modifier.weight(1f)
+                if (AgentAttachmentPolicy.showAppReport(isOnlineMode)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(text = if (includeAppReport) "● 应用报告" else "应用报告")
+                        Button(
+                            onClick = { includeAppReport = !includeAppReport },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(text = if (includeAppReport) "● 应用报告" else "应用报告")
+                        }
                     }
                 }
                 PowerDiagnosticPanel(
@@ -1581,18 +1622,28 @@ fun AgentChatScreen(
                             } else if (CloudProviderCatalog.find(ApiSession.provider) != null && ApiSession.apiKey.isNotBlank()) {
                                 onOnlineAnalyze(
                                     message,
-                                    selectedLevel,
+                                    effectiveSelectedLevel,
                                     includeAppReport,
-                                    includeUsageReport && selectedLevel == "Level 0",
+                                    includeUsageReport && effectiveSelectedLevel == "Level 0",
                                     attachedReportLabel,
-                                    powerDiagnostic?.let(PowerDiagnosticReportBuilder::build)
+                                    powerDiagnostic?.let {
+                                        PowerDiagnosticReportBuilder.build(
+                                            it,
+                                            includeAdvancedActions = effectiveSelectedLevel != "Level 0"
+                                        )
+                                    }
                                         .takeIf { includePowerDiagnosticReport }
                                 )
                             } else {
                                 onAnalyze(
                                     message,
                                     attachedReportLabel,
-                                    powerDiagnostic?.let(PowerDiagnosticReportBuilder::build).takeIf { includePowerDiagnosticReport }
+                                    powerDiagnostic?.let {
+                                        PowerDiagnosticReportBuilder.build(
+                                            it,
+                                            includeAdvancedActions = effectiveSelectedLevel != "Level 0"
+                                        )
+                                    }.takeIf { includePowerDiagnosticReport }
                                 )
                             }
                         }

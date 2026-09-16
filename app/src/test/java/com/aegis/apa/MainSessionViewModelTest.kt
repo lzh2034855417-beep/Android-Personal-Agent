@@ -256,4 +256,12 @@ class MainSessionViewModelTest {
         assertEquals("fresh", session.messages.value.last().content)
         assertFalse(session.analyzing.value)
     }
+
+    @Test fun sharedBugReportUriIsConsumedOnlyOncePerSession() {
+        val session = MainSessionViewModel()
+
+        assertTrue(session.consumeSharedBugReport("content://reports/bugreport.zip"))
+        assertFalse(session.consumeSharedBugReport("content://reports/bugreport.zip"))
+        assertTrue(session.consumeSharedBugReport("content://reports/second.zip"))
+    }
 }

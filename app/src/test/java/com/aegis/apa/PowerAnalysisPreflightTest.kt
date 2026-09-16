@@ -12,6 +12,15 @@ import org.junit.Test
 class PowerAnalysisPreflightTest {
     @Test
     fun classifiesRateAttributionAndOrdinaryBatteryQuestionsSeparately() {
+        assertEquals(PowerQuestionIntent.BATTERY_HEALTH, PowerAnalysisPreflight.classify("电池是否该换？"))
+        assertEquals(PowerQuestionIntent.BATTERY_HEALTH, PowerAnalysisPreflight.classify("电池老化了吗"))
+        assertEquals(PowerQuestionIntent.BATTERY_HEALTH, PowerAnalysisPreflight.classify("电池健康度怎么样"))
+        assertEquals(PowerQuestionIntent.BATTERY_HEALTH, PowerAnalysisPreflight.classify("循环次数多少"))
+        assertEquals(PowerQuestionIntent.BATTERY_HEALTH, PowerAnalysisPreflight.classify("满充容量衰减多少"))
+        assertEquals(PowerQuestionIntent.BATTERY_HEALTH, PowerAnalysisPreflight.classify("电池容量正常吗"))
+        assertEquals(PowerQuestionIntent.BATTERY_HEALTH, PowerAnalysisPreflight.classify("电池健康状况怎么样"))
+        assertEquals(PowerQuestionIntent.BATTERY_HEALTH, PowerAnalysisPreflight.classify("电池损耗程度高吗"))
+        assertEquals(PowerQuestionIntent.BATTERY_HEALTH, PowerAnalysisPreflight.classify("这块电池还耐用吗"))
         assertEquals(PowerQuestionIntent.DRAIN_RATE, PowerAnalysisPreflight.classify("今天耗电快吗"))
         assertEquals(PowerQuestionIntent.ATTRIBUTION, PowerAnalysisPreflight.classify("哪个应用在后台耗电"))
         assertEquals(PowerQuestionIntent.ATTRIBUTION, PowerAnalysisPreflight.classify("为什么今天耗电这么快"))
@@ -104,7 +113,7 @@ class PowerAnalysisPreflightTest {
     }
 
     @Test
-    fun loadedDiagnosticCannotReplaceObservationForDrainRate() {
+    fun selectedDiagnosticAllowsModelToExplainEvidenceWithoutObservation() {
         val selected = PowerAnalysisPreflight.blockingMessage(
             question = "今天耗电快吗",
             diagnosticAvailable = true,
@@ -118,7 +127,7 @@ class PowerAnalysisPreflightTest {
             observationAvailable = false
         )
 
-        assertTrue(selected.orEmpty().contains("开始续航观察"))
+        assertNull(selected)
         assertTrue(excluded.orEmpty().contains("开始续航观察"))
     }
 
@@ -134,5 +143,17 @@ class PowerAnalysisPreflightTest {
         assertTrue(message.orEmpty().contains("两个问题"))
         assertTrue(message.orEmpty().contains("掉电速度"))
         assertTrue(message.orEmpty().contains("具体应用"))
+    }
+
+    @Test
+    fun healthQuestionIsNotBlockedByDrainEvidencePreflight() {
+        val message = PowerAnalysisPreflight.blockingMessage(
+            question = "电池老化会导致耗电快吗",
+            diagnosticAvailable = false,
+            diagnosticSelected = false,
+            observationAvailable = false
+        )
+
+        assertNull(message)
     }
 }

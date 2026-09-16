@@ -1,6 +1,5 @@
 package com.aegis.apa
 
-import com.aegis.apa.model.AdviceLevel
 import com.aegis.apa.model.DiagnosticInputSource
 import com.aegis.apa.model.DiagnosticSourceStatus
 import com.aegis.apa.tool.BugReportReadResult
@@ -41,7 +40,7 @@ class PowerDiagnosticPipelineTest {
     }
 
     @Test
-    fun officialBugReportFormatsResolveAppAndProduceConservativeSceneAdvice() {
+    fun officialBugReportFormatsKeepCumulativeAlarmsOutOfRestrictionAdvice() {
         val report = """
             DUMP OF SERVICE package:
             Package [com.example.chat] (abc123):
@@ -81,10 +80,10 @@ class PowerDiagnosticPipelineTest {
 
         val total = snapshot.localVerdict?.totalConsumption?.single()
         assertEquals(listOf("com.example.chat"), total?.packageNames)
-        val suspect = snapshot.localVerdict?.backgroundSuspects?.single()
-        assertEquals(AdviceLevel.RESTRICT, suspect?.maxAdviceLevel)
-        assertTrue(suspect?.sceneAction?.contains("Scene") == true)
-        assertTrue(suspect?.rollback?.isNotBlank() == true)
+        assertTrue(snapshot.localVerdict?.backgroundSuspects?.isEmpty() == true)
+        val scheduling = snapshot.localVerdict?.schedulingObservations?.single()
+        assertTrue(scheduling?.facts?.contains("真实唤醒累计 180 次") == true)
+        assertTrue(scheduling?.facts?.contains("定时任务累计 220 次") == true)
     }
 
     @Test

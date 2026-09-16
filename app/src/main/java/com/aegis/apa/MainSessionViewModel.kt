@@ -55,6 +55,13 @@ class MainSessionViewModel(
     )
     private var analysisGeneration = 0L
     private var onlineAnalysis = false
+    private var consumedSharedBugReportUri: String? = null
+
+    fun consumeSharedBugReport(uri: String): Boolean {
+        if (uri == consumedSharedBugReportUri) return false
+        consumedSharedBugReportUri = uri
+        return true
+    }
 
     fun completePowerDiagnostic(snapshot: PowerDiagnosticSnapshot) {
         powerDiagnostic.value = snapshot

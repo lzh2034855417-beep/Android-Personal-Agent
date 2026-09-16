@@ -27,6 +27,9 @@ object PowerDiagnosticParser {
     ): PowerDiagnosticSnapshot {
         val byName = sections.associateBy { it.source }
         val batteryEvidence = BatteryStatsEvidenceParser.parse(byName["batterystats"]?.output.orEmpty())
+        val batteryDrainWindow = BatteryStatsEvidenceParser.parseDrainWindow(
+            byName["batterystats"]?.output.orEmpty()
+        )
         val alarmEvidence = AlarmEvidenceParser.parse(byName["alarm"]?.output.orEmpty())
         val jobEvidence = JobSchedulerEvidenceParser.parse(byName["jobscheduler"]?.output.orEmpty())
         val evidenceByUid = linkedMapOf<Int, PartialAppEvidence>()
@@ -47,6 +50,8 @@ object PowerDiagnosticParser {
                     uid = evidence.uid,
                     packageNames = packages,
                     estimatedPowerMah = evidence.estimatedPowerMah,
+                    foregroundPowerMah = evidence.foregroundPowerMah,
+                    backgroundPowerMah = evidence.backgroundPowerMah,
                     wakeLockDurationMillis = evidence.wakeLockDurationMillis,
                     wakeupCount = evidence.wakeupCount,
                     alarmCount = evidence.alarmCount,
@@ -105,7 +110,8 @@ object PowerDiagnosticParser {
                 wakefulness = wakefulness,
                 deviceIdleMode = deviceIdleMode,
                 thermalStatus = thermalStatus,
-                topWakeupSources = wakeupSources
+                topWakeupSources = wakeupSources,
+                batteryDrainWindow = batteryDrainWindow
             ),
             findings = emptyList(),
             evidenceCoverage = coverage

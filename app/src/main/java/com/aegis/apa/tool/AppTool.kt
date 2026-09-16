@@ -20,7 +20,7 @@ private data class KnownApp(
 
 object AppTool {
     private val knownApps = listOf(
-        KnownApp("KernelSU", AppCategory.ROOT_AND_FRAMEWORK, listOf("me.weishu.kernelsu", "me.weishu.kernelsu.next")),
+        KnownApp("KernelSU", AppCategory.ROOT_AND_FRAMEWORK, KERNEL_SU_MANAGER_PACKAGES),
         KnownApp("Magisk", AppCategory.ROOT_AND_FRAMEWORK, listOf("com.topjohnwu.magisk")),
         KnownApp("MT Manager", AppCategory.ROOT_AND_FRAMEWORK, listOf("bin.mt.plus", "bin.mt.plus.canary"), listOf("MT Manager", "MT\u7ba1\u7406\u5668")),
         KnownApp("LSPosed", AppCategory.ROOT_AND_FRAMEWORK, listOf("org.lsposed.manager", "org.lsposed.lspatch"), listOf("LSPosed", "LSPatch")),

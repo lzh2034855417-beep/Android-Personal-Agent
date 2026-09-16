@@ -5,6 +5,8 @@ import com.aegis.apa.model.EvidenceField
 data class PartialAppEvidence(
     val uid: Int,
     val estimatedPowerMah: Double? = null,
+    val foregroundPowerMah: Double? = null,
+    val backgroundPowerMah: Double? = null,
     val foregroundDurationMillis: Long? = null,
     val backgroundDurationMillis: Long? = null,
     val wakeLockDurationMillis: Long? = null,
@@ -91,6 +93,8 @@ internal fun mergePartialEvidence(
     return PartialAppEvidence(
         uid = first.uid,
         estimatedPowerMah = second.estimatedPowerMah ?: first.estimatedPowerMah,
+        foregroundPowerMah = second.foregroundPowerMah ?: first.foregroundPowerMah,
+        backgroundPowerMah = second.backgroundPowerMah ?: first.backgroundPowerMah,
         foregroundDurationMillis = second.foregroundDurationMillis ?: first.foregroundDurationMillis,
         backgroundDurationMillis = second.backgroundDurationMillis ?: first.backgroundDurationMillis,
         wakeLockDurationMillis = wakeLock.value,

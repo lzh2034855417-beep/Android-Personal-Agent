@@ -48,7 +48,9 @@ data class LocalPowerVerdict(
     val totalConsumption: List<RankedPowerCandidate>,
     val backgroundSuspects: List<RankedPowerCandidate>,
     val nextStep: String?,
-    val limits: List<String>
+    val limits: List<String>,
+    val backgroundConsumption: List<RankedPowerCandidate> = emptyList(),
+    val schedulingObservations: List<RankedPowerCandidate> = emptyList()
 )
 
 data class DiagnosticSourceResult(
@@ -66,6 +68,8 @@ data class AppPowerEvidence(
     val packageNames: List<String>,
     val displayNames: List<String> = emptyList(),
     val estimatedPowerMah: Double? = null,
+    val foregroundPowerMah: Double? = null,
+    val backgroundPowerMah: Double? = null,
     val wakeLockDurationMillis: Long? = null,
     val wakeupCount: Long? = null,
     val alarmCount: Long? = null,
@@ -75,12 +79,20 @@ data class AppPowerEvidence(
     val sharedUid: Boolean = false
 )
 
+data class BatteryDrainWindowEvidence(
+    val durationMillis: Long,
+    val capacityMah: Double,
+    val drainMah: Double,
+    val usesActualDrain: Boolean
+)
+
 data class SystemPowerEvidence(
     val interactive: Boolean? = null,
     val wakefulness: String? = null,
     val deviceIdleMode: Boolean? = null,
     val thermalStatus: Int? = null,
-    val topWakeupSources: List<String> = emptyList()
+    val topWakeupSources: List<String> = emptyList(),
+    val batteryDrainWindow: BatteryDrainWindowEvidence? = null
 )
 
 data class PowerFinding(

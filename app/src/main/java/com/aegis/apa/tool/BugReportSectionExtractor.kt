@@ -11,11 +11,13 @@ import java.util.zip.ZipException
 import java.util.zip.ZipInputStream
 
 data class BugReportReadLimits(
-    val maxEntries: Int = 128,
-    val maxEntryBytes: Long = 64L * 1024 * 1024,
-    val maxTotalBytes: Long = 96L * 1024 * 1024,
-    val maxSkippedBytes: Long = 256L * 1024 * 1024,
-    val maxSectionChars: Int = 2 * 1024 * 1024
+    val maxEntries: Int = 4_096,
+    val maxEntryBytes: Long = 192L * 1024 * 1024,
+    val maxTotalBytes: Long = 192L * 1024 * 1024,
+    val maxSkippedBytes: Long = 384L * 1024 * 1024,
+    val maxSectionChars: Int = 2 * 1024 * 1024,
+    val maxBatteryStatsSectionChars: Int = 12 * 1024 * 1024,
+    val maxPackagesSectionChars: Int = 10 * 1024 * 1024
 )
 
 sealed interface BugReportReadResult {
@@ -106,11 +108,13 @@ object BugReportSectionExtractor {
     private fun extractZip(
         input: InputStream,
         limits: BugReportReadLimits,
-        isCancelled: () -> Boolean
+        isCancelled: () -> Boolean,
+        allowNestedReport: Boolean = true
     ): BugReportReadResult {
         var entryCount = 0
         var reportBytes = 0L
         var skippedBytes = 0L
+        var sawNestedArchive = false
         return try {
             ZipInputStream(input).use { zip ->
                 while (true) {
@@ -123,8 +127,33 @@ object BugReportSectionExtractor {
                     if (!isSafeEntryName(entry.name)) {
                         return BugReportReadResult.Rejected(BugReportRejectReason.UNSAFE_ENTRY_NAME)
                     }
-                    if (!entry.isDirectory && entry.name.lowercase(Locale.ROOT).endsWith(".zip")) {
-                        return BugReportReadResult.Rejected(BugReportRejectReason.NESTED_ARCHIVE)
+                    if (!entry.isDirectory && isZipEntry(entry.name)) {
+                        sawNestedArchive = true
+                        if (allowNestedReport && isReportZipEntry(entry.name)) {
+                            val nestedInput = NonClosingInputStream(
+                                CheckedInputStream(
+                                    input = zip,
+                                    entryLimit = limits.maxEntryBytes,
+                                    totalRemaining = limits.maxTotalBytes,
+                                    isCancelled = isCancelled
+                                )
+                            )
+                            return extractZip(
+                                input = nestedInput,
+                                limits = limits,
+                                isCancelled = isCancelled,
+                                allowNestedReport = false
+                            )
+                        }
+                        when (val skipped = skipBounded(zip, limits.maxSkippedBytes - skippedBytes, isCancelled)) {
+                            BoundedSkip.Cancelled -> return BugReportReadResult.Cancelled
+                            BoundedSkip.TotalTooLarge -> {
+                                return BugReportReadResult.Rejected(BugReportRejectReason.TOTAL_TOO_LARGE)
+                            }
+                            is BoundedSkip.Bytes -> skippedBytes += skipped.value
+                        }
+                        zip.closeEntry()
+                        continue
                     }
                     if (!isReportTextEntry(entry.name)) {
                         when (val skipped = skipBounded(zip, limits.maxSkippedBytes - skippedBytes, isCancelled)) {
@@ -167,7 +196,13 @@ object BugReportSectionExtractor {
                     }
                 }
             }
-            BugReportReadResult.Rejected(BugReportRejectReason.EMPTY)
+            BugReportReadResult.Rejected(
+                if (sawNestedArchive) BugReportRejectReason.NESTED_ARCHIVE else BugReportRejectReason.EMPTY
+            )
+        } catch (_: CancelledReadException) {
+            BugReportReadResult.Cancelled
+        } catch (error: LimitReadException) {
+            BugReportReadResult.Rejected(error.reason)
         } catch (_: ZipException) {
             BugReportReadResult.Rejected(BugReportRejectReason.CORRUPT_ARCHIVE)
         } catch (_: IOException) {
@@ -188,6 +223,7 @@ object BugReportSectionExtractor {
         var currentSource: String? = null
         val line = StringBuilder()
         var lineTruncated = false
+        var nulCharCount = 0
 
         fun consumeLine() {
             val value = line.toString().removeSuffix("\r")
@@ -199,7 +235,12 @@ object BugReportSectionExtractor {
                 currentSource?.let { source ->
                     val output = outputs.getValue(source)
                     val separatorLength = if (output.isEmpty()) 0 else 1
-                    val available = limits.maxSectionChars - output.length - separatorLength
+                    val sectionLimit = when (source) {
+                        "batterystats" -> limits.maxBatteryStatsSectionChars
+                        "packages" -> limits.maxPackagesSectionChars
+                        else -> limits.maxSectionChars
+                    }
+                    val available = sectionLimit - output.length - separatorLength
                     if (available <= 0) {
                         truncated += source
                     } else {
@@ -222,7 +263,10 @@ object BugReportSectionExtractor {
                 if (count < 0) break
                 for (index in 0 until count) {
                     when (val char = chars[index]) {
-                        '\u0000' -> return CandidateRead.Unsupported
+                        '\u0000' -> {
+                            nulCharCount += 1
+                            if (nulCharCount > MAX_TOLERATED_NUL_CHARS) return CandidateRead.Unsupported
+                        }
                         '\n' -> consumeLine()
                         else -> {
                             if (line.length < MAX_BUFFERED_LINE_CHARS) line.append(char)
@@ -286,6 +330,15 @@ object BugReportSectionExtractor {
             (basename.startsWith("bugreport-") && basename.endsWith(".txt"))
     }
 
+    private fun isZipEntry(name: String): Boolean =
+        name.lowercase(Locale.ROOT).endsWith(".zip")
+
+    private fun isReportZipEntry(name: String): Boolean {
+        val basename = name.substringAfterLast('/').lowercase(Locale.ROOT)
+        return basename == "bugreport.zip" ||
+            (basename.startsWith("bugreport-") && basename.endsWith(".zip"))
+    }
+
     private fun isTextName(name: String?): Boolean {
         val value = name?.lowercase(Locale.ROOT) ?: return true
         return value.endsWith(".txt") || value.startsWith("bugreport")
@@ -321,7 +374,8 @@ object BugReportSectionExtractor {
     }
 
     private fun BugReportReadLimits.areValid(): Boolean =
-        maxEntries > 0 && maxEntryBytes > 0 && maxTotalBytes > 0 && maxSkippedBytes > 0 && maxSectionChars > 0
+        maxEntries > 0 && maxEntryBytes > 0 && maxTotalBytes > 0 && maxSkippedBytes > 0 &&
+            maxSectionChars > 0 && maxBatteryStatsSectionChars > 0 && maxPackagesSectionChars > 0
 
     private sealed interface BoundedSkip {
         data class Bytes(val value: Long) : BoundedSkip
@@ -376,8 +430,13 @@ object BugReportSectionExtractor {
         }
     }
 
+    private class NonClosingInputStream(input: InputStream) : FilterInputStream(input) {
+        override fun close() = Unit
+    }
+
     private class CancelledReadException : IOException()
     private class LimitReadException(val reason: BugReportRejectReason) : IOException()
 
     private const val MAX_BUFFERED_LINE_CHARS = 64 * 1024
+    private const val MAX_TOLERATED_NUL_CHARS = 1_024
 }

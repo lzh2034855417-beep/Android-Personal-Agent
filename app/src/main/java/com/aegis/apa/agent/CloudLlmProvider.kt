@@ -55,6 +55,58 @@ object CloudProviderCatalog {
     fun find(name: String): CloudProviderConfig? = providers.firstOrNull { it.name == name }
 }
 
+private fun allowsAdvancedAdvice(selectedLevel: String): Boolean =
+    selectedLevel.startsWith("Level 1") || selectedLevel.startsWith("Level 2")
+
+internal fun sanitizeCloudAnalysisResponse(
+    content: String,
+    selectedLevel: String,
+    powerIntent: PowerQuestionIntent = PowerQuestionIntent.OTHER,
+    reportAttached: Boolean = false
+): String {
+    val healthFiltered = if (powerIntent == PowerQuestionIntent.BATTERY_HEALTH) {
+        val irrelevantPrefixes = listOf(
+            "耗电窗口：", "高耗电应用：", "后台耗电排行：", "系统调度观察：",
+            "scene 建议：", "普通设置建议：", "耗电总量排行："
+        )
+        content.lineSequence()
+            .filterNot { line ->
+                val trimmed = line.trim()
+                irrelevantPrefixes.any { prefix -> trimmed.startsWith(prefix, ignoreCase = true) } ||
+                    trimmed.contains("Bug Report", ignoreCase = true) ||
+                    trimmed.contains("Scene", ignoreCase = true)
+            }
+            .joinToString("\n")
+            .trim()
+    } else {
+        content
+    }
+    val reportSafe = if (reportAttached) {
+        val reportTerms = listOf("bug report", "报告", "系统报告", "系统耗电诊断", "报告包")
+        val requestTerms = listOf("生成", "导入", "上传", "提供", "重新", "再次", "再做", "再抓")
+        healthFiltered.lineSequence()
+            .filterNot { line ->
+                reportTerms.any { term -> line.contains(term, ignoreCase = true) } &&
+                    requestTerms.any { term -> line.contains(term, ignoreCase = true) }
+            }
+            .joinToString("\n")
+            .trim()
+    } else {
+        healthFiltered
+    }
+    if (allowsAdvancedAdvice(selectedLevel)) return reportSafe
+    val advancedTerms = listOf(
+        "scene", "adb", "shizuku", "root", "kernelsu", "ksu", "magisk",
+        "lsposed", "xposed", "zygisk", "shell", "冻结", "限频", "命令", "刷入"
+    )
+    return reportSafe.split(Regex("(?<=[。！？!?；;])|\\R+"))
+        .map(String::trim)
+        .filter(String::isNotEmpty)
+        .filterNot { segment -> advancedTerms.any { term -> segment.contains(term, ignoreCase = true) } }
+        .joinToString("\n")
+        .trim()
+}
+
 internal fun buildCloudAnalysisPrompt(
     context: DeviceContext,
     userQuestion: String,
@@ -64,31 +116,83 @@ internal fun buildCloudAnalysisPrompt(
     powerDiagnosticReport: String?
 ): String = buildString {
     val powerIntent = PowerAnalysisPreflight.classify(userQuestion)
+    val advancedAdviceAllowed = allowsAdvancedAdvice(selectedLevel)
+    val hasValidatedDrainWindow = powerDiagnosticReport?.let { report ->
+        report.contains("统计周期：自上次充满后") && report.contains("平均耗电：")
+    } == true
+    val hasShortDrainWindow = powerDiagnosticReport?.contains("统计窗口不足 2 小时") == true
     appendLine("【用户问题】")
     appendLine(userQuestion)
     appendLine()
-    if (powerDiagnosticReport != null) {
+    if (powerIntent == PowerQuestionIntent.BATTERY_HEALTH) {
+        appendLine("【回答任务：电池健康与更换判断】")
+        if (powerDiagnosticReport != null) {
+            appendLine("系统耗电诊断已经附加，但它用于耗电归因，不是循环次数或容量健康检测；不得要求用户再次生成或导入该报告。")
+        }
+        appendLine("直接回答是否已有足够证据建议更换电池。健康“良好”只是 Android 的粗粒度状态，不是电池健康度百分比。")
+        appendLine("不要讨论耗电应用、后台排行、调度计数、短时耗电速率或预计续航；这些不能回答电池是否老化。")
+        appendLine("没有同时取得可信且单位一致的设计容量与满充容量时，不得计算健康度；没有安全异常或可靠容量证据时，不得断言必须更换。")
+        when {
+            selectedLevel.startsWith("Level 2") -> appendLine("只有 Root 报告实际提供设计容量、满充容量和循环次数时才可引用；字段缺失就明确缺失，不得猜测。")
+            selectedLevel.startsWith("Level 1") -> appendLine("ADB / Shizuku 通常不能可靠读取受保护的容量和循环字段，不得假装已经获得；可建议官方电池检测或售后检测。")
+            else -> appendLine("普通权限缺少循环次数或容量证据时，只建议官方电池检测或售后检测，不提供高级权限操作。")
+        }
+        appendLine("安全建议只处理鼓包、异常发热、异常关机或电量突降等症状；出现鼓包时应停止充电和继续使用并尽快送检。")
+        appendLine("优先控制在 400 至 600 个中文字符以内；没有内容的字段可以省略，不要重复免责。")
+        appendLine("使用这些纯文本字段：结论：、已知健康信息：、无法判断的原因：、安全建议：、下一步：。不要增加耗电诊断字段。")
+        appendLine()
+    } else if (powerDiagnosticReport != null && powerIntent != PowerQuestionIntent.OTHER) {
         appendLine("【回答任务：耗电诊断】")
         appendLine("只解释 APA 已完成的本地裁决，不重新归因，也不要自行增加嫌疑应用。")
+        appendLine("系统耗电诊断已经附加，不得要求用户重新导入当前报告。")
         when (powerIntent) {
             PowerQuestionIntent.DRAIN_RATE -> {
-                appendLine("先回答能否判断耗电速度；只有报告同时提供观察时长和电量变化时才可计算，缺少任一项都不得编造速度。")
-                appendLine("即使无法判断速度，仍可单独解释本地裁决已经确认的后台异常嫌疑。")
+                if (hasValidatedDrainWindow) {
+                    if (hasShortDrainWindow) {
+                        appendLine("诊断已提供本地验证但不足 2 小时的统计窗口；只报告该短窗口的实测平均耗电速度，明确样本过短，不得计算或输出预计续航。")
+                    } else {
+                        appendLine("诊断已提供本地验证的自上次充满后统计窗口；直接报告该统计周期的平均耗电速度和同强度预计续航，明确它不等同于今天全天，不要改写数值。")
+                    }
+                } else {
+                    appendLine("诊断没有提供经过验证的统计周期平均耗电；没有统计周期平均耗电时不得编造速度，只建议在 APA 内完成一次未充电的应用内续航观察。")
+                }
+                appendLine("即使无法判断速度，仍可解释高耗电应用和后台耗电排行。")
             }
-            PowerQuestionIntent.ATTRIBUTION -> appendLine("先回答哪个应用存在后台异常证据；没有达到阈值时明确回答没有确认到后台异常。")
-            PowerQuestionIntent.OTHER -> appendLine("先用一句话直接回答问题，再解释本地裁决。")
+            PowerQuestionIntent.ATTRIBUTION -> appendLine("先回答后台耗电排行中哪个应用最值得优先核对；高耗电或后台耗电较高不等同于异常。")
+            PowerQuestionIntent.BATTERY_HEALTH,
+            PowerQuestionIntent.OTHER -> Unit
         }
-        appendLine("然后按证据强弱解释最多 3 个嫌疑应用。")
-        appendLine("每个嫌疑必须写出应用名或包名、报告中的原始数值、原因和置信度。")
-        appendLine("不得修改报告中的数值，不得把耗电总量排行改写成后台异常。")
+        appendLine("最多解释 3 个主要耗电对象，必须写出应用名或包名、报告中的原始数值和耗电更偏前台还是后台。")
+        appendLine("后台耗电排行优先指出后台耗电量和占比；单一耗电估算只能作为优先核对线索。")
+        appendLine("系统调度观察必须分别说明真实唤醒与普通定时任务；这些是独立累计计数，系统调度观察不得用于耗电归因，也不得据此生成限制或冻结建议。")
+        appendLine("不得修改报告中的数值，不得把高耗电或后台耗电排行改写成已确认异常。")
         appendLine("不得超过报告给出的最高建议级别；尤其不得把观察或限制升级为冻结候选。")
-        appendLine("每个嫌疑只解释报告给出的一项 Scene 手动操作，并说明预期作用、副作用和回退方法；不得声称已经执行。")
-        appendLine("如果证据仍不足，不要复述所有缺失栏目，只给出一个最有价值的下一步采样动作。")
-        appendLine("输出固定使用这些纯文本字段：结论：、耗电速度：、耗电总量排行：、后台异常嫌疑：、Scene 建议：、证据缺口：。没有数据的字段写“无法判断”或“未确认”，不要省略。")
+        if (advancedAdviceAllowed) {
+            val capability = if (selectedLevel.startsWith("Level 1")) {
+                "ADB / Shizuku"
+            } else {
+                "Root / KernelSU"
+            }
+            appendLine("本次为 $capability 能力层，可解释报告给出的一项 Scene 手动操作，并说明预期作用、副作用和回退方法；不得声称已经执行。")
+        } else {
+            appendLine("本次为普通用户能力层，只提供普通 Android 用户可执行的系统设置或观察建议；不要输出任何高级权限工具、命令、冻结或限频建议。")
+        }
+        appendLine("系统调度数据只有在直接改变结论时才简短写进证据限制，不要单列调度栏目，也不要用累计计数凑篇幅。")
+        appendLine("如果证据仍不足，不要复述所有缺失栏目，只给出一个最有价值的下一步；没有内容的字段可以省略。")
+        val outputFields = when (powerIntent) {
+            PowerQuestionIntent.DRAIN_RATE -> "结论：、耗电窗口：、主要耗电：、建议：、证据限制："
+            PowerQuestionIntent.ATTRIBUTION -> "结论：、主要耗电：、后台判断：、建议：、证据限制："
+            PowerQuestionIntent.BATTERY_HEALTH,
+            PowerQuestionIntent.OTHER -> "结论：、依据：、建议："
+        }
+        appendLine("输出使用这些纯文本字段：$outputFields。优先控制在 600 至 800 个中文字符以内，不要重复同一限制。")
         appendLine()
     } else {
         appendLine("【回答任务】")
-        appendLine("直接回答当前问题；只引用下方实际附带的数据，不要讨论未附带的报告。")
+        appendLine("直接回答当前问题；只引用下方与问题直接相关的数据，不要被已附带但无关的报告带偏。")
+        if (powerDiagnosticReport != null) {
+            appendLine("系统耗电诊断已经附加，不得要求用户重新导入当前报告。")
+        }
         appendLine("按结论、依据、一个可执行建议组织；证据不足时只指出最关键缺口。")
         appendLine()
     }
@@ -105,15 +209,22 @@ internal fun buildCloudAnalysisPrompt(
     appendLine()
     appendLine("【Level 报告】")
     appendLine(levelReport)
-    appReport?.let {
+    appReport?.takeIf { powerIntent != PowerQuestionIntent.BATTERY_HEALTH }?.let {
         appendLine()
         appendLine("【应用报告】")
         appendLine(it)
     }
-    powerDiagnosticReport?.let {
+    powerDiagnosticReport?.takeIf { powerIntent != PowerQuestionIntent.BATTERY_HEALTH }?.let {
         appendLine()
         appendLine("【系统耗电诊断】")
-        appendLine(it)
+        val levelSafeReport = if (advancedAdviceAllowed) {
+            it
+        } else {
+            it.lineSequence()
+                .filterNot { line -> line.contains("Scene", ignoreCase = true) }
+                .joinToString("\n")
+        }
+        appendLine(levelSafeReport)
     }
 }
 
@@ -209,7 +320,7 @@ object CloudLlmProvider {
             val response = CloudResponseReader.read(connection.inputStream)
 
             val json = JSONObject(response)
-            val content = if (config.protocol == "anthropic") {
+            val rawContent = if (config.protocol == "anthropic") {
                 val blocks = json.optJSONArray("content") ?: JSONArray()
                 buildString {
                     for (index in 0 until blocks.length()) {
@@ -226,6 +337,12 @@ object CloudLlmProvider {
                     .getJSONObject("message")
                     .optString("content")
             }
+            val content = sanitizeCloudAnalysisResponse(
+                rawContent,
+                selectedLevel,
+                PowerAnalysisPreflight.classify(userQuestion),
+                reportAttached = powerDiagnosticReport != null
+            )
             if (content.isBlank()) throw AgentFailureException(AgentFailure.EMPTY_RESPONSE)
             return AgentReport(
                 summary = content,

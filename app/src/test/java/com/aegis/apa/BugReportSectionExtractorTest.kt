@@ -25,6 +25,16 @@ class BugReportSectionExtractorTest {
     """.trimIndent()
 
     @Test
+    fun defaultLimitsCoverObservedXiaomi17ProMaxEngineeringReport() {
+        val limits = BugReportReadLimits()
+
+        assertTrue(limits.maxEntries >= 855)
+        assertTrue(limits.maxSkippedBytes >= 269_797_153L)
+        assertTrue(limits.maxEntryBytes >= 162_451_080L)
+        assertTrue(limits.maxTotalBytes >= 162_451_080L)
+    }
+
+    @Test
     fun extractsWhitelistedSectionsFromPlainText() {
         val result = BugReportSectionExtractor.extract(
             input = reportText.byteInputStream(),
@@ -37,6 +47,31 @@ class BugReportSectionExtractorTest {
             (result as BugReportReadResult.Success).sections.map { it.source }
         )
         assertTrue(result.sections.first().output.contains("UID u0a123: 245.5"))
+    }
+
+    @Test
+    fun toleratesSparseNulBytesInXiaomiReportText() {
+        val reportWithSparseNuls = reportText.replace("245.5", "245\u0000.5")
+
+        val result = BugReportSectionExtractor.extract(
+            input = reportWithSparseNuls.byteInputStream(),
+            displayName = "bugreport-Xiaomi.txt"
+        )
+
+        assertTrue(result is BugReportReadResult.Success)
+        assertTrue((result as BugReportReadResult.Success).sections.first().output.contains("245.5"))
+    }
+
+    @Test
+    fun rejectsReportTextWithExcessiveNulBytes() {
+        val binaryLikeReport = reportText + "\u0000".repeat(1_025)
+
+        val result = BugReportSectionExtractor.extract(
+            input = binaryLikeReport.byteInputStream(),
+            displayName = "bugreport-device.txt"
+        )
+
+        assertEquals(rejected(BugReportRejectReason.UNSUPPORTED_FORMAT), result)
     }
 
     @Test
@@ -238,6 +273,31 @@ class BugReportSectionExtractorTest {
     }
 
     @Test
+    fun retainsLateEvidenceFromLargeXiaomiDiagnosticSections() {
+        val filler = "x\n".repeat(1_100_000)
+        val largeReport = buildString {
+            appendLine("DUMP OF SERVICE batterystats:")
+            append(filler)
+            appendLine("Estimated power use (mAh):")
+            appendLine("  UID u0a123: 245.5")
+            appendLine("DUMP OF SERVICE packages:")
+            append(filler)
+            appendLine("  Package [com.example.chat]")
+            appendLine("    userId=10123")
+        }
+
+        val result = BugReportSectionExtractor.extract(
+            input = largeReport.byteInputStream(),
+            displayName = "bugreport-Xiaomi.txt"
+        )
+
+        assertTrue(result is BugReportReadResult.Success)
+        val sections = (result as BugReportReadResult.Success).sections.associateBy { it.source }
+        assertTrue(sections.getValue("batterystats").output.contains("UID u0a123: 245.5"))
+        assertTrue(sections.getValue("packages").output.contains("userId=10123"))
+    }
+
+    @Test
     fun rejectsEntryWhoseNameContainsParentTraversal() {
         val result = BugReportSectionExtractor.extract(
             input = zipOf("../bugreport.txt" to reportText).inputStream(),
@@ -318,6 +378,63 @@ class BugReportSectionExtractorTest {
         )
 
         assertEquals(rejected(BugReportRejectReason.NESTED_ARCHIVE), result)
+    }
+
+    @Test
+    fun ignoresNestedAttachmentBeforeMainXiaomiReport() {
+        val result = BugReportSectionExtractor.extract(
+            input = zipOf(
+                "FS/extra-report.zip" to "nested attachment is not opened",
+                "bugreport-device.txt" to reportText
+            ).inputStream(),
+            displayName = "bugreport-device.zip"
+        )
+
+        assertTrue(result is BugReportReadResult.Success)
+        assertEquals(
+            listOf("batterystats", "alarm"),
+            (result as BugReportReadResult.Success).sections.map { it.source }
+        )
+    }
+
+    @Test
+    fun acceptsXiaomiReportAfterManyBoundedAttachments() {
+        val attachments = (0 until 256).map { index ->
+            "FS/attachment-$index.txt" to ""
+        }
+        val archiveEntries = attachments + listOf(
+            "FS/extra-report.zip" to "nested attachment is not opened",
+            "bugreport-device.txt" to reportText
+        )
+
+        val result = BugReportSectionExtractor.extract(
+            input = zipOf(*archiveEntries.toTypedArray()).inputStream(),
+            displayName = "bugreport-device.zip"
+        )
+
+        assertTrue(result is BugReportReadResult.Success)
+        assertEquals(
+            listOf("batterystats", "alarm"),
+            (result as BugReportReadResult.Success).sections.map { it.source }
+        )
+    }
+
+    @Test
+    fun readsMainReportFromOneNestedXiaomiBugReportArchive() {
+        val nestedReport = zipOf("bugreport-device.txt" to reportText)
+        val result = BugReportSectionExtractor.extract(
+            input = zipBytesOf(
+                "FS/encrypt_voice_trigger.zip" to byteArrayOf(1, 2, 3),
+                "bugreport-Xiaomi 17 Pro Max-2026-09-15-154937.zip" to nestedReport
+            ).inputStream(),
+            displayName = "bugreport-2026-09-15-154647.zip"
+        )
+
+        assertTrue(result is BugReportReadResult.Success)
+        assertEquals(
+            listOf("batterystats", "alarm"),
+            (result as BugReportReadResult.Success).sections.map { it.source }
+        )
     }
 
     @Test
