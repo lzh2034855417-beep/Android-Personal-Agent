@@ -19,13 +19,17 @@ data class AgentReport(
 
 enum class MessageRole(val wireName: String) { USER("user"), ASSISTANT("assistant"), ERROR("error") }
 
+enum class CloudAdviceScope { GENERAL, LEVEL_0, LEVEL_1, LEVEL_2 }
+
 data class AgentConversationMessage(
     val role: MessageRole,
     val content: String,
     val attachedReportLabel: String? = null,
     val source: String? = null,
     /** Null means local-only. Only the provider that produced a cloud turn may receive its history. */
-    val cloudProvider: String? = null
+    val cloudProvider: String? = null,
+    /** Cloud conversation partition; null is legacy/local and is never inferred from display labels. */
+    val cloudAdviceScope: CloudAdviceScope? = null
 )
 
 interface LlmProvider {

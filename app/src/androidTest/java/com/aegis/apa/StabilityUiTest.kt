@@ -80,6 +80,8 @@ class StabilityUiTest {
         rule.waitUntil(15_000) { sampleLabel() != null }
         rule.runOnUiThread { ApiSession.update(null) }
         rule.onNodeWithText("Agent").performClick()
+        rule.onNodeWithText("选择报告").performClick()
+        rule.onNodeWithText("Level 0").performScrollTo().performClick()
         rule.onNode(hasSetTextAction()).performTextInput("本地会话恢复测试")
         rule.onNodeWithText("发送").performClick()
         rule.waitUntil(15_000) {
@@ -120,6 +122,26 @@ class StabilityUiTest {
         rule.onNodeWithText("APA ${BuildConfig.VERSION_NAME} · ${BuildConfig.BUILD_TYPE}").assertIsDisplayed()
     }
 
+    @Test fun settingsShowsEnglishLanguageOption() {
+        rule.waitUntil(15_000) { sampleLabel() != null }
+        rule.onNodeWithText("设置").performClick()
+        rule.onNodeWithText("Language").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("English").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test fun agentAllowsAllDeviceReportsToBeDeselected() {
+        rule.waitUntil(15_000) { sampleLabel() != null }
+        rule.onNodeWithText("Agent").performClick()
+        rule.onNodeWithText("选择报告").performClick()
+
+        rule.onNodeWithText("未附带报告").assertIsDisplayed()
+        rule.onNodeWithText("Level 0").performScrollTo().performClick()
+        rule.onNodeWithText("● Level 0").performScrollTo().performClick()
+
+        rule.onNodeWithText("未附带报告").assertIsDisplayed()
+        rule.onNodeWithText("● Level 0").assertDoesNotExist()
+    }
+
     @Test fun localAnalysisCollectsNewSampleAtSendTime() {
         rule.waitUntil(15_000) { sampleLabel() != null }
         val oldTimestamp = requireNotNull(sampleLabel()).substringAfter("最近采样：")
@@ -128,6 +150,8 @@ class StabilityUiTest {
             // Keep this regression fully local, irrespective of the user's saved provider.
             rule.runOnUiThread { ApiSession.update(null) }
             rule.onNodeWithText("Agent").performClick()
+            rule.onNodeWithText("选择报告").performClick()
+            rule.onNodeWithText("Level 0").performScrollTo().performClick()
             SystemClock.sleep(1_100)
             rule.onNode(hasSetTextAction()).performTextInput("检查设备")
             rule.onNodeWithText("发送").performClick()

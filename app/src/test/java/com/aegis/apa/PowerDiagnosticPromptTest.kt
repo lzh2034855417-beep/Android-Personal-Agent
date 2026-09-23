@@ -4,12 +4,93 @@ import com.aegis.apa.agent.DeviceContext
 import com.aegis.apa.agent.PowerQuestionIntent
 import com.aegis.apa.agent.buildCloudAnalysisPrompt
 import com.aegis.apa.agent.sanitizeCloudAnalysisResponse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PowerDiagnosticPromptTest {
     private val context = DeviceContext("device", "Android 16", 80, 1, 2, 3, 4, 5)
+
+    @Test
+    fun noReportChatDoesNotSerializeDeviceSnapshotOrLevelReport() {
+        val prompt = buildCloudAnalysisPrompt(
+            context = null,
+            userQuestion = "聊聊今天的计划",
+            selectedLevel = null,
+            levelReport = null,
+            appReport = null,
+            powerDiagnosticReport = null
+        )
+
+        assertTrue(prompt.contains("聊聊今天的计划"))
+        assertTrue(prompt.contains("未附带设备报告"))
+        assertFalse(prompt.contains("【基础设备快照】"))
+        assertFalse(prompt.contains("【Level 报告】"))
+        assertFalse(prompt.contains("设备：device"))
+        assertFalse(prompt.contains("按结论、依据、一个可执行建议组织"))
+        assertTrue(prompt.contains("普通对话"))
+    }
+
+    @Test
+    fun noReportChatKeepsBenignTechnicalTermsInModelResponse() {
+        val response = "Root、shell 和 command 都是常见的计算机术语。"
+
+        val sanitized = sanitizeCloudAnalysisResponse(
+            content = response,
+            selectedLevel = null,
+            deviceAdviceMode = false
+        )
+
+        assertEquals(response, sanitized)
+    }
+
+    @Test
+    fun noReportChatRemovesExecutableAdvancedDeviceCommandsInChineseAndEnglish() {
+        val unsafeResponses = listOf(
+            "请执行 adb shell pm disable-user com.android.phone 冻结电话应用。",
+            "Run adb shell pm disable-user com.android.phone.",
+            "Use adb shell to disable com.android.phone.",
+            "可以用 adb shell pm disable-user com.android.phone。",
+            "Execute su -c 'pm disable-user com.android.phone'.",
+            "Use cmd package suspend com.android.phone."
+        )
+
+        unsafeResponses.forEach { response ->
+            val sanitized = sanitizeCloudAnalysisResponse(
+                content = response,
+                selectedLevel = null,
+                deviceAdviceMode = false
+            )
+            assertFalse("Unsafe response survived: $response", sanitized.contains("com.android.phone"))
+            assertTrue(sanitized.contains("未选择设备能力等级"))
+        }
+    }
+
+    @Test
+    fun noReportChatUsesGeneralSystemPrompt() {
+        val prompt = com.aegis.apa.agent.AgentPromptPolicy.systemPrompt(deviceAdviceMode = false)
+
+        assertTrue(prompt.contains("普通对话"))
+        assertFalse(prompt.contains("Level 0 的回答不得提及"))
+        assertTrue(prompt.contains("不得提供可执行的 ADB、Shizuku、Root"))
+    }
+
+    @Test
+    fun levelZeroAlsoRemovesCommandsThatDoNotNameRootOrShell() {
+        listOf(
+            "执行 pm disable-user com.android.phone。",
+            "Run cmd package suspend com.android.phone."
+        ).forEach { response ->
+            val sanitized = sanitizeCloudAnalysisResponse(
+                content = response,
+                selectedLevel = "Level 0",
+                deviceAdviceMode = true
+            )
+
+            assertFalse("Unsafe L0 response survived: $response", sanitized.contains("com.android.phone"))
+        }
+    }
 
     @Test
     fun unselectedDiagnosticIsNotIncludedInCloudPrompt() {

@@ -55,14 +55,27 @@ object CloudProviderCatalog {
     fun find(name: String): CloudProviderConfig? = providers.firstOrNull { it.name == name }
 }
 
-private fun allowsAdvancedAdvice(selectedLevel: String): Boolean =
-    selectedLevel.startsWith("Level 1") || selectedLevel.startsWith("Level 2")
+private fun allowsAdvancedAdvice(selectedLevel: String?): Boolean =
+    selectedLevel?.startsWith("Level 1") == true || selectedLevel?.startsWith("Level 2") == true
+
+private val unsafeDeviceCommandPatterns = listOf(
+    Regex("\\badb\\s+shell\\b", RegexOption.IGNORE_CASE),
+    Regex("\\bsu\\s+-c\\b", RegexOption.IGNORE_CASE),
+    Regex("\\bpm\\s+(?:disable(?:-user)?|suspend|hide|uninstall)\\b", RegexOption.IGNORE_CASE),
+    Regex("\\bcmd\\s+package\\b", RegexOption.IGNORE_CASE),
+    Regex("\\bam\\s+force-stop\\b", RegexOption.IGNORE_CASE),
+    Regex("\\bsettings\\s+put\\b", RegexOption.IGNORE_CASE)
+)
+
+private fun containsUnsafeDeviceCommand(content: String): Boolean =
+    unsafeDeviceCommandPatterns.any { pattern -> pattern.containsMatchIn(content) }
 
 internal fun sanitizeCloudAnalysisResponse(
     content: String,
-    selectedLevel: String,
+    selectedLevel: String?,
     powerIntent: PowerQuestionIntent = PowerQuestionIntent.OTHER,
-    reportAttached: Boolean = false
+    reportAttached: Boolean = false,
+    deviceAdviceMode: Boolean = true
 ): String {
     val healthFiltered = if (powerIntent == PowerQuestionIntent.BATTERY_HEALTH) {
         val irrelevantPrefixes = listOf(
@@ -94,6 +107,7 @@ internal fun sanitizeCloudAnalysisResponse(
     } else {
         healthFiltered
     }
+    if (!deviceAdviceMode) return sanitizeGeneralChatResponse(reportSafe)
     if (allowsAdvancedAdvice(selectedLevel)) return reportSafe
     val advancedTerms = listOf(
         "scene", "adb", "shizuku", "root", "kernelsu", "ksu", "magisk",
@@ -102,20 +116,50 @@ internal fun sanitizeCloudAnalysisResponse(
     return reportSafe.split(Regex("(?<=[。！？!?；;])|\\R+"))
         .map(String::trim)
         .filter(String::isNotEmpty)
-        .filterNot { segment -> advancedTerms.any { term -> segment.contains(term, ignoreCase = true) } }
+        .filterNot { segment ->
+            containsUnsafeDeviceCommand(segment) ||
+                advancedTerms.any { term -> segment.contains(term, ignoreCase = true) }
+        }
         .joinToString("\n")
         .trim()
 }
 
+private fun sanitizeGeneralChatResponse(content: String): String {
+    val advancedTerms = listOf(
+        "adb", "shizuku", "root", "scene", "shell", "magisk", "kernelsu", "ksu",
+        "冻结", "限频", "刷入", "停用", "禁用", "pm disable", "su -c"
+    )
+    val actionTerms = listOf(
+        "执行", "运行", "输入", "复制以下", "使用以下", "可以用", "冻结", "限频", "刷入", "停用", "禁用",
+        "卸载", "删除", "修改", "强停", "run ", "execute ", "use ", "enter ", "paste ", "disable ",
+        "freeze ", "flash ", "uninstall ", "delete ", "modify "
+    )
+    val safe = content.split(Regex("(?<=[。！？!?；;])|\\R+"))
+        .map(String::trim)
+        .filter(String::isNotEmpty)
+        .filterNot { segment ->
+            containsUnsafeDeviceCommand(segment) ||
+                advancedTerms.any { term -> segment.contains(term, ignoreCase = true) } &&
+                actionTerms.any { term -> segment.contains(term, ignoreCase = true) }
+        }
+        .joinToString("\n")
+        .trim()
+    return safe.ifBlank {
+        "当前未选择设备能力等级，我不能提供可执行的 ADB、Shizuku、Root、冻结或限频操作。请选择相应等级并完成授权后再进行设备分析。"
+    }
+}
+
 internal fun buildCloudAnalysisPrompt(
-    context: DeviceContext,
+    context: DeviceContext?,
     userQuestion: String,
-    selectedLevel: String,
-    levelReport: String,
+    selectedLevel: String?,
+    levelReport: String?,
     appReport: String?,
     powerDiagnosticReport: String?
 ): String = buildString {
     val powerIntent = PowerAnalysisPreflight.classify(userQuestion)
+    val deviceAdviceMode = context != null || selectedLevel != null || levelReport != null ||
+        appReport != null || powerDiagnosticReport != null
     val advancedAdviceAllowed = allowsAdvancedAdvice(selectedLevel)
     val hasValidatedDrainWindow = powerDiagnosticReport?.let { report ->
         report.contains("统计周期：自上次充满后") && report.contains("平均耗电：")
@@ -124,6 +168,11 @@ internal fun buildCloudAnalysisPrompt(
     appendLine("【用户问题】")
     appendLine(userQuestion)
     appendLine()
+    if (!deviceAdviceMode) {
+        appendLine("【模式】")
+        appendLine("普通对话；本次未附带设备报告或设备快照。")
+        return@buildString
+    }
     if (powerIntent == PowerQuestionIntent.BATTERY_HEALTH) {
         appendLine("【回答任务：电池健康与更换判断】")
         if (powerDiagnosticReport != null) {
@@ -133,8 +182,8 @@ internal fun buildCloudAnalysisPrompt(
         appendLine("不要讨论耗电应用、后台排行、调度计数、短时耗电速率或预计续航；这些不能回答电池是否老化。")
         appendLine("没有同时取得可信且单位一致的设计容量与满充容量时，不得计算健康度；没有安全异常或可靠容量证据时，不得断言必须更换。")
         when {
-            selectedLevel.startsWith("Level 2") -> appendLine("只有 Root 报告实际提供设计容量、满充容量和循环次数时才可引用；字段缺失就明确缺失，不得猜测。")
-            selectedLevel.startsWith("Level 1") -> appendLine("ADB / Shizuku 通常不能可靠读取受保护的容量和循环字段，不得假装已经获得；可建议官方电池检测或售后检测。")
+            selectedLevel?.startsWith("Level 2") == true -> appendLine("只有 Root 报告实际提供设计容量、满充容量和循环次数时才可引用；字段缺失就明确缺失，不得猜测。")
+            selectedLevel?.startsWith("Level 1") == true -> appendLine("ADB / Shizuku 通常不能可靠读取受保护的容量和循环字段，不得假装已经获得；可建议官方电池检测或售后检测。")
             else -> appendLine("普通权限缺少循环次数或容量证据时，只建议官方电池检测或售后检测，不提供高级权限操作。")
         }
         appendLine("安全建议只处理鼓包、异常发热、异常关机或电量突降等症状；出现鼓包时应停止充电和继续使用并尽快送检。")
@@ -168,7 +217,7 @@ internal fun buildCloudAnalysisPrompt(
         appendLine("不得修改报告中的数值，不得把高耗电或后台耗电排行改写成已确认异常。")
         appendLine("不得超过报告给出的最高建议级别；尤其不得把观察或限制升级为冻结候选。")
         if (advancedAdviceAllowed) {
-            val capability = if (selectedLevel.startsWith("Level 1")) {
+            val capability = if (selectedLevel?.startsWith("Level 1") == true) {
                 "ADB / Shizuku"
             } else {
                 "Root / KernelSU"
@@ -197,18 +246,22 @@ internal fun buildCloudAnalysisPrompt(
         appendLine()
     }
     appendLine("【本次选择】")
-    appendLine(selectedLevel)
-    appendLine()
-    appendLine("【基础设备快照】")
-    appendLine("设备：${context.deviceModel}")
-    appendLine("系统：${context.androidVersion}")
-    appendLine("电量：${context.batteryLevel?.let { "$it%" } ?: "未获取到"}")
-    appendLine("RAM：可用 ${context.availableRamBytes} B / 总计 ${context.totalRamBytes} B")
-    appendLine("存储：可用 ${context.availableStorageBytes} B / 总计 ${context.totalStorageBytes} B")
-    appendLine("可启动应用数量：${context.launchableAppCount}")
-    appendLine()
-    appendLine("【Level 报告】")
-    appendLine(levelReport)
+    appendLine(selectedLevel ?: "未附带设备报告")
+    context?.let { device ->
+        appendLine()
+        appendLine("【基础设备快照】")
+        appendLine("设备：${device.deviceModel}")
+        appendLine("系统：${device.androidVersion}")
+        appendLine("电量：${device.batteryLevel?.let { "$it%" } ?: "未获取到"}")
+        appendLine("RAM：可用 ${device.availableRamBytes} B / 总计 ${device.totalRamBytes} B")
+        appendLine("存储：可用 ${device.availableStorageBytes} B / 总计 ${device.totalStorageBytes} B")
+        appendLine("可启动应用数量：${device.launchableAppCount}")
+    }
+    levelReport?.let {
+        appendLine()
+        appendLine("【Level 报告】")
+        appendLine(it)
+    }
     appReport?.takeIf { powerIntent != PowerQuestionIntent.BATTERY_HEALTH }?.let {
         appendLine()
         appendLine("【应用报告】")
@@ -230,10 +283,10 @@ internal fun buildCloudAnalysisPrompt(
 
 object CloudLlmProvider {
     fun analyze(
-        context: DeviceContext,
+        context: DeviceContext?,
         userQuestion: String,
-        selectedLevel: String,
-        levelReport: String,
+        selectedLevel: String?,
+        levelReport: String?,
         appReport: String?,
         powerDiagnosticReport: String? = null,
         conversationHistory: List<AgentConversationMessage>,
@@ -244,7 +297,11 @@ object CloudLlmProvider {
         if (credentials.apiKey.isBlank()) throw AgentFailureException(AgentFailure.MISSING_KEY)
         if (userQuestion.isBlank()) throw AgentFailureException(AgentFailure.EMPTY_QUESTION)
 
-        val systemPrompt = AgentPromptPolicy.systemPrompt()
+        val hasDeviceEvidence = context != null || levelReport != null || appReport != null ||
+            powerDiagnosticReport != null
+        val adviceScope = AdviceCapabilityPolicy.cloudAdviceScope(selectedLevel, hasDeviceEvidence)
+        val deviceAdviceMode = adviceScope != CloudAdviceScope.GENERAL
+        val systemPrompt = AgentPromptPolicy.systemPrompt(deviceAdviceMode)
 
         val prompt = buildCloudAnalysisPrompt(
             context = context,
@@ -259,7 +316,8 @@ object CloudLlmProvider {
         CloudHistoryPolicy.select(
             messages = conversationHistory,
             provider = credentials.provider,
-            freshDiagnostic = powerDiagnosticReport != null
+            freshDiagnostic = powerDiagnosticReport != null,
+            adviceScope = adviceScope
         )
             .forEach { message ->
                 historyMessages.put(
@@ -341,7 +399,8 @@ object CloudLlmProvider {
                 rawContent,
                 selectedLevel,
                 PowerAnalysisPreflight.classify(userQuestion),
-                reportAttached = powerDiagnosticReport != null
+                reportAttached = powerDiagnosticReport != null,
+                deviceAdviceMode = deviceAdviceMode
             )
             if (content.isBlank()) throw AgentFailureException(AgentFailure.EMPTY_RESPONSE)
             return AgentReport(

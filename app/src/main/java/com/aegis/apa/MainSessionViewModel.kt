@@ -253,7 +253,7 @@ class MainSessionViewModel(
 }
 
 class AgentPageState {
-    val selectedLevel = mutableStateOf("Level 0")
+    val selectedLevel = mutableStateOf<String?>(null)
     val includeUsageReport = mutableStateOf(false)
     val includeAppReport = mutableStateOf(false)
     val includePowerDiagnosticReport = mutableStateOf(false)

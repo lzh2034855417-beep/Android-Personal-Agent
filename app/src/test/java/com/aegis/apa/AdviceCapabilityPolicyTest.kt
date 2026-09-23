@@ -3,6 +3,7 @@ package com.aegis.apa
 import com.aegis.apa.agent.AdviceCapabilityPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -31,6 +32,28 @@ class AdviceCapabilityPolicyTest {
     @Test
     fun unknownLevelFallsBackToLevelZero() {
         assertEquals("Level 0", AdviceCapabilityPolicy.effectiveLevel("Level 9", true, true))
+    }
+
+    @Test
+    fun noReportSelectionRemainsUnselected() {
+        assertNull(AdviceCapabilityPolicy.effectiveLevel(null, true, true))
+    }
+
+    @Test
+    fun noReportChatDoesNotRequestFreshDeviceSnapshot() {
+        assertFalse(AdviceCapabilityPolicy.needsFreshSnapshot(null, false, false, false))
+    }
+
+    @Test
+    fun snapshotIsRequestedOnlyForAttachmentsThatNeedCurrentDeviceData() {
+        assertTrue(AdviceCapabilityPolicy.needsFreshSnapshot("Level 0", false, false, false))
+        assertTrue(AdviceCapabilityPolicy.needsFreshSnapshot(null, true, false, false))
+        assertTrue(AdviceCapabilityPolicy.needsFreshSnapshot(null, false, true, false))
+    }
+
+    @Test
+    fun powerDiagnosticOnlyDoesNotRequestAnotherSnapshot() {
+        assertFalse(AdviceCapabilityPolicy.needsFreshSnapshot(null, false, false, true))
     }
 
     @Test

@@ -551,33 +551,52 @@ class MainActivity : ComponentActivity() {
                                             error = attachedRootBattery?.error
                                         )
                                     )
+                                    val cloudAdviceScope = AdviceCapabilityPolicy.cloudAdviceScope(
+                                        selectedLevel = effectiveLevel,
+                                        hasDeviceEvidence = includeAppReport || includeUsageReport ||
+                                            attachedPowerDiagnosticReport != null
+                                    )
                                     chatMessages = chatMessages + AgentConversationMessage(
-                                        role = MessageRole.USER, content = question, attachedReportLabel = attachedReportLabel, cloudProvider = requestedProvider
+                                        role = MessageRole.USER, content = question, attachedReportLabel = attachedReportLabel,
+                                        cloudProvider = requestedProvider, cloudAdviceScope = cloudAdviceScope
                                     )
                                     val generation = session.beginAnalysis(online = true)
                                     scope.launch {
                                         try {
+                                            val needsFreshSnapshot = AdviceCapabilityPolicy.needsFreshSnapshot(
+                                                selectedLevel = effectiveLevel,
+                                                includeAppReport = includeAppReport,
+                                                includeUsageReport = includeUsageReport,
+                                                includePowerDiagnosticReport = attachedPowerDiagnosticReport != null
+                                            )
                                             val requested = ApiSession.requireValid()
                                             if (requested.provider != requestedProvider) throw AgentFailureException(AgentFailure.PROVIDER_CHANGED)
-                                            val fresh = refreshSnapshot()
+                                            val fresh = if (needsFreshSnapshot) refreshSnapshot() else null
                                             val result = withContext(Dispatchers.IO) {
                                                 val credentials = ApiKeyStore.load(this@MainActivity, requested.provider)
                                                     ?: throw AgentFailureException(AgentFailure.EXPIRED_KEY)
                                                 CloudLlmProvider.analyze(
-                                                    context = fresh.toDeviceContext(),
+                                                    context = fresh?.toDeviceContext().takeIf { effectiveLevel != null },
                                                     userQuestion = question,
                                                     selectedLevel = effectiveLevel,
-                                                    levelReport = fresh.buildLevelReport(
-                                                        effectiveLevel, attachedRootBattery, attachedDeviceProfile, includeUsageReport
-                                                    ),
-                                                    appReport = fresh.buildAppReport().takeIf { includeAppReport },
+                                                    levelReport = effectiveLevel?.let { level ->
+                                                        checkNotNull(fresh).buildLevelReport(
+                                                            level, attachedRootBattery, attachedDeviceProfile, includeUsageReport
+                                                        )
+                                                    },
+                                                    appReport = fresh?.buildAppReport().takeIf { includeAppReport },
                                                     powerDiagnosticReport = attachedPowerDiagnosticReport,
                                                     conversationHistory = previousMessages,
                                                     credentials = credentials
                                                 )
                                             }
                                             session.appendAnalysisMessage(generation, AgentConversationMessage(
-                                                role = MessageRole.ASSISTANT, content = result.toChatContent(), source = result.source, cloudProvider = requestedProvider
+                                                role = MessageRole.ASSISTANT,
+                                                content = result.toChatContent(),
+                                                attachedReportLabel = attachedReportLabel,
+                                                source = result.source,
+                                                cloudProvider = requestedProvider,
+                                                cloudAdviceScope = cloudAdviceScope
                                             ))
                                         } catch (cancelled: CancellationException) {
                                             session.interruptAnalysis(generation)
@@ -1317,7 +1336,7 @@ fun AgentChatScreen(
     messages: List<AgentConversationMessage>,
     onAnalyze: (String, String, String?) -> Unit,
     isOnlineAnalyzing: Boolean,
-    onOnlineAnalyze: (String, String, Boolean, Boolean, String, String?) -> Unit,
+    onOnlineAnalyze: (String, String?, Boolean, Boolean, String, String?) -> Unit,
     onPreflightMessage: (String, String, String) -> Unit,
     onLocalEvidenceMessage: (String, String, String) -> Unit,
     onClearConversation: () -> Unit,
@@ -1355,12 +1374,12 @@ fun AgentChatScreen(
         rootAuthorized = rootAdviceAuthorized
     )
     val attachedReportLabel = listOfNotNull(
-        effectiveSelectedLevel.replace("Level ", "L"),
+        effectiveSelectedLevel?.replace("Level ", "L"),
         "应用".takeIf { includeAppReport && ApiSession.apiKey.isNotBlank() },
         "使用习惯".takeIf { includeUsageReport && effectiveSelectedLevel == "Level 0" && ApiSession.apiKey.isNotBlank() },
         "续航观察（本地）".takeIf { usableBatteryObservation != null },
         "系统耗电诊断".takeIf { includePowerDiagnosticReport && powerDiagnostic != null }
-    ).joinToString(" · ")
+    ).joinToString(" · ").ifBlank { "未附带报告" }
     val providerLabel = CloudProviderCatalog.find(ApiSession.provider)?.shortLabel ?: "未配置模型"
 
     LaunchedEffect(messages.size) {
@@ -1423,7 +1442,7 @@ fun AgentChatScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text("今天想了解手机什么？", style = androidx.compose.material3.MaterialTheme.typography.titleLarge)
-                        Text("选择报告并提问；我只会根据本次附带的数据回答。", color = colors.onSurfaceVariant)
+                        Text("不选报告可直接与云端 AI 聊天；选择报告后，我会根据本次附带的数据回答。", color = colors.onSurfaceVariant)
                         Column {
                             listOf("电池是否该换？", "为什么发热？", "今天耗电快吗？").forEach { question ->
                                 TextButton(onClick = { userMessage = question }) { Text(question) }
@@ -1481,7 +1500,14 @@ fun AgentChatScreen(
                     horizontalArrangement = Arrangement.Start
                 ) {
                     Card(modifier = Modifier.fillMaxWidth(0.9f)) {
-                        Text(text = "正在读取设备并分析…", modifier = Modifier.padding(12.dp))
+                        Text(
+                            text = if (attachedReportLabel == "未附带报告") {
+                                "正在请求云端模型…"
+                            } else {
+                                "正在读取设备并分析…"
+                            },
+                            modifier = Modifier.padding(12.dp)
+                        )
                     }
                 }
             }
@@ -1524,7 +1550,7 @@ fun AgentChatScreen(
                             rootAuthorized = rootAdviceAuthorized
                         )
                         Button(
-                            onClick = { selectedLevel = level },
+                            onClick = { selectedLevel = if (selectedLevel == level) null else level },
                             enabled = isAllowed,
                             modifier = Modifier.weight(1f)
                         ) {
@@ -1629,22 +1655,30 @@ fun AgentChatScreen(
                                     powerDiagnostic?.let {
                                         PowerDiagnosticReportBuilder.build(
                                             it,
-                                            includeAdvancedActions = effectiveSelectedLevel != "Level 0"
+                                            includeAdvancedActions = effectiveSelectedLevel?.let { level -> level != "Level 0" } == true
                                         )
                                     }
                                         .takeIf { includePowerDiagnosticReport }
                                 )
                             } else {
-                                onAnalyze(
-                                    message,
-                                    attachedReportLabel,
-                                    powerDiagnostic?.let {
-                                        PowerDiagnosticReportBuilder.build(
-                                            it,
-                                            includeAdvancedActions = effectiveSelectedLevel != "Level 0"
-                                        )
-                                    }.takeIf { includePowerDiagnosticReport }
-                                )
+                                if (effectiveSelectedLevel == null && !includePowerDiagnosticReport) {
+                                    onPreflightMessage(
+                                        message,
+                                        attachedReportLabel,
+                                        "未附带报告的自由聊天需要先在设置中配置云端模型。"
+                                    )
+                                } else {
+                                    onAnalyze(
+                                        message,
+                                        attachedReportLabel,
+                                        powerDiagnostic?.let {
+                                            PowerDiagnosticReportBuilder.build(
+                                                it,
+                                                includeAdvancedActions = effectiveSelectedLevel?.let { level -> level != "Level 0" } == true
+                                            )
+                                        }.takeIf { includePowerDiagnosticReport }
+                                    )
+                                }
                             }
                         }
                     },
@@ -1689,6 +1723,10 @@ fun SettingsPrivacyScreen(modifier: Modifier = Modifier) {
     ) {
         Text(text = "设置与隐私", style = androidx.compose.material3.MaterialTheme.typography.headlineMedium)
         Text(text = "APA ${BuildConfig.VERSION_NAME} · ${BuildConfig.BUILD_TYPE}")
+        Text(text = "Language")
+        Button(onClick = {}, enabled = false) {
+            Text(text = "English")
+        }
         Text(text = "模型服务", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
         CloudProviderCatalog.providers.forEach { option ->
             val optionHasKey = ApiKeyStore.load(context, option.name) != null
