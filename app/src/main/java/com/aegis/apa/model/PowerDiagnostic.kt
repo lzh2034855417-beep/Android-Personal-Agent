@@ -33,6 +33,7 @@ enum class PowerVerdictType { SUFFICIENT, INSUFFICIENT }
 data class RankedPowerCandidate(
     val uid: Int?,
     val packageNames: List<String>,
+    val displayNames: List<String> = emptyList(),
     val facts: List<String>,
     val confidence: DiagnosticConfidence,
     val maxAdviceLevel: AdviceLevel,
@@ -42,6 +43,35 @@ data class RankedPowerCandidate(
     val rollback: String? = null,
     val retest: String? = null
 )
+
+fun RankedPowerCandidate.userFacingName(): String {
+    if (packageNames.size > 1) {
+        val groupLabel = if (
+            (uid ?: Int.MAX_VALUE) < 10_000 ||
+            packageNames.any { it == "android" || it.startsWith("com.android.") || it.startsWith("com.miui.") }
+        ) {
+            "系统组件组"
+        } else {
+            "共享 UID 应用组"
+        }
+        val names = displayNames.ifEmpty { packageNames }
+        return "$groupLabel（${names.joinToString("、")}）"
+    }
+    val packageName = packageNames.firstOrNull()
+    val displayName = displayNames.firstOrNull()?.takeIf { it.isNotBlank() && it != packageName }
+    return when {
+        packageName != null && displayName != null -> "$displayName（$packageName）"
+        packageName != null -> packageName
+        else -> uid?.let { "UID $it" } ?: "未知应用"
+    }
+}
+
+fun RankedPowerCandidate.packageSummary(): String? = packageNames
+    .takeIf(List<String>::isNotEmpty)
+    ?.joinToString(prefix = "包名：")
+
+fun RankedPowerCandidate.packageCopyText(): String? = packageNames
+    .takeIf(List<String>::isNotEmpty)?.joinToString("\n")
 
 data class LocalPowerVerdict(
     val type: PowerVerdictType,

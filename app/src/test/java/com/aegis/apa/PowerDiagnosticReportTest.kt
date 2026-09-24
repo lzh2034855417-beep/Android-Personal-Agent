@@ -266,6 +266,72 @@ class PowerDiagnosticReportTest {
         assertFalse(report.contains("唤醒/闹钟计数最高"))
     }
 
+    @Test
+    fun reportShowsFriendlyAppNameBeforePackageName() {
+        val candidate = RankedPowerCandidate(
+            uid = 10123,
+            packageNames = listOf("com.tencent.mm"),
+            displayNames = listOf("微信"),
+            facts = listOf("系统估算耗电 315.0 mAh"),
+            confidence = DiagnosticConfidence.MEDIUM,
+            maxAdviceLevel = AdviceLevel.OBSERVE,
+            reason = "优先核对线索。"
+        )
+        val report = PowerDiagnosticReportBuilder.build(snapshotWithCandidates(listOf(candidate)))
+
+        assertTrue(report.contains("1. 微信（com.tencent.mm）"))
+        assertTrue(report.contains("包名：com.tencent.mm"))
+    }
+
+    @Test
+    fun sharedUidReportUsesFriendlyGroupNameWithoutPretendingItIsOneApp() {
+        val candidate = RankedPowerCandidate(
+            uid = 1000,
+            packageNames = listOf("android", "com.miui.powerkeeper", "com.miui.securitycenter"),
+            displayNames = listOf("Android 系统", "电量和性能", "手机管家"),
+            facts = listOf("系统估算耗电 62.7 mAh"),
+            confidence = DiagnosticConfidence.MEDIUM,
+            maxAdviceLevel = AdviceLevel.OBSERVE,
+            reason = "共享 UID，只能观察。"
+        )
+        val report = PowerDiagnosticReportBuilder.build(snapshotWithCandidates(listOf(candidate)))
+
+        assertTrue(report.contains("系统组件组（Android 系统、电量和性能、手机管家）"))
+        assertTrue(report.contains("包名：android, com.miui.powerkeeper, com.miui.securitycenter"))
+    }
+
+    @Test
+    fun unresolvedApplicationFallsBackToPackageName() {
+        val candidate = RankedPowerCandidate(
+            uid = 10123,
+            packageNames = listOf("com.example.unknown"),
+            facts = listOf("系统估算耗电 10.0 mAh"),
+            confidence = DiagnosticConfidence.LOW,
+            maxAdviceLevel = AdviceLevel.OBSERVE,
+            reason = "仅供观察。"
+        )
+        val report = PowerDiagnosticReportBuilder.build(snapshotWithCandidates(listOf(candidate)))
+
+        assertTrue(report.contains("1. com.example.unknown"))
+    }
+
+    private fun snapshotWithCandidates(candidates: List<RankedPowerCandidate>) = PowerDiagnosticSnapshot(
+        sampledAtInstant = Instant.EPOCH,
+        collectionDurationMillis = 50,
+        sources = emptyMap(),
+        apps = emptyList(),
+        system = SystemPowerEvidence(),
+        findings = emptyList(),
+        inputSource = DiagnosticInputSource.BUGREPORT,
+        localVerdict = LocalPowerVerdict(
+            type = PowerVerdictType.SUFFICIENT,
+            totalConsumption = candidates,
+            backgroundSuspects = emptyList(),
+            nextStep = null,
+            limits = emptyList()
+        )
+    )
+
     private fun sampleSnapshot(title: String = "微信可能频繁唤醒系统") = PowerDiagnosticSnapshot(
         sampledAtInstant = Instant.parse("2026-09-11T00:00:00Z"),
         collectionDurationMillis = 1_500,

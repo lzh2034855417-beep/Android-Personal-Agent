@@ -8,6 +8,7 @@ import com.aegis.apa.model.LocalPowerVerdict
 import com.aegis.apa.model.PowerDiagnosticSnapshot
 import com.aegis.apa.model.PowerVerdictType
 import com.aegis.apa.model.RankedPowerCandidate
+import com.aegis.apa.model.userFacingName
 import java.util.Locale
 
 object PowerDiagnosticReportBuilder {
@@ -144,7 +145,7 @@ object PowerDiagnosticReportBuilder {
         includeActions: Boolean,
         includeAdvancedActions: Boolean = true
     ) {
-        val name = candidate.packageNames.firstOrNull() ?: candidate.uid?.let { "UID $it" } ?: "未知应用"
+        val name = candidate.userFacingName()
         appendLine("${index + 1}. $name")
         if (candidate.packageNames.isNotEmpty()) appendLine("包名：${candidate.packageNames.joinToString()}")
         appendLine("事实：${candidate.facts.joinToString("；")}")

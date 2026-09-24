@@ -84,6 +84,7 @@ object LocalPowerAttributionEngine {
         return RankedPowerCandidate(
             uid = app.uid,
             packageNames = app.packageNames,
+            displayNames = app.displayNames,
             facts = listOf("系统估算耗电 ${formatMah(power)} mAh"),
             confidence = DiagnosticConfidence.LOW,
             maxAdviceLevel = AdviceLevel.OBSERVE,
@@ -114,6 +115,7 @@ object LocalPowerAttributionEngine {
         return RankedPowerCandidate(
             uid = app.uid,
             packageNames = app.packageNames,
+            displayNames = app.displayNames,
             facts = facts,
             confidence = if (totalPower != null) DiagnosticConfidence.MEDIUM else DiagnosticConfidence.LOW,
             maxAdviceLevel = AdviceLevel.OBSERVE,
@@ -168,6 +170,7 @@ object LocalPowerAttributionEngine {
         return RankedPowerCandidate(
             uid = app.uid,
             packageNames = app.packageNames,
+            displayNames = app.displayNames,
             facts = signals,
             confidence = confidence,
             maxAdviceLevel = level,
@@ -193,6 +196,7 @@ object LocalPowerAttributionEngine {
         return RankedPowerCandidate(
             uid = app.uid,
             packageNames = app.packageNames,
+            displayNames = app.displayNames,
             facts = facts,
             confidence = DiagnosticConfidence.LOW,
             maxAdviceLevel = AdviceLevel.OBSERVE,

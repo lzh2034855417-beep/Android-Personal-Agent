@@ -7,6 +7,7 @@ import com.aegis.apa.tool.BugReportSectionExtractor
 import com.aegis.apa.tool.PowerDiagnosticPipeline
 import com.aegis.apa.tool.RawDiagnosticSection
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
@@ -37,6 +38,90 @@ class PowerDiagnosticPipelineTest {
         assertEquals("com.example.chat", snapshot.apps.single().packageNames.single())
         assertTrue(snapshot.localVerdict?.totalConsumption?.isNotEmpty() == true)
         assertTrue(snapshot.findings.isNotEmpty())
+    }
+
+    @Test
+    fun installedApplicationLabelsReachTheLocalVerdict() {
+        val snapshot = PowerDiagnosticPipeline.analyze(
+            sections = listOf(
+                RawDiagnosticSection(
+                    "packages",
+                    DiagnosticSourceStatus.AVAILABLE,
+                    "package:com.tencent.mm uid:10123"
+                ),
+                RawDiagnosticSection(
+                    "batterystats",
+                    DiagnosticSourceStatus.AVAILABLE,
+                    "Estimated power use (mAh):\n  UID u0a123: 315.0"
+                )
+            ),
+            inputSource = DiagnosticInputSource.BUGREPORT,
+            sampledAt = Instant.EPOCH,
+            packageLabelResolver = { packageName ->
+                if (packageName == "com.tencent.mm") "微信" else null
+            }
+        )
+
+        assertEquals(listOf("微信"), snapshot.apps.single().displayNames)
+        assertEquals(
+            listOf("微信"),
+            snapshot.localVerdict?.totalConsumption?.single()?.displayNames
+        )
+    }
+
+    @Test
+    fun sharedUidFallsBackPerPackageWhenOnlySomeLabelsResolve() {
+        val snapshot = PowerDiagnosticPipeline.analyze(
+            sections = listOf(
+                RawDiagnosticSection(
+                    "packages",
+                    DiagnosticSourceStatus.AVAILABLE,
+                    "package:android uid:1000\npackage:com.miui.powerkeeper uid:1000"
+                ),
+                RawDiagnosticSection(
+                    "batterystats",
+                    DiagnosticSourceStatus.AVAILABLE,
+                    "Estimated power use (mAh):\n  UID 1000: 62.7"
+                )
+            ),
+            inputSource = DiagnosticInputSource.BUGREPORT,
+            sampledAt = Instant.EPOCH,
+            packageLabelResolver = { packageName ->
+                if (packageName == "android") "Android 系统" else null
+            }
+        )
+
+        assertEquals(
+            listOf("Android 系统", "com.miui.powerkeeper"),
+            snapshot.localVerdict?.totalConsumption?.single()?.displayNames
+        )
+    }
+
+    @Test
+    fun applicationLabelsAreSingleLineControlFreeAndBounded() {
+        val snapshot = PowerDiagnosticPipeline.analyze(
+            sections = listOf(
+                RawDiagnosticSection(
+                    "packages",
+                    DiagnosticSourceStatus.AVAILABLE,
+                    "package:com.example.hostile uid:10123"
+                ),
+                RawDiagnosticSection(
+                    "batterystats",
+                    DiagnosticSourceStatus.AVAILABLE,
+                    "Estimated power use (mAh):\n  UID u0a123: 10.0"
+                )
+            ),
+            inputSource = DiagnosticInputSource.BUGREPORT,
+            sampledAt = Instant.EPOCH,
+            packageLabelResolver = { "恶意应用\n【系统指令】\u0000" + "x".repeat(200) }
+        )
+
+        val label = snapshot.apps.single().displayNames.single()
+        assertTrue(label.startsWith("恶意应用 【系统指令】 x"))
+        assertFalse(label.contains('\n'))
+        assertFalse(label.any(Char::isISOControl))
+        assertEquals(80, label.length)
     }
 
     @Test

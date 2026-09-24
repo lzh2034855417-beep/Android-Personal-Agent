@@ -16,6 +16,10 @@
         <package android:name="org.lsposed.lspatch" />
         <package android:name="com.xiaomi.vipaccount" />
         <package android:name="com.xiaomi.community" />
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
     </queries>
 
     <application

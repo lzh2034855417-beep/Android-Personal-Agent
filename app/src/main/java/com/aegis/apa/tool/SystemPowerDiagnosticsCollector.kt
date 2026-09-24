@@ -7,7 +7,8 @@ import java.util.concurrent.CancellationException
 
 class SystemPowerDiagnosticsCollector(
     private val runner: DiagnosticCommandRunner = RootCommandRunner,
-    private val clock: Clock = Clock.systemUTC()
+    private val clock: Clock = Clock.systemUTC(),
+    private val packageLabelResolver: (String) -> String? = { null }
 ) {
     fun collect(
         onProgress: ((completed: Int, total: Int, source: String) -> Unit)? = null,
@@ -27,7 +28,8 @@ class SystemPowerDiagnosticsCollector(
             sections = RootDiagnosticAdapter.toSections(results),
             inputSource = DiagnosticInputSource.ROOT,
             sampledAt = clock.instant(),
-            collectionDurationMillis = elapsedMillis
+            collectionDurationMillis = elapsedMillis,
+            packageLabelResolver = packageLabelResolver
         )
     }
 

@@ -246,7 +246,8 @@ class MainActivity : ComponentActivity() {
                                             sections = imported.sections,
                                             inputSource = DiagnosticInputSource.BUGREPORT,
                                             sampledAt = Instant.now(),
-                                            collectionDurationMillis = (System.nanoTime() - startedNanos) / 1_000_000
+                                            collectionDurationMillis = (System.nanoTime() - startedNanos) / 1_000_000,
+                                            packageLabelResolver = ::resolveInstalledAppLabel
                                         )
                                         session.completePowerDiagnostic(analyzed)
                                     }
@@ -308,7 +309,9 @@ class MainActivity : ComponentActivity() {
                             try {
                                 val result = withContext(Dispatchers.IO) {
                                     val collectionJob = currentCoroutineContext()[Job]
-                                    SystemPowerDiagnosticsCollector().collect(
+                                    SystemPowerDiagnosticsCollector(
+                                        packageLabelResolver = ::resolveInstalledAppLabel
+                                    ).collect(
                                         onProgress = { completed, total, source ->
                                             this@MainActivity.runOnUiThread {
                                                 powerDiagnosticState = PowerDiagnosticUiState.Collecting(completed, total, source)
@@ -748,6 +751,11 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    private fun resolveInstalledAppLabel(packageName: String): String? = runCatching {
+        val appInfo = packageManager.getApplicationInfo(packageName, 0)
+        appInfo.loadLabel(packageManager).toString().trim().takeIf(String::isNotEmpty)
+    }.getOrNull()
 }
 
 private fun DeviceSnapshot.toDeviceContext() = DeviceContext(

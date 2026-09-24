@@ -28,6 +28,9 @@ import com.aegis.apa.model.DiagnosticSourceStatus
 import com.aegis.apa.model.PowerDiagnosticSnapshot
 import com.aegis.apa.model.RankedPowerCandidate
 import com.aegis.apa.model.SampleTime
+import com.aegis.apa.model.packageCopyText
+import com.aegis.apa.model.packageSummary
+import com.aegis.apa.model.userFacingName
 
 @Composable
 fun PowerDiagnosticPanel(
@@ -235,10 +238,13 @@ private fun PowerCandidateCard(
     showAction: Boolean,
     onCopyPackage: (String) -> Unit
 ) {
-    val name = candidate.packageNames.firstOrNull() ?: candidate.uid?.let { "UID $it" } ?: "未知应用"
+    val name = candidate.userFacingName()
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(name, style = MaterialTheme.typography.titleSmall)
+            candidate.packageSummary()?.let { summary ->
+                Text(summary, style = MaterialTheme.typography.bodySmall)
+            }
             Text("事实：${candidate.facts.joinToString("；")}")
             Text("解释：${candidate.reason}")
             Text("置信度：${candidate.confidence.label()} · 最高建议：${candidate.maxAdviceLevel.label()}")
@@ -248,8 +254,10 @@ private fun PowerCandidateCard(
                 candidate.rollback?.let { Text("回退：$it", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 candidate.retest?.let { Text("复测：$it", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
-            candidate.packageNames.firstOrNull()?.let { packageName ->
-                TextButton(onClick = { onCopyPackage(packageName) }) { Text("复制包名 $packageName") }
+            candidate.packageCopyText()?.let { copyText ->
+                TextButton(onClick = { onCopyPackage(copyText) }) {
+                    Text(if (candidate.packageNames.size > 1) "复制全部包名" else "复制包名 $copyText")
+                }
             }
         }
     }
