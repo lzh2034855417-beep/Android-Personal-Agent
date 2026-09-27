@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### Repository
+
+- 新增不读取发布密钥的 GitHub Actions 验证、结构化 Bug/功能请求表单、PR 模板、贡献指南、安全政策和文档索引。
+- README 增加 CI、版本、Android 与许可证状态，以及最新版 APK 入口；仓库元数据改为与当前只读诊断能力一致。
+
 ## [0.2.0] - 2026-09-27
 
 ### Agent trust gates

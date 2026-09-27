@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: General feedback and discussion / 综合反馈与讨论
+    url: https://github.com/lzh2034855417-beep/Android-Personal-Agent/issues/2
+    about: Share general experience or device compatibility results that are not a specific bug or feature request.

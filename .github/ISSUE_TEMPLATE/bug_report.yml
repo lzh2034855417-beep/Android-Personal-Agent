@@ -1,0 +1,93 @@
+name: Bug report
+description: Report a reproducible problem in APA
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。请勿上传 API Key、完整 Bug Report、完整 Root 输出、账号信息、序列号或其他唯一设备标识。
+
+        Thank you for reporting a problem. Do not upload API keys, full Bug Reports, raw Root output, account details, serial numbers, or other unique device identifiers.
+
+  - type: input
+    id: version
+    attributes:
+      label: APA version and build type
+      description: Example — 0.2.0 Release or 0.2.1-preview Debug
+      placeholder: 0.2.0 Release
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Device and Android version
+      description: Include the public model name, Android/API level and OEM system version.
+      placeholder: Redmi K60 Pro, Android 16 / HyperOS 3
+    validations:
+      required: true
+
+  - type: dropdown
+    id: capability
+    attributes:
+      label: Capability involved
+      options:
+        - Level 0 / ordinary Android APIs
+        - Usage Access
+        - Bug Report import
+        - Root / KernelSU / Magisk
+        - Shizuku detection or navigation
+        - Model provider / online analysis
+        - UI, sharing or other
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: List the smallest sequence that consistently reproduces the problem.
+      placeholder: |
+        1. Open ...
+        2. Tap ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Add only redacted screenshots or the smallest safe log excerpt needed to understand the problem.
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I checked that this report contains no key, account data, raw system report, raw Root output or unique device identifier.
+          required: true
+
+  - type: checkboxes
+    id: duplicate
+    attributes:
+      label: Duplicate check
+      options:
+        - label: I searched existing issues and did not find the same problem.
+          required: true
