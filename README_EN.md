@@ -4,7 +4,7 @@ An experimental Android app that explains battery, heat and resource readings us
 
 [中文](README.md) · [Roadmap](ROADMAP.md) · [Architecture audit](docs/ARCHITECTURE.md) · [Data contract](docs/DATA_MODEL.md) · [Technical debt](docs/TECH_DEBT.md) · [Testing](docs/TESTING.md)
 
-> The current development source is `0.2.0-preview` and has not been released. The latest stable release remains `0.1.2`; download its APK and read the release notes on [GitHub Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases).
+> The current stable release is `0.2.0`. Download the APK and read its release notes on [GitHub Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases).
 
 ## Features
 

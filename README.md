@@ -4,7 +4,7 @@
 
 [English](README_EN.md) · [路线图](ROADMAP.md) · [架构审计](docs/ARCHITECTURE.md) · [数据规范](docs/DATA_MODEL.md) · [技术债](docs/TECH_DEBT.md) · [测试](docs/TESTING.md)
 
-> 当前开发源码为 `0.2.0-preview`，尚未发布；最新稳定版仍为 `0.1.2`。下载 APK 和查看对应更新说明，请前往 [GitHub Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases)。
+> 当前稳定版为 `0.2.0`。下载 APK 和查看对应更新说明，请前往 [GitHub Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases)。
 
 ## 能做什么
 
