@@ -2,7 +2,12 @@
 
 An experimental Android app that explains battery, heat and resource readings using data the phone actually provides.
 
-[中文](README.md) · [Roadmap](ROADMAP.md) · [Architecture audit](docs/ARCHITECTURE.md) · [Data contract](docs/DATA_MODEL.md) · [Technical debt](docs/TECH_DEBT.md) · [Testing](docs/TESTING.md)
+[![Android CI](https://github.com/lzh2034855417-beep/Android-Personal-Agent/actions/workflows/android-ci.yml/badge.svg)](https://github.com/lzh2034855417-beep/Android-Personal-Agent/actions/workflows/android-ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/lzh2034855417-beep/Android-Personal-Agent)](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases/latest)
+[![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)](#build-and-test)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+[Download the latest APK](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases/latest) · [中文](README.md) · [Documentation](docs/README.md) · [Roadmap](ROADMAP.md) · [Architecture audit](docs/ARCHITECTURE.md) · [Data contract](docs/DATA_MODEL.md) · [Technical debt](docs/TECH_DEBT.md) · [Testing](docs/TESTING.md)
 
 > The current stable release is `0.2.0`. Download the APK and read its release notes on [GitHub Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases).
 

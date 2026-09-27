@@ -2,7 +2,12 @@
 
 用手机实际提供的数据，解释电池、发热和资源状态的 Android 开源实验项目。
 
-[English](README_EN.md) · [路线图](ROADMAP.md) · [架构审计](docs/ARCHITECTURE.md) · [数据规范](docs/DATA_MODEL.md) · [技术债](docs/TECH_DEBT.md) · [测试](docs/TESTING.md)
+[![Android CI](https://github.com/lzh2034855417-beep/Android-Personal-Agent/actions/workflows/android-ci.yml/badge.svg)](https://github.com/lzh2034855417-beep/Android-Personal-Agent/actions/workflows/android-ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/lzh2034855417-beep/Android-Personal-Agent)](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases/latest)
+[![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)](#开发与验证)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+[下载最新版 APK](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases/latest) · [English](README_EN.md) · [文档索引](docs/README.md) · [路线图](ROADMAP.md) · [架构审计](docs/ARCHITECTURE.md) · [数据规范](docs/DATA_MODEL.md) · [技术债](docs/TECH_DEBT.md) · [测试](docs/TESTING.md)
 
 > 当前稳定版为 `0.2.0`。下载 APK 和查看对应更新说明，请前往 [GitHub Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases)。
 
