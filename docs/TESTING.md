@@ -1,5 +1,17 @@
 # 测试与验证记录
 
+## v0.2.0 正式发布验证（2026-09-27）
+
+- 发布范围固定为 `v0.2.0-rc1` 的源码，加上稳定版 Changelog 与 README 元数据；不包含后续 Root 可靠性、友好应用名称或硬件评分开发。
+- `testDebugUnitTest` 共 **243 项，0 failure、0 error、0 skipped**；`lintDebug` 与 `lintRelease` 各 0 错误、25 个非阻断警告。
+- `assembleDebug`、`assembleDebugAndroidTest` 与 `assembleRelease` 均成功；本轮没有运行 `connectedDebugAndroidTest`，不得把测试 APK 编译成功表述为本轮真机自动化通过。
+- 签名 Release APK：`APA-v0.2.0-release.apk`，包名 `com.aegis.apa`，`versionCode 4`，`versionName 0.2.0`。
+- `apksigner verify` 通过：APK Signature Scheme v2、1 个签名者；签名证书 SHA-256 与 GitHub `v0.1.2` Release APK 一致，可覆盖升级。
+- APK SHA-256：`4447EB0A785A57028AEBF6D56AA6820B9610DD45B17B6D965F4671ED54BB0685`。
+- 本轮未调用真实模型服务。TD-02 的 OEM 备份/迁移实测和 TD-03 的仓库 CI/无人干预 UI 自动化仍未关闭；维护者接受这些已披露的兼容与流程风险，不把它们表述为已验证能力。
+
+下文按日期保留开发期验证记录；若构建产物、警告数量或发布状态与本节冲突，以本节的正式发布验证为准。
+
 审计日期：2026-09-16，实机记录核对至 2026-09-10。本次未发布、未覆盖手机正式版、未调用真实模型服务；经用户授权在手机安装独立 Preview 执行测试。
 
 ## 上机前可信度门控（2026-09-16，当前开发代码）
@@ -134,6 +146,6 @@ $env:ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"
 
 报告路径：`app/build/reports/tests/testDebugUnitTest/index.html`、`app/build/test-results/testDebugUnitTest/`、`app/build/reports/lint-results-debug.html` 和 `lint-results-release.html`。生成报告不提交 Git。
 
-## 发布前门槛
+## 通用发布检查
 
-关闭 [TECH_DEBT](TECH_DEBT.md) 的 P1 项；完成独立设备/权限/配置变更测试；递增版本；用发布密钥生成 APK/AAB；验证签名和 SHA-256；记录实际模型服务验证范围；对照发行标签更新 README/CHANGELOG。不把本轮预览 APK 当作已审定的下一公开版本。
+每次发布都必须逐项评估 [TECH_DEBT](TECH_DEBT.md) 的 P1 风险，完成与声明支持范围相称的设备/权限/配置变更测试，递增版本，用发布密钥生成 APK/AAB，验证签名和 SHA-256，记录实际模型服务验证范围，并对照发行标签更新 README/CHANGELOG。未关闭项必须在测试记录或发布说明中披露并由维护者明确接受，不能把预览构建或未测能力包装成已验证结果。v0.2.0 的具体决定与残余风险见本文件顶部正式发布验证。

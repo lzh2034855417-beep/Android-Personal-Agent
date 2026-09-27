@@ -22,7 +22,7 @@
 - 将“掉电速度”和“应用归因”彻底分流：有效观察可本地回答速度，定位具体应用仍要求系统 Bug Report 或 Root 只读诊断；续航观察不会自动发往云端模型。
 - 续航结果按观察时长和电量跨度标注“粗略 / 较稳定 / 稳定”，并给出待机异常与亮屏高负载两种不同的下一步，不把短测量包装成精确结论。
 - 在导入入口内增加可折叠的系统报告生成步骤，分别说明部分小米拨号码和标准 Android 开发者选项路径，并在选择文件前提示 Bug Report 的敏感数据风险。
-- 提高真实 Bug Report 兼容性：跳过 FS、systrace 等无关附件，只读取主 `bugreport-*.txt`；支持 Android 9+ 带 CRITICAL/HIGH/NORMAL 优先级的服务段落、旧式 ZIP MIME 和用户重命名的 ZIP/TXT，并将主报告上限提高到 64 MiB。
+- 提高真实 Bug Report 兼容性：跳过 FS、systrace 等无关附件，只读取主 `bugreport-*.txt`；支持 Android 9+ 带 CRITICAL/HIGH/NORMAL 优先级的服务段落、旧式 ZIP MIME 和用户重命名的 ZIP/TXT。主报告读取预算为 192 MiB，仅保留有独立限长的耗电白名单段落。
 - 对齐 AOSP 实际诊断文本：识别 `Uid/UID` 耗电行、`dumpsys package` 的 Package/userId/appId 块和 Alarm Stats 的包级嵌套计数；读取 CPU 的 `fg/bg/fgs` 状态时长，帮助区分前台使用成本与后台活动，并支持工作资料 UID 映射。
 - 损坏报告中的超长 UID、时长或累计计数不再导致解析崩溃或整数回绕；无法安全表示的数据会被当作无效证据丢弃。
 - 成功导入系统 Bug Report 或完成 Root 只读诊断后，自动为下一次提问附加限长诊断摘要；界面明确说明原始报告不发送，并允许用户取消。
