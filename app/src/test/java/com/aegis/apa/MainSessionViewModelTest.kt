@@ -12,6 +12,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MainSessionViewModelTest {
+    @Test fun everyConversationMutationQueuesItsCurrentSnapshotIncludingClear() {
+        val session = MainSessionViewModel()
+        val snapshots = mutableListOf<List<AgentConversationMessage>>()
+        session.messages.onChanged = { snapshots += it }
+        session.messages.value = listOf(AgentConversationMessage(MessageRole.USER, "question"))
+        val generation = session.beginAnalysis()
+        session.appendAnalysisMessage(generation, AgentConversationMessage(MessageRole.ASSISTANT, "answer"))
+        session.messages.value = emptyList()
+        assertEquals(listOf(1, 2, 0), snapshots.map { it.size })
+    }
     @Test fun englishBatteryObservationNoticesAndInterruptionStayEnglish() {
         val session = MainSessionViewModel()
         session.setLanguage(AppLanguage.EN)

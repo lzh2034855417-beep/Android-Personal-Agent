@@ -177,6 +177,7 @@ class MainActivity : ComponentActivity() {
             persistedObservation?.chargingObserved ?: false
         )
         val apaApplication = application as ApaApplication
+        session.initializeConversation(apaApplication.conversationPersistence)
         if (apaApplication.chargingEvidenceWriteFailed && session.batteryObservationStart.value != null) {
             session.markBatteryObservationChargingObserved()
             session.batteryObservationNotice.value =
@@ -230,6 +231,13 @@ class MainActivity : ComponentActivity() {
                 var importedHardwareSupplyInfo by session.hardwareSupplyInfo
                 var chatMessages by session.messages
                 var isOnlineAnalyzing by session.analyzing
+                var analysisJob by remember { mutableStateOf<Job?>(null) }
+                var activeRequest by remember { mutableStateOf<com.aegis.apa.agent.CloudRequestCancellation?>(null) }
+                val stopAnalysis: () -> Unit = {
+                    session.interruptAnalysis()
+                    activeRequest?.cancel()
+                    analysisJob?.cancel()
+                }
                 var powerDiagnostic by session.powerDiagnostic
                 var powerDiagnosticState by session.powerDiagnosticState
                 var batteryObservationStart by session.batteryObservationStart
@@ -347,7 +355,7 @@ class MainActivity : ComponentActivity() {
                 }
                 DisposableEffect(session) {
                     onDispose {
-                        session.interruptAnalysis()
+                        stopAnalysis()
                         if (
                             session.powerDiagnosticState.value is PowerDiagnosticUiState.Collecting ||
                             session.powerDiagnosticState.value == PowerDiagnosticUiState.Importing
@@ -646,7 +654,8 @@ class MainActivity : ComponentActivity() {
                                         role = MessageRole.USER, content = question, attachedReportLabel = attachedReportLabel
                                     )
                                     val generation = session.beginAnalysis()
-                                    scope.launch {
+                                    activeRequest = null
+                                    analysisJob = scope.launch {
                                         try {
                                             val fresh = refreshSnapshot()
                                             val report = LocalDeviceAnalyzer.analyze(fresh.toDeviceContext(), appLanguage)
@@ -676,6 +685,12 @@ class MainActivity : ComponentActivity() {
                                     }
                                 },
                                 isOnlineAnalyzing = isOnlineAnalyzing,
+                                conversationLoading = session.conversationLoading.value,
+                                conversationStorageError = session.conversationStorageError.value,
+                                conversationSaving = session.conversationSaving.value,
+                                conversationExpired = session.conversationExpired.value,
+                                onStopAnalysis = stopAnalysis,
+                                onPrepareRetry = { chatMessages = com.aegis.apa.agent.AgentRetryPolicy.beforeRetry(chatMessages) },
                                 onOnlineAnalyze = { question, selectedLevel, includeAppReport, includeUsageReport, attachedReportLabel, attachedPowerDiagnosticReport ->
                                     val previousMessages = chatMessages
                                     val requestedProvider = ApiSession.provider
@@ -696,7 +711,11 @@ class MainActivity : ComponentActivity() {
                                         cloudProvider = requestedProvider, cloudAdviceScope = cloudAdviceScope
                                     )
                                     val generation = session.beginAnalysis(online = true)
-                                    scope.launch {
+                                    val cancellation = com.aegis.apa.agent.CloudRequestCancellation { close ->
+                                        apaApplication.requestCleanupScope.launch { close() }
+                                    }
+                                    activeRequest = cancellation
+                                    analysisJob = scope.launch {
                                         try {
                                             val needsFreshSnapshot = AdviceCapabilityPolicy.needsFreshSnapshot(
                                                 selectedLevel = effectiveLevel,
@@ -728,7 +747,8 @@ class MainActivity : ComponentActivity() {
                                                     powerDiagnosticReport = attachedPowerDiagnosticReport,
                                                     conversationHistory = previousMessages,
                                                     credentials = credentials,
-                                                    language = appLanguage
+                                                    language = appLanguage,
+                                                    cancellation = cancellation
                                                 )
                                             }
                                             session.appendAnalysisMessage(generation, AgentConversationMessage(
@@ -777,7 +797,7 @@ class MainActivity : ComponentActivity() {
                                         )
                                     )
                                 },
-                                onClearConversation = { chatMessages = emptyList() },
+                                onClearConversation = { session.clearConversation() },
                                 onOpenSettings = { selectedPage = 4 },
                                 powerDiagnosticState = powerDiagnosticState,
                                 powerDiagnostic = powerDiagnostic,
@@ -1582,7 +1602,13 @@ fun AgentChatScreen(
     onRemovePowerDiagnostic: () -> Unit,
     onCopyPackage: (String) -> Unit,
     onCopyMessage: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    conversationLoading: Boolean = false,
+    conversationStorageError: Boolean = false,
+    conversationSaving: Boolean = false,
+    conversationExpired: Boolean = false,
+    onStopAnalysis: () -> Unit = {},
+    onPrepareRetry: () -> Unit = {}
 ) {
     val appLanguage = LocalAppLanguage.current
     var selectedLevel by state.selectedLevel
@@ -1609,6 +1635,38 @@ fun AgentChatScreen(
     ).joinToString(" · ").ifBlank { if (appLanguage == AppLanguage.EN) "No report attached" else "未附带报告" }
     val providerLabel = CloudProviderCatalog.find(ApiSession.provider)?.shortLabel
         ?: if (appLanguage == AppLanguage.EN) "No model configured" else "未配置模型"
+
+    fun submitQuestion(message: String) {
+        if (message.isBlank() || isOnlineAnalyzing || conversationLoading) return
+        userMessage = ""
+        val blockingMessage = PowerAnalysisPreflight.blockingMessage(
+            question = message,
+            diagnosticAvailable = powerDiagnostic != null,
+            diagnosticSelected = includePowerDiagnosticReport,
+            observationAvailable = usableBatteryObservation != null,
+            language = appLanguage
+        )
+        val diagnostic = powerDiagnostic?.let {
+            PowerDiagnosticReportBuilder.build(
+                it,
+                includeAdvancedActions = effectiveSelectedLevel?.let { level -> level != "Level 0" } == true,
+                language = appLanguage
+            )
+        }.takeIf { includePowerDiagnosticReport }
+        when {
+            blockingMessage != null -> onPreflightMessage(message, attachedReportLabel, blockingMessage)
+            PowerAnalysisPreflight.classify(message) == PowerQuestionIntent.DRAIN_RATE && usableBatteryObservation != null ->
+                onLocalEvidenceMessage(message, attachedReportLabel, BatteryObservationReportBuilder.build(usableBatteryObservation, appLanguage))
+            CloudProviderCatalog.find(ApiSession.provider) != null && ApiSession.apiKey.isNotBlank() ->
+                onOnlineAnalyze(message, effectiveSelectedLevel, includeAppReport,
+                    includeUsageReport && effectiveSelectedLevel == "Level 0", attachedReportLabel, diagnostic)
+            effectiveSelectedLevel == null && !includePowerDiagnosticReport ->
+                onPreflightMessage(message, attachedReportLabel,
+                    if (appLanguage == AppLanguage.EN) "Configure a cloud model in Settings to chat without reports."
+                    else "未附带报告的自由聊天需要先在设置中配置云端模型。")
+            else -> onAnalyze(message, attachedReportLabel, diagnostic)
+        }
+    }
 
     LaunchedEffect(messages.size) {
         if (state.lastAutoScrollMessageCount != messages.size) {
@@ -1648,9 +1706,44 @@ fun AgentChatScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(
                         onClick = onClearConversation,
-                        enabled = messages.isNotEmpty() && !isOnlineAnalyzing
+                        enabled = (messages.isNotEmpty() || conversationStorageError) && !isOnlineAnalyzing && !conversationLoading && !conversationSaving
                     ) { Text(stringResource(R.string.agent_clear)) }
                     TextButton(onClick = onOpenSettings) { Text(stringResource(R.string.common_settings)) }
+                }
+            }
+        }
+
+        Text(
+            text = when {
+                conversationLoading -> if (appLanguage == AppLanguage.EN) "Restoring conversation…" else "正在恢复对话…"
+                conversationSaving -> if (appLanguage == AppLanguage.EN) "Saving conversation…" else "正在保存对话…"
+                conversationStorageError -> if (appLanguage == AppLanguage.EN) "History could not be read or saved. Clear it to remove the local archive."
+                    else "对话读取或保存失败。可清空对话以删除本机归档。"
+                conversationExpired -> if (appLanguage == AppLanguage.EN) "The previous conversation expired after 7 days and was deleted."
+                    else "上次对话已满 7 天，过期记录已删除。"
+                else -> if (appLanguage == AppLanguage.EN) "Chat may contain device details. It is encrypted locally for 7 days; Clear deletes it."
+                    else "对话可能含设备信息，在本机加密保留 7 天；清空后删除。"
+            },
+            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+            color = if (conversationStorageError) colors.error else colors.onSurfaceVariant
+        )
+        val retryQuestion = com.aegis.apa.agent.AgentRetryPolicy.question(messages)
+        if (isOnlineAnalyzing || retryQuestion != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isOnlineAnalyzing) {
+                    TextButton(onClick = onStopAnalysis) {
+                        Text(if (appLanguage == AppLanguage.EN) "Stop" else "停止")
+                    }
+                } else if (retryQuestion != null) {
+                    TextButton(
+                        enabled = !conversationLoading,
+                        onClick = { onPrepareRetry(); submitQuestion(retryQuestion) }
+                    ) { Text(if (appLanguage == AppLanguage.EN) "Retry" else "重试") }
+                    Text(
+                        if (appLanguage == AppLanguage.EN) "Uses current reports; sends a new request."
+                        else "按当前报告重试，将重新发送请求。",
+                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall
+                    )
                 }
             }
         }
@@ -1863,72 +1956,12 @@ fun AgentChatScreen(
                     onValueChange = { userMessage = it },
                     label = { Text(text = stringResource(R.string.ask_your_device)) },
                     modifier = Modifier.weight(1f),
-                    enabled = !isOnlineAnalyzing,
+                    enabled = !isOnlineAnalyzing && !conversationLoading,
                     maxLines = 4
                 )
                 Button(
-                    onClick = {
-                        val message = userMessage.trim()
-                        if (message.isNotEmpty()) {
-                            userMessage = ""
-                            val blockingMessage = PowerAnalysisPreflight.blockingMessage(
-                                question = message,
-                                diagnosticAvailable = powerDiagnostic != null,
-                                diagnosticSelected = includePowerDiagnosticReport,
-                                observationAvailable = usableBatteryObservation != null,
-                                language = appLanguage
-                            )
-                            if (blockingMessage != null) {
-                                onPreflightMessage(message, attachedReportLabel, blockingMessage)
-                            } else if (
-                                PowerAnalysisPreflight.classify(message) == PowerQuestionIntent.DRAIN_RATE &&
-                                usableBatteryObservation != null
-                            ) {
-                                onLocalEvidenceMessage(
-                                    message,
-                                    attachedReportLabel,
-                                    BatteryObservationReportBuilder.build(usableBatteryObservation, appLanguage)
-                                )
-                            } else if (CloudProviderCatalog.find(ApiSession.provider) != null && ApiSession.apiKey.isNotBlank()) {
-                                onOnlineAnalyze(
-                                    message,
-                                    effectiveSelectedLevel,
-                                    includeAppReport,
-                                    includeUsageReport && effectiveSelectedLevel == "Level 0",
-                                    attachedReportLabel,
-                                    powerDiagnostic?.let {
-                                        PowerDiagnosticReportBuilder.build(
-                                            it,
-                                            includeAdvancedActions = effectiveSelectedLevel?.let { level -> level != "Level 0" } == true,
-                                            language = appLanguage
-                                        )
-                                    }
-                                        .takeIf { includePowerDiagnosticReport }
-                                )
-                            } else {
-                                if (effectiveSelectedLevel == null && !includePowerDiagnosticReport) {
-                                    onPreflightMessage(
-                                        message,
-                                        attachedReportLabel,
-                                        "未附带报告的自由聊天需要先在设置中配置云端模型。"
-                                    )
-                                } else {
-                                    onAnalyze(
-                                        message,
-                                        attachedReportLabel,
-                                        powerDiagnostic?.let {
-                                            PowerDiagnosticReportBuilder.build(
-                                                it,
-                                                includeAdvancedActions = effectiveSelectedLevel?.let { level -> level != "Level 0" } == true,
-                                                language = appLanguage
-                                            )
-                                        }.takeIf { includePowerDiagnosticReport }
-                                    )
-                                }
-                            }
-                        }
-                    },
-                    enabled = userMessage.isNotBlank() && !isOnlineAnalyzing
+                    onClick = { submitQuestion(userMessage.trim()) },
+                    enabled = userMessage.isNotBlank() && !isOnlineAnalyzing && !conversationLoading
                 ) {
                     Text(text = if (isOnlineAnalyzing) stringResource(R.string.analyzing) else stringResource(R.string.send))
                 }

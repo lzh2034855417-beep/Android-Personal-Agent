@@ -2,8 +2,6 @@ package com.aegis.apa.agent
 
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 
 data class CloudProviderConfig(
     val name: String,
@@ -323,8 +321,10 @@ object CloudLlmProvider {
         powerDiagnosticReport: String? = null,
         conversationHistory: List<AgentConversationMessage>,
         credentials: StoredApiKey,
-        language: com.aegis.apa.localization.AppLanguage = com.aegis.apa.localization.AppLanguage.ZH_CN
+        language: com.aegis.apa.localization.AppLanguage = com.aegis.apa.localization.AppLanguage.ZH_CN,
+        cancellation: CloudRequestCancellation = CloudRequestCancellation()
     ): AgentReport {
+        cancellation.ensureActive()
         val config = CloudProviderCatalog.find(credentials.provider)
             ?: throw AgentFailureException(AgentFailure.UNKNOWN_PROVIDER)
         if (credentials.apiKey.isBlank()) throw AgentFailureException(AgentFailure.MISSING_KEY)
@@ -387,29 +387,8 @@ object CloudLlmProvider {
         if (credentials.expiresAt <= System.currentTimeMillis()) {
             throw AgentFailureException(AgentFailure.EXPIRED_KEY)
         }
-        val connection = (URL(config.endpoint).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            setRequestProperty("Content-Type", "application/json")
-            if (config.protocol == "anthropic") {
-                setRequestProperty("x-api-key", credentials.apiKey)
-                setRequestProperty("anthropic-version", "2023-06-01")
-            } else {
-                setRequestProperty("Authorization", "Bearer ${credentials.apiKey}")
-            }
-            connectTimeout = 15_000
-            readTimeout = 60_000
-            doOutput = true
-        }
-
+        val response = CloudHttpTransport.post(config, credentials, body.toString(), cancellation)
         try {
-            connection.outputStream.bufferedWriter(Charsets.UTF_8).use { it.write(body.toString()) }
-            val statusCode = connection.responseCode
-            if (statusCode !in 200..299) {
-                // Do not read or display untrusted error bodies: they may echo request data.
-                runCatching { connection.errorStream?.close() }
-                throw ModelHttpException(statusCode)
-            }
-            val response = CloudResponseReader.read(connection.inputStream)
 
             val json = JSONObject(response)
             val rawContent = if (config.protocol == "anthropic") {
@@ -445,8 +424,6 @@ object CloudLlmProvider {
             )
         } catch (_: org.json.JSONException) {
             throw AgentFailureException(AgentFailure.INVALID_RESPONSE)
-        } finally {
-            connection.disconnect()
         }
     }
 }

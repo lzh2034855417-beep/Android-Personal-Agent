@@ -10,6 +10,10 @@ import com.aegis.apa.tool.BatteryObservationStore
 import com.aegis.apa.tool.ChargingEvidenceWriteResult
 
 class ApaApplication : Application() {
+    val requestCleanupScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+    val conversationPersistence by lazy {
+        com.aegis.apa.agent.ConversationPersistence(com.aegis.apa.agent.androidConversationStore(this))
+    }
     private val batteryObservationStore by lazy { BatteryObservationStore(this) }
     @Volatile
     var chargingEvidenceWriteFailed: Boolean = false

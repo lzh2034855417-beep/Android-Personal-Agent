@@ -137,3 +137,23 @@ $env:ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"
 ## 发布前门槛
 
 关闭 [TECH_DEBT](TECH_DEBT.md) 的 P1 项；完成独立设备/权限/配置变更测试；递增版本；用发布密钥生成 APK/AAB；验证签名和 SHA-256；记录实际模型服务验证范围；对照发行标签更新 README/CHANGELOG。不把本轮预览 APK 当作已审定的下一公开版本。
+# Chat reliability — 2026-10-02
+
+Source baseline: `7756a7b`, source version `0.3.0` / `versionCode 5`. Implementation on `codex/chat-reliability`.
+
+Validated with Android Studio JBR, installed SDK 36.1 and cached Gradle dependencies:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug --offline --console=plain
+```
+
+- 332 JVM tests; 0 failures, 0 errors, 0 skipped.
+- Debug preview APK and Android test APK built successfully.
+- Debug lint: 0 errors, 34 warnings.
+- Encrypted archive: provider/scope round-trip, last-100 retention, seven-day expiry, malformed/truncated/oversized archives, ciphertext tampering, failed encryption preserving prior history, and deletion on clear.
+- Behavioral regressions reproduced before their fixes: queued clear must precede a subsequent restore; cancellation during lazy output-stream acquisition must send zero body bytes. Both pass after correction.
+- Transport contracts: separate OpenAI-compatible/Anthropic authentication, successful connection cleanup and HTTP failure without reading or echoing an error body. No real service was contacted.
+
+Limitations: `adb devices -l` reported no devices. Android Keystore, OEM atomic replacement, process termination/rotation, keyboard/layout and real network cancellation remain device checks. Saves run asynchronously; the UI shows saving/errors, and killing the process before completion can lose the latest change. Retention is enforced when reopening history; no background service deletes an unused archive at an exact seven-day wall-clock instant. A stopped request may already have reached the provider; retry can incur another request. Drafts and report objects are not restored, so retry uses current report choices.
+
+## Earlier validation

@@ -4,7 +4,7 @@
 
 [English](README_EN.md) · [路线图](ROADMAP.md) · [架构审计](docs/ARCHITECTURE.md) · [数据规范](docs/DATA_MODEL.md) · [技术债](docs/TECH_DEBT.md) · [测试](docs/TESTING.md)
 
-> 当前开发源码为 `0.2.0-preview`，尚未发布；最新稳定版仍为 `0.1.2`。下载 APK 和查看对应更新说明，请前往 [GitHub Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases)。
+> 当前源码配置为 `0.3.0`（`versionCode 5`），Debug 安装版本为 `0.3.0-preview`。已发布 APK 与对应更新说明以 [GitHub Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases) 为准。
 
 ## 能做什么
 
@@ -57,7 +57,7 @@ Root 用户也可执行下面的只读诊断。续航速度和应用归因是两
 - 系统耗电诊断成功后只自动选中经过限长的人类可读摘要；界面会明确显示附加状态，用户可取消。原始系统报告与 Root 输出始终留在本机读取过程并在解析后释放。不同服务商之间不转发历史。同服务商最多携带最近 12 条允许发送的消息，可能包含之前回答中的数据。
 - Key 按服务商用 Android Keystore AES/GCM 加密保存，默认本机有效期 7 天；过期不等于撤销服务商签发的 Key。
 - `allowBackup=false` 已设置；旧版云备份、Android 31+ 云备份及设备迁移均显式排除凭据偏好文件。真实 OEM 恢复行为仍待验证。
-- 本次会话大部分由 ViewModel 在内存保存：Agent 草稿、报告选择、对话和结构化耗电诊断可跨切页及配置重建保留；页面滚动位置分别保存。进行中的续航辅助测量只在独立本地偏好中保存一个起点和已检测到的充电标记，不保存轨迹、不进入系统备份，也不是长期数据库；恢复后改用墙上时钟计算并固定降级为用户确认的粗略结果。彻底退出、强制停止或清除任务后，不保证恢复其余会话。重建时正在进行的分析或采集会中断并提示手动重试，不自动重复发送。
+- 最近最多 100 条聊天消息在本机使用 Android Keystore AES/GCM 加密保存，归档最多 512 KiB、单字段最多 64 KiB，自最后一次保存起保留 7 天；清空对话会删除归档。显示文字可能包含设备信息；不保存 Key 配置、报告附件原文或原始系统报告，也不进入系统备份。保存失败会在 Agent 页提示；超大消息不保存。草稿、附件选择和诊断对象仍只在会话内保留，重启后需重新选择报告。\n- 分析中可点击“停止”；连接在后台关闭，服务商已接收的请求仍可能继续处理。失败或停止后可点击“重试”，按当前服务商和报告选择重新采样并发送，不重复插入问题，不自动重试。\n- 续航辅助测量独立保存起点和已检测到的充电标记，不保存轨迹；恢复后仍需确认期间是否充电，结果固定标为粗略。 过期清除在再次打开时执行；保存为异步操作，显示“正在保存”时强制结束进程可能丢失最新变化。
 
 请勿在 Issues、日志或截图中公开 Key、账号信息或唯一设备标识。模型输出仅供参考；涉及维修和系统修改需独立核实。
 
@@ -73,7 +73,7 @@ $env:ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"
 
 macOS/Linux 使用 `./gradlew` 执行相同任务。首次构建需要下载依赖；仅在已有缓存时加 `--offline`。
 
-- Debug：`com.aegis.apa.preview` / APA Preview，APK：`app/build/outputs/apk/debug/APA-v0.2.0-debug.apk`，安装后显示版本 `0.2.0-preview`。
+- Debug：`com.aegis.apa.preview` / APA Preview，APK：`app/build/outputs/apk/debug/APA-v0.3.0-debug.apk`，安装后显示版本 `0.3.0-preview`。
 - Release：`com.aegis.apa` / APA。预览版和正式版可同时存在，数据互不合并。
 - Debug 构建和 Lint/单元测试不需要发布密钥。APK/AAB 正式打包要求本地完整签名配置，不能把 Key 提交到 Git。
 - 本地 `keystore.properties` 使用 `storeFile`、`storePassword`、`keyAlias`、`keyPassword`；可用 `-Papa.signingProperties=本地文件` 指定替代配置，PowerShell 中整项加引号。相对 storeFile 按 app 模块目录解析。
@@ -83,7 +83,7 @@ macOS/Linux 使用 `./gradlew` 执行相同任务。首次构建需要下载依�
 
 本项目由一名中国大陆本科生出于兴趣维护，欢迎 Android、Kotlin、系统工具及模型应用方向的贡献。问题与建议优先提交 [Issues](https://github.com/lzh2034855417-beep/Android-Personal-Agent/issues)。
 
-反馈请附品牌/型号、Android/API、构建类型与版本、权限状态、复现步骤、期望/实际结果和脱敏截图。改代码前阅读 [DATA_MODEL](docs/DATA_MODEL.md)，PR 附测试结果与未测限制。下一阶段优先关闭 [TECH_DEBT](docs/TECH_DEBT.md) 中 P1 项，再扩展 Shizuku、流式回答和持久化。
+反馈请附品牌/型号、Android/API、构建类型与版本、权限状态、复现步骤、期望/实际结果和脱敏截图。改代码前阅读 [DATA_MODEL](docs/DATA_MODEL.md)，PR 附测试结果与未测限制。下一阶段优先关闭 [TECH_DEBT](docs/TECH_DEBT.md) 中 P1 项，再扩展 Shizuku、流式回答和对话导出。
 
 ## 许可证
 

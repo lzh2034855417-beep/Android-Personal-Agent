@@ -3,6 +3,10 @@ package com.aegis.apa
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.launch
+import com.aegis.apa.agent.ConversationMessageState
+import com.aegis.apa.agent.ConversationPersistence
 import com.aegis.apa.agent.AgentConversationMessage
 import com.aegis.apa.agent.MessageRole
 import com.aegis.apa.model.AppDetails
@@ -40,7 +44,13 @@ class MainSessionViewModel(
     val deviceProfile = mutableStateOf<DeviceProfileSnapshot?>(null)
     val deviceProfileReading = mutableStateOf(false)
     val hardwareSupplyInfo = mutableStateOf<HardwareSupplyInfo?>(null)
-    val messages = mutableStateOf<List<AgentConversationMessage>>(emptyList())
+    val messages = ConversationMessageState()
+    val conversationLoading = mutableStateOf(true)
+    val conversationStorageError = mutableStateOf(false)
+    val conversationExpired = mutableStateOf(false)
+    val conversationSaving = mutableStateOf(false)
+    private var conversationInitialized = false
+    private var pendingConversationWrites = 0
     val analyzing = mutableStateOf(false)
     val powerDiagnostic = mutableStateOf<PowerDiagnosticSnapshot?>(null)
     val powerDiagnosticState = mutableStateOf<PowerDiagnosticUiState>(PowerDiagnosticUiState.Idle)
@@ -60,6 +70,42 @@ class MainSessionViewModel(
     private var analysisGeneration = 0L
     private var onlineAnalysis = false
     private var consumedSharedBugReportUri: String? = null
+
+    fun initializeConversation(persistence: ConversationPersistence) {
+        if (conversationInitialized) return
+        conversationInitialized = true
+        viewModelScope.launch {
+            try {
+                val restored = persistence.load()
+                messages.value = restored.messages
+                conversationStorageError.value = restored.failed
+                conversationExpired.value = restored.expired
+                messages.onChanged = { snapshot ->
+                    pendingConversationWrites++
+                    conversationSaving.value = true
+                    persistence.save(snapshot) { success ->
+                        conversationStorageError.value = !success
+                        if (success) conversationExpired.value = false
+                        pendingConversationWrites--
+                        conversationSaving.value = pendingConversationWrites > 0
+                    }
+                }
+                if (messages.value.lastOrNull()?.role == MessageRole.USER) {
+                    messages.value = messages.value + AgentConversationMessage(
+                        MessageRole.ERROR,
+                        if (appLanguage == AppLanguage.EN) "The previous analysis was interrupted. Send the question again."
+                        else "上次分析未完成，请重新发送问题。",
+                        source = "LOCAL · INTERRUPTED"
+                    )
+                }
+            } finally { conversationLoading.value = false }
+        }
+    }
+
+    fun clearConversation() {
+        if (messages.value.isEmpty()) messages.onChanged?.invoke(emptyList())
+        else messages.value = emptyList()
+    }
 
     fun setLanguage(language: AppLanguage) {
         if (appLanguage == language) return

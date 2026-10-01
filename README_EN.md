@@ -4,7 +4,7 @@ An experimental Android app that explains battery, heat and resource readings us
 
 [中文](README.md) · [Roadmap](ROADMAP.md) · [Architecture audit](docs/ARCHITECTURE.md) · [Data contract](docs/DATA_MODEL.md) · [Technical debt](docs/TECH_DEBT.md) · [Testing](docs/TESTING.md)
 
-> The current development source is `0.2.0-preview` and has not been released. The latest stable release remains `0.1.2`; download its APK and read the release notes on [GitHub Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases).
+> The current source is configured as `0.3.0` (`versionCode 5`); debug installs display `0.3.0-preview`. Published APKs and release notes are listed on [GitHub Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases).
 
 ## Features
 
@@ -58,7 +58,7 @@ App visibility can limit enumeration. Root readings retain separate timestamps a
 - Local messages, including Scene summaries, are excluded from cloud history. Switching providers does not forward another provider's history. Up to 12 eligible messages from the same provider can be included, potentially containing previous report details in answers.
 - Keys are encrypted per provider with Android Keystore AES/GCM and expire locally after seven days by default. This does not revoke the provider-issued key.
 - `allowBackup=false` is configured. Legacy cloud backup, Android 31+ cloud backup and device transfer explicitly exclude the credential preferences file. Actual OEM restore behavior remains unverified.
-- An in-memory ViewModel retains Agent drafts, report selections, conversations and diagnostic summaries across page changes and configuration recreation. An active auxiliary battery measurement stores only one start point and an observed-charging flag in a dedicated local preference file; it stores no trajectory, is excluded from backup, and is not a long-term database. Restored measurements use wall-clock time, require explicit charging confirmation and are always downgraded to rough. Force-stop or task removal does not guarantee restoration of the wider session. Recreation interrupts an active analysis with a retry message; no automatic resend occurs. See TESTING for current device-validation coverage.
+- Up to 100 recent chat messages are encrypted locally with Android Keystore AES/GCM in a bounded 512 KiB archive (64 KiB per field), retained for seven days from the last save. Clear deletes the archive. Displayed text may include device details; key configuration, attachment bodies and raw system reports are not stored. The archive is excluded from backup. Agent shows read/save failures; oversized messages are not saved. Drafts, attachment choices and diagnostic objects remain session-only; select reports again after restarting.\n- Stop releases the UI and closes the connection in the background; a provider may continue processing an accepted request. Retry after failure or interruption uses the current provider and report choices, refreshes evidence and sends a new request without duplicating the question. No automatic retries occur.\n- The auxiliary battery measurement separately retains its start point and observed-charging flag, without a trajectory; restored measurements require charging confirmation and remain rough. Expiry is enforced when reopening; forcibly ending the process while saving can lose the newest changes.
 
 Do not post keys, account details or unique device identifiers in issues, logs or screenshots. Treat model output as a limited explanation, not a repair verdict.
 
@@ -72,7 +72,7 @@ Android 8/API 26+; compile SDK 36.1, target SDK 36. Use the committed Gradle wra
 
 On Windows use `gradlew.bat` and configure JAVA_HOME/ANDROID_HOME. Initial dependency downloads require network; use `--offline` only with a populated cache.
 
-- Debug package: `com.aegis.apa.preview` (APA Preview); APK: `app/build/outputs/apk/debug/APA-v0.2.0-debug.apk`, installed version `0.2.0-preview`.
+- Debug package: `com.aegis.apa.preview` (APA Preview); APK: `app/build/outputs/apk/debug/APA-v0.3.0-debug.apk`, installed version `0.3.0-preview`.
 - Release package: `com.aegis.apa` (APA). The two installations have separate data.
 - Debug and source checks require no release credentials. Release APK/AAB packaging requires complete local signing properties and an existing keystore.
 - Ignored `keystore.properties` contains storeFile, storePassword, keyAlias, keyPassword. Optional `-Papa.signingProperties=local-file` selects another properties file; quote the whole argument in PowerShell. Relative storeFile paths resolve from the app module.
@@ -82,7 +82,7 @@ On Windows use `gradlew.bat` and configure JAVA_HOME/ANDROID_HOME. Initial depen
 
 This interest-driven project is maintained by an undergraduate in mainland China. Use [GitHub Issues](https://github.com/lzh2034855417-beep/Android-Personal-Agent/issues) for bugs and suggestions. Include model, Android/API, app version/build type, permission state, reproduction steps, expected/actual results and sanitized screenshots. PRs should follow the data contract and report checks and untested paths.
 
-The next milestone closes high-priority audit items before adding Shizuku APIs, streaming or persistence. See ROADMAP and TECH_DEBT for acceptance criteria.
+The next milestone closes high-priority audit items before adding Shizuku APIs, streaming or conversation export. See ROADMAP and TECH_DEBT for acceptance criteria.
 
 ## License
 
