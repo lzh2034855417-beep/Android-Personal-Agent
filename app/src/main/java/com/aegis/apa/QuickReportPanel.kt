@@ -16,71 +16,93 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.aegis.apa.agent.QuickReport
 import com.aegis.apa.model.BatteryInfo
+import com.aegis.apa.localization.LocalAppLanguage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import com.aegis.apa.share.ReportCardCache
 
 @Composable
-fun QuickReportPanel(model: String, sampledAt: String, battery: BatteryInfo, deviceSummary: String = "") {
+fun QuickReportPanel(
+    model: String,
+    sampledAt: String,
+    battery: BatteryInfo,
+    deviceSummary: String = "",
+    hardwareSummary: String? = null,
+    overviewContent: @Composable ColumnScope.() -> Unit = {}
+) {
     var topic by remember { mutableStateOf("电池") }
     var preview by remember { mutableStateOf<Bitmap?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val report = if (topic == "设备") deviceSummary else QuickReport.explain(topic, battery)
+    val language = LocalAppLanguage.current
+    val topics = listOf(
+        "电池" to stringResource(R.string.topic_battery),
+        "发热" to stringResource(R.string.topic_heat),
+        "设备" to stringResource(R.string.topic_device)
+    )
+    val topicLabel = topics.first { it.first == topic }.second
+    val report = if (topic == "设备") deviceSummary else QuickReport.explain(topic, battery, language)
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("你的手机", style = MaterialTheme.typography.headlineSmall)
-            Text("免 Key · 本地生成", color = MaterialTheme.colorScheme.primary)
+            Text(model, style = MaterialTheme.typography.headlineSmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("电池", "发热", "设备").forEach {
-                    FilterChip(selected = topic == it, onClick = { topic = it }, label = { Text(it) })
+                topics.forEach { (topicKey, displayLabel) ->
+                    FilterChip(selected = topic == topicKey, onClick = { topic = topicKey }, label = { Text(displayLabel) })
                 }
             }
-            Text(model, style = MaterialTheme.typography.titleLarge)
+            overviewContent()
             Text(report)
-            Text("采样：$sampledAt", style = MaterialTheme.typography.labelSmall)
+            Text(stringResource(R.string.sample_format, sampledAt), style = MaterialTheme.typography.labelSmall)
             Button(enabled = !busy, onClick = {
                 busy = true
                 error = null
                 scope.launch {
                     try {
                         preview = withContext(Dispatchers.Default) {
-                            renderReportCard(model, sampledAt, topic, report)
+                            renderReportCard(model, sampledAt, topicLabel, report, hardwareSummary, language)
                         }
-                    } catch (_: Exception) { error = "生成失败，请重试。" }
+                    } catch (_: Exception) {
+                        error = if (language == com.aegis.apa.localization.AppLanguage.EN) "Could not generate the card. Try again." else "生成失败，请重试。"
+                    }
                     finally { busy = false }
                 }
-            }) { Text(if (busy) "正在生成…" else "预览分享卡片") }
+            }) { Text(if (busy) "…" else stringResource(R.string.preview_share_card)) }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
     }
     preview?.let { bitmap ->
         AlertDialog(
             onDismissRequest = { if (!busy) preview = null },
-            title = { Text("分享预览") },
+            title = { Text(stringResource(R.string.share_preview)) },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
-                    Image(bitmap.asImageBitmap(), "设备报告分享卡片", Modifier.fillMaxWidth())
-                    Text("包含机型、采样时间及以上读数，不包含应用列表或密钥。", style = MaterialTheme.typography.bodySmall)
+                    Image(
+                        bitmap.asImageBitmap(),
+                        stringResource(R.string.share_card_content_description),
+                        Modifier.fillMaxWidth()
+                    )
+                    Text(stringResource(R.string.share_privacy_caption), style = MaterialTheme.typography.bodySmall)
                     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 }
             },
-            dismissButton = { TextButton(enabled = !busy, onClick = { preview = null }) { Text("返回") } },
+            dismissButton = { TextButton(enabled = !busy, onClick = { preview = null }) { Text(stringResource(R.string.common_back)) } },
             confirmButton = {
                 TextButton(enabled = !busy, onClick = {
                     busy = true
                     scope.launch {
                         try {
                             val file = withContext(Dispatchers.IO) {
-                                val directory = File(context.cacheDir, "report-cards").apply { mkdirs() }
-                                File(directory, "APA-${System.currentTimeMillis()}.png").also { target ->
+                                val directory = File(context.cacheDir, "report-cards")
+                                ReportCardCache.prepareTarget(directory).also { target ->
                                     target.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
                                 }
                             }
@@ -91,18 +113,45 @@ fun QuickReportPanel(model: String, sampledAt: String, battery: BatteryInfo, dev
                                 clipData = ClipData.newRawUri("APA report", uri)
                                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                             }
-                            context.startActivity(Intent.createChooser(intent, "分享设备报告"))
-                        } catch (_: Exception) { error = "暂时无法分享，请重试。" }
+                            context.startActivity(Intent.createChooser(intent, if (language == com.aegis.apa.localization.AppLanguage.EN) "Share device report" else "分享设备报告"))
+                        } catch (_: Exception) {
+                            error = if (language == com.aegis.apa.localization.AppLanguage.EN) "Unable to share right now. Try again." else "暂时无法分享，请重试。"
+                        }
                         finally { busy = false }
                     }
-                }) { Text("选择分享应用") }
+                }) { Text(stringResource(R.string.choose_share_app)) }
             }
         )
     }
 }
 
-internal fun renderReportCard(model: String, sampledAt: String, topic: String, report: String): Bitmap {
-    val text = "$model\n\n$topic · 本地报告\n采样：$sampledAt\n\n$report\n\nAPA · Android Personal Agent\n项目：github.com/lzh2034855417-beep/Android-Personal-Agent"
+internal fun buildReportCardText(
+    model: String,
+    sampledAt: String,
+    topic: String,
+    report: String,
+    hardwareSummary: String? = null,
+    language: com.aegis.apa.localization.AppLanguage = com.aegis.apa.localization.AppLanguage.ZH_CN
+): String = buildString {
+    append(model)
+    hardwareSummary?.takeIf(String::isNotBlank)?.let { append("\n\n").append(it) }
+    if (language == com.aegis.apa.localization.AppLanguage.EN) {
+        append("\n\n$topic · On-device report\nSample: $sampledAt\n\n$report")
+    } else {
+        append("\n\n$topic · 本地报告\n采样：$sampledAt\n\n$report")
+    }
+    append("\n\nAPA · Android Personal Agent")
+}
+
+internal fun renderReportCard(
+    model: String,
+    sampledAt: String,
+    topic: String,
+    report: String,
+    hardwareSummary: String? = null,
+    language: com.aegis.apa.localization.AppLanguage = com.aegis.apa.localization.AppLanguage.ZH_CN
+): Bitmap {
+    val text = buildReportCardText(model, sampledAt, topic, report, hardwareSummary, language)
     val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         color = android.graphics.Color.rgb(225, 233, 240)
         textSize = 32f

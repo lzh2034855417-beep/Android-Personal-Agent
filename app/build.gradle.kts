@@ -5,7 +5,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-val apaVersionName = "0.2.0"
+val apaVersionName = "0.3.0"
 val signingProperties = Properties()
 val signingPropertiesFile = rootProject.file(providers.gradleProperty("apa.signingProperties").getOrElse("keystore.properties"))
 
@@ -41,7 +41,7 @@ android {
         applicationId = "com.aegis.apa"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
+        versionCode = 5
         versionName = apaVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -74,6 +74,11 @@ android {
         compose = true
         buildConfig = true
     }
+    bundle {
+        language {
+            enableSplit = false
+        }
+    }
 }
 
 androidComponents {
@@ -94,6 +99,8 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation("de.boehrsi:devicemarketingnames:0.7.1")
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

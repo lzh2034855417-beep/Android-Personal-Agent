@@ -7,6 +7,8 @@ import android.provider.Settings
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasText
@@ -21,6 +23,8 @@ import androidx.test.espresso.Espresso
 import androidx.test.platform.app.InstrumentationRegistry
 import com.aegis.apa.agent.ApiKeyStore
 import com.aegis.apa.agent.ApiSession
+import com.aegis.apa.localization.AppLanguage
+import com.aegis.apa.localization.AppLanguageStore
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
@@ -122,11 +126,87 @@ class StabilityUiTest {
         rule.onNodeWithText("APA ${BuildConfig.VERSION_NAME} · ${BuildConfig.BUILD_TYPE}").assertIsDisplayed()
     }
 
-    @Test fun settingsShowsEnglishLanguageOption() {
-        rule.waitUntil(15_000) { sampleLabel() != null }
-        rule.onNodeWithText("设置").performClick()
-        rule.onNodeWithText("Language").performScrollTo().assertIsDisplayed()
-        rule.onNodeWithText("English").performScrollTo().assertIsDisplayed()
+    @Test fun settingsSwitchesToEnglishAndPersistsAcrossRecreation() {
+        val originalLanguage = AppLanguageStore.load(rule.activity)
+        try {
+            setLanguage(AppLanguage.ZH_CN)
+            rule.onNodeWithText("设置").performClick()
+            rule.onNodeWithText("中文").performScrollTo().assertIsSelected()
+            rule.onNodeWithText("English")
+                .performScrollTo()
+                .assertIsNotSelected()
+                .performClick()
+
+            listOf("Device", "Agent", "Capabilities", "Apps", "Settings").forEach { label ->
+                rule.onNodeWithText(label).assertIsDisplayed()
+            }
+            rule.onNodeWithText("English").performScrollTo().assertIsSelected()
+
+            rule.activityRule.scenario.recreate()
+            rule.onNodeWithText("Settings").assertIsDisplayed()
+            rule.onNodeWithText("English").performScrollTo().assertIsSelected()
+        } finally {
+            setLanguage(originalLanguage)
+        }
+    }
+
+    @Test fun switchingBackToChinesePreservesConversation() {
+        val originalLanguage = AppLanguageStore.load(rule.activity)
+        try {
+            setLanguage(AppLanguage.EN)
+            rule.runOnUiThread {
+                val session = androidx.lifecycle.ViewModelProvider(rule.activity)[MainSessionViewModel::class.java]
+                session.messages.value = listOf(
+                    com.aegis.apa.agent.AgentConversationMessage(
+                        role = com.aegis.apa.agent.MessageRole.USER,
+                        content = "language-switch-history"
+                    )
+                )
+            }
+            rule.onNodeWithText("Settings").performClick()
+            rule.onNodeWithText("中文").performScrollTo().performClick()
+
+            rule.onNodeWithText("设备").assertIsDisplayed()
+            rule.onNodeWithText("设置").assertIsDisplayed()
+            rule.onNodeWithText("Agent").performClick()
+            rule.onNodeWithText("language-switch-history").assertIsDisplayed()
+        } finally {
+            setLanguage(originalLanguage)
+        }
+    }
+
+    @Test fun englishModeLocalizesEveryPrimaryScreen() {
+        val originalLanguage = AppLanguageStore.load(rule.activity)
+        try {
+            setLanguage(AppLanguage.EN)
+
+            rule.onNodeWithText("Device overview").assertIsDisplayed()
+            rule.onNodeWithText("设备概览").assertDoesNotExist()
+
+            rule.onNodeWithText("Apps").performClick()
+            rule.onNodeWithText("App detection").assertIsDisplayed()
+            rule.onNodeWithText("应用检测").assertDoesNotExist()
+
+            rule.onNodeWithText("Capabilities").performClick()
+            rule.onNodeWithText("Capability center").assertIsDisplayed()
+            rule.onNodeWithText("能力中心").assertDoesNotExist()
+
+            rule.onNodeWithText("Agent").performClick()
+            rule.onNodeWithText("What would you like to know about your phone today?")
+                .assertIsDisplayed()
+            rule.onNodeWithText("今天想了解手机什么？").assertDoesNotExist()
+
+            rule.onNodeWithText("Settings").performClick()
+            rule.onNodeWithText("Settings & privacy").assertIsDisplayed()
+            rule.onNodeWithText("设置与隐私").assertDoesNotExist()
+        } finally {
+            setLanguage(originalLanguage)
+        }
+    }
+
+    private fun setLanguage(language: AppLanguage) {
+        rule.runOnUiThread { AppLanguageStore.save(rule.activity, language) }
+        rule.activityRule.scenario.recreate()
     }
 
     @Test fun agentAllowsAllDeviceReportsToBeDeselected() {
@@ -183,6 +263,13 @@ class StabilityUiTest {
         rule.onNodeWithText("选择报告").performClick()
         rule.onNodeWithText("系统耗电诊断").performScrollTo().assertIsDisplayed()
         rule.onNodeWithText("附加诊断摘要").performScrollTo().assertIsDisplayed().assertIsEnabled()
+        rule.onNodeWithText("移除").performScrollTo().assertIsDisplayed().assertIsEnabled()
+        rule.onNodeWithText("辅助：粗略续航测量").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("采样：", substring = true).assertDoesNotExist()
+        rule.onNodeWithText("来源：", substring = true).assertDoesNotExist()
+        rule.onNodeWithText("本地结论（不联网也可用）").assertDoesNotExist()
+        rule.onNodeWithText("耗电总量排行").assertDoesNotExist()
+        rule.onNodeWithText("后台异常嫌疑").assertDoesNotExist()
         rule.onNodeWithText("导入 Scene CSV").assertDoesNotExist()
     }
 

@@ -1,7 +1,10 @@
 package com.aegis.apa.agent
 
+import com.aegis.apa.localization.AppLanguage
+
 object LocalDeviceAnalyzer {
-    fun analyze(context: DeviceContext): AgentReport {
+    fun analyze(context: DeviceContext, language: AppLanguage = AppLanguage.ZH_CN): AgentReport {
+        if (language == AppLanguage.EN) return analyzeEnglish(context)
         val findings = mutableListOf<String>()
         val ramRatio = context.availableRamBytes.toDouble() / context.totalRamBytes
         val storageRatio = context.availableStorageBytes.toDouble() / context.totalStorageBytes
@@ -36,6 +39,37 @@ object LocalDeviceAnalyzer {
             summary = "${context.deviceModel} 的基础设备健康检查已完成。",
             findings = findings,
             source = "LOCAL BASELINE · 本地规则"
+        )
+    }
+
+    private fun analyzeEnglish(context: DeviceContext): AgentReport {
+        val findings = mutableListOf<String>()
+        val ramRatio = context.availableRamBytes.toDouble() / context.totalRamBytes
+        val storageRatio = context.availableStorageBytes.toDouble() / context.totalStorageBytes
+
+        findings += when {
+            context.batteryLevel == null -> "Battery level is unavailable, so battery status is not assessed."
+            context.batteryLevel <= 20 -> "Battery level is below 20%; charge the phone soon."
+            else -> "The current battery level is within a usable range."
+        }
+        findings += when {
+            context.totalRamBytes <= 0 || context.availableRamBytes !in 0..context.totalRamBytes ->
+                "RAM readings are invalid, so available memory is not assessed."
+            ramRatio < 0.2 -> "Available RAM is low; background apps may affect responsiveness."
+            else -> "Available RAM is within a normal range."
+        }
+        findings += when {
+            context.totalStorageBytes <= 0 || context.availableStorageBytes !in 0..context.totalStorageBytes ->
+                "Storage readings are invalid, so available storage is not assessed."
+            storageRatio < 0.1 -> "Less than 10% of storage is available; remove large files or unused apps."
+            else -> "Available storage is sufficient."
+        }
+        findings += "Detected ${context.launchableAppCount} launchable apps."
+
+        return AgentReport(
+            summary = "The basic device health check for ${context.deviceModel} is complete.",
+            findings = findings,
+            source = "LOCAL BASELINE"
         )
     }
 }

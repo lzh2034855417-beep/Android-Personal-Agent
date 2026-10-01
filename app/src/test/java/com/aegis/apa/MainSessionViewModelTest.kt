@@ -4,11 +4,73 @@ import androidx.lifecycle.SavedStateHandle
 import com.aegis.apa.agent.AgentConversationMessage
 import com.aegis.apa.agent.MessageRole
 import com.aegis.apa.model.BatteryObservationPoint
+import com.aegis.apa.tool.HardwareSupplyInfo
+import com.aegis.apa.tool.HardwareSupplySource
+import com.aegis.apa.localization.AppLanguage
 import java.time.Instant
 import org.junit.Assert.*
 import org.junit.Test
 
 class MainSessionViewModelTest {
+    @Test fun englishBatteryObservationNoticesAndInterruptionStayEnglish() {
+        val session = MainSessionViewModel()
+        session.setLanguage(AppLanguage.EN)
+        val startedAt = Instant.parse("2026-09-14T00:00:00Z")
+
+        assertFalse(session.startBatteryObservation(
+            BatteryObservationPoint(startedAt, 80, charging = true)
+        ))
+        assertEquals("Unplug the charger before starting a battery observation.", session.batteryObservationNotice.value)
+
+        assertTrue(session.startBatteryObservation(
+            BatteryObservationPoint(startedAt, 80, charging = false)
+        ))
+        assertEquals("Observation started. Keep the phone unplugged and use it normally for at least 30 minutes.", session.batteryObservationNotice.value)
+
+        assertFalse(session.startBatteryObservation(
+            BatteryObservationPoint(startedAt.plusSeconds(60), 79, charging = false)
+        ))
+        assertEquals("A battery observation is already running.", session.batteryObservationNotice.value)
+
+        session.beginAnalysis(online = true)
+        session.interruptAnalysis()
+        assertEquals(
+            "This analysis is shown as interrupted. The online request may still be processing; retrying sends another request.",
+            session.messages.value.last().content
+        )
+    }
+
+    @Test fun englishRestoredObservationExplainsContinuityAndCharging() {
+        val startedAt = Instant.parse("2026-09-14T00:00:00Z")
+        val clean = MainSessionViewModel().apply { setLanguage(AppLanguage.EN) }
+        clean.reconcileBatteryObservation(BatteryObservationPoint(startedAt, 80, charging = false))
+        assertEquals(
+            "The observation start was restored. When finishing, confirm whether the phone was charged; the result will be marked as a user-confirmed rough measurement.",
+            clean.batteryObservationNotice.value
+        )
+
+        val contaminated = MainSessionViewModel().apply { setLanguage(AppLanguage.EN) }
+        contaminated.reconcileBatteryObservation(
+            BatteryObservationPoint(startedAt, 80, charging = false),
+            chargingWasObserved = true
+        )
+        assertEquals(
+            "The observation start was restored, but power was connected during it, so this measurement is invalid.",
+            contaminated.batteryObservationNotice.value
+        )
+    }
+
+    @Test fun switchingLanguageClearsAStaleTransientObservationNotice() {
+        val session = MainSessionViewModel()
+        session.startBatteryObservation(
+            BatteryObservationPoint(Instant.parse("2026-09-14T00:00:00Z"), 80, charging = true)
+        )
+        assertNotNull(session.batteryObservationNotice.value)
+
+        session.setLanguage(AppLanguage.EN)
+
+        assertNull(session.batteryObservationNotice.value)
+    }
     @Test fun activeBatteryObservationDoesNotRestoreWithoutDiskCheckpoint() {
         val handle = SavedStateHandle()
         val firstSession = MainSessionViewModel(handle)
@@ -263,5 +325,20 @@ class MainSessionViewModelTest {
         assertTrue(session.consumeSharedBugReport("content://reports/bugreport.zip"))
         assertFalse(session.consumeSharedBugReport("content://reports/bugreport.zip"))
         assertTrue(session.consumeSharedBugReport("content://reports/second.zip"))
+    }
+
+    @Test fun replacingImportedHardwareClearsStaleSupplierData() {
+        val session = MainSessionViewModel()
+        val first = HardwareSupplyInfo(
+            ramVendor = "Samsung",
+            storageVendor = "SK hynix",
+            source = HardwareSupplySource.ANDROID_BUGREPORT
+        )
+
+        session.replaceImportedHardwareSupplyInfo(first)
+        assertEquals(first, session.hardwareSupplyInfo.value)
+
+        session.replaceImportedHardwareSupplyInfo(null)
+        assertNull(session.hardwareSupplyInfo.value)
     }
 }

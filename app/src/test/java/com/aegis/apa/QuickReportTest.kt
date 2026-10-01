@@ -14,6 +14,7 @@ class QuickReportTest {
     @Test fun snapshotCannotRecommendBatteryReplacement() {
         val text = QuickReport.explain("电池", BatteryInfo(82, "放电中", temperatureCelsius = 35.0))
         assertTrue(text.contains("82%"))
-        assertTrue(text.contains("不足以判断"))
+        assertTrue(text.contains("电池健康需结合循环次数与设计/满充容量判断，单次快照仅供参考。"))
+        assertFalse(text.contains("下一步："))
     }
 }

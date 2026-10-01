@@ -110,6 +110,148 @@ class BugReportSectionExtractorTest {
     }
 
     @Test
+    fun extractsOnlySupplierLinesFromBootLogAfterMainReport() {
+        val bootLog = """
+            user email: private@example.com
+            DDR Device Type = 0x9
+            private-prefix DDR Manufacturer ID = 0x01CE, serial=must-not-be-retained
+            UFS INQUIRY ID = 0x06
+            UFS Spec Version = 4.1
+        """.trimIndent()
+        val result = BugReportSectionExtractor.extract(
+            input = zipOf(
+                "bugreport-device.txt" to reportText,
+                "FS/data/vendor/bootlog.txt" to bootLog
+            ).inputStream(),
+            displayName = "bugreport-device.zip"
+        )
+
+        assertTrue(result is BugReportReadResult.Success)
+        val sections = (result as BugReportReadResult.Success).sections.associateBy { it.source }
+        val hardware = sections.getValue("hardware").output
+        assertTrue(hardware.contains("DDR Manufacturer ID = 0x01CE"))
+        assertTrue(hardware.contains("UFS INQUIRY ID = 0x06"))
+        assertTrue(!hardware.contains("private@example.com"))
+        assertTrue(!hardware.contains("private-prefix"))
+        assertTrue(!hardware.contains("must-not-be-retained"))
+    }
+
+    @Test
+    fun deduplicatesRepeatedHardwareFieldsToBoundOutputSize() {
+        val repeatedFields = buildString {
+            repeat(10_000) {
+                appendLine("DDR Device Type = 0x9")
+                appendLine("DDR Manufacturer ID = 0x01CE")
+                appendLine("UFS INQUIRY ID = 0x06")
+                appendLine("UFS Spec Version = 4.1")
+            }
+        }
+        val result = BugReportSectionExtractor.extract(
+            input = zipOf(
+                "bugreport-device.txt" to reportText,
+                "FS/data/vendor/bootlog.txt" to repeatedFields
+            ).inputStream(),
+            displayName = "bugreport-device.zip"
+        )
+
+        assertTrue(result is BugReportReadResult.Success)
+        val hardware = (result as BugReportReadResult.Success)
+            .sections
+            .single { it.source == "hardware" }
+            .output
+        assertEquals(4, hardware.lineSequence().count())
+        assertEquals(1, hardware.lineSequence().count { it == "DDR Device Type = 0x9" })
+        assertTrue(hardware.length < 256)
+    }
+
+    @Test
+    fun hardwareLogBeforeMainReportDoesNotConsumeDiagnosticBudget() {
+        val bootLog = buildString {
+            repeat(8) { appendLine("DDR Device Type = 0x9") }
+        }
+        val result = BugReportSectionExtractor.extract(
+            input = zipOf(
+                "FS/data/vendor/bootlog.txt" to bootLog,
+                "bugreport-device.txt" to reportText
+            ).inputStream(),
+            displayName = "bugreport-device.zip",
+            limits = BugReportReadLimits(
+                maxEntryBytes = 1_024,
+                maxTotalBytes = reportText.toByteArray().size.toLong(),
+                maxSkippedBytes = 1_024
+            )
+        )
+
+        assertTrue(result is BugReportReadResult.Success)
+        assertEquals(
+            listOf("batterystats", "alarm", "hardware"),
+            (result as BugReportReadResult.Success).sections.map { it.source }
+        )
+    }
+
+    @Test
+    fun keepsValidReportWhenOptionalTrailingBootLogIsOversized() {
+        val result = BugReportSectionExtractor.extract(
+            input = zipBytesOf(
+                "bugreport-device.txt" to reportText.toByteArray(),
+                "FS/data/vendor/bootlog.txt" to ByteArray(513) { 7 }
+            ).inputStream(),
+            displayName = "bugreport-device.zip",
+            limits = BugReportReadLimits(
+                maxEntryBytes = 512,
+                maxTotalBytes = 1024,
+                maxSkippedBytes = 1024
+            )
+        )
+
+        assertTrue(result is BugReportReadResult.Success)
+        assertEquals(
+            listOf("batterystats", "alarm"),
+            (result as BugReportReadResult.Success).sections.map { it.source }
+        )
+    }
+
+    @Test
+    fun keepsValidReportWhenUnrelatedTrailingDataExceedsDiscoveryBudget() {
+        val result = BugReportSectionExtractor.extract(
+            input = zipBytesOf(
+                "bugreport-device.txt" to reportText.toByteArray(),
+                "FS/trailing.bin" to ByteArray(65) { 7 }
+            ).inputStream(),
+            displayName = "bugreport-device.zip",
+            limits = BugReportReadLimits(
+                maxEntryBytes = 512,
+                maxTotalBytes = 1024,
+                maxSkippedBytes = 64
+            )
+        )
+
+        assertTrue(result is BugReportReadResult.Success)
+    }
+
+    @Test
+    fun keepsFirstValidReportWhenLaterReportCandidateIsMalformed() {
+        val result = BugReportSectionExtractor.extract(
+            input = zipBytesOf(
+                "bugreport-device.txt" to reportText.toByteArray(),
+                "bugreport-malformed.txt" to (reportText + "\u0000".repeat(1_025)).toByteArray()
+            ).inputStream(),
+            displayName = "bugreport-device.zip",
+            limits = BugReportReadLimits(
+                maxEntryBytes = 4096,
+                maxTotalBytes = 8192,
+                maxSkippedBytes = 8192
+            )
+        )
+
+        assertTrue(result is BugReportReadResult.Success)
+        assertEquals(
+            listOf("batterystats", "alarm"),
+            (result as BugReportReadResult.Success).sections.map { it.source }
+        )
+    }
+
+    @Test
     fun ignoresOversizedUnrelatedAttachmentBeforeMainReport() {
         val result = BugReportSectionExtractor.extract(
             input = zipBytesOf(
@@ -433,6 +575,42 @@ class BugReportSectionExtractorTest {
         assertTrue(result is BugReportReadResult.Success)
         assertEquals(
             listOf("batterystats", "alarm"),
+            (result as BugReportReadResult.Success).sections.map { it.source }
+        )
+    }
+
+    @Test
+    fun keepsOuterHardwareLogThatAppearsBeforeNestedXiaomiReport() {
+        val nestedReport = zipOf("bugreport-device.txt" to reportText)
+        val result = BugReportSectionExtractor.extract(
+            input = zipBytesOf(
+                "FS/data/vendor/bootlog.txt" to "DDR Manufacturer ID = 0x01CE".toByteArray(),
+                "bugreport-Xiaomi-2026.zip" to nestedReport
+            ).inputStream(),
+            displayName = "bugreport-outer.zip"
+        )
+
+        assertTrue(result is BugReportReadResult.Success)
+        assertEquals(
+            listOf("batterystats", "alarm", "hardware"),
+            (result as BugReportReadResult.Success).sections.map { it.source }
+        )
+    }
+
+    @Test
+    fun keepsOuterHardwareLogThatAppearsAfterNestedXiaomiReport() {
+        val nestedReport = zipOf("bugreport-device.txt" to reportText)
+        val result = BugReportSectionExtractor.extract(
+            input = zipBytesOf(
+                "bugreport-Xiaomi-2026.zip" to nestedReport,
+                "FS/data/vendor/bootlog.txt" to "UFS INQUIRY ID = 0x06".toByteArray()
+            ).inputStream(),
+            displayName = "bugreport-outer.zip"
+        )
+
+        assertTrue(result is BugReportReadResult.Success)
+        assertEquals(
+            listOf("batterystats", "alarm", "hardware"),
             (result as BugReportReadResult.Success).sections.map { it.source }
         )
     }

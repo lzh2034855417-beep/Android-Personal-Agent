@@ -22,6 +22,8 @@ data class DeviceInfo(
     val apiLevel: Int?
 ) {
     val model: String get() = identity.displayName
-    val androidVersion: String get() = "Android ${androidRelease?.takeIf { it.isNotBlank() } ?: "未知"}" +
-        (apiLevel?.let { "（API $it）" } ?: "")
+    val androidVersion: String get() = listOfNotNull(
+        "Android ${androidRelease?.takeIf { it.isNotBlank() } ?: "未知"}",
+        apiLevel?.let { "API $it" }
+    ).joinToString(" · ")
 }

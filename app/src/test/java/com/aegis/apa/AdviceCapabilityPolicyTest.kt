@@ -1,6 +1,8 @@
 package com.aegis.apa
 
 import com.aegis.apa.agent.AdviceCapabilityPolicy
+import com.aegis.apa.agent.AgentCapabilityAccess
+import com.aegis.apa.model.ShizukuAccessState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -8,6 +10,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AdviceCapabilityPolicyTest {
+    @Test
+    fun agentAccessUsesTheCapabilityCentersVerifiedAuthorization() {
+        val access = AgentCapabilityAccess.from(
+            shizukuAccessState = ShizukuAccessState.AUTHORIZED,
+            rootAuthorized = true
+        )
+
+        assertTrue(AdviceCapabilityPolicy.allowsLevel("Level 1", access.shizukuAuthorized, access.rootAuthorized))
+        assertTrue(AdviceCapabilityPolicy.allowsLevel("Level 2", access.shizukuAuthorized, access.rootAuthorized))
+    }
+
     @Test
     fun levelZeroIsAlwaysAvailable() {
         assertTrue(AdviceCapabilityPolicy.allowsLevel("Level 0", false, false))
@@ -56,10 +69,4 @@ class AdviceCapabilityPolicyTest {
         assertFalse(AdviceCapabilityPolicy.needsFreshSnapshot(null, false, false, true))
     }
 
-    @Test
-    fun missingRootReadIsNotMistakenForAReadWithoutAnError() {
-        assertFalse(AdviceCapabilityPolicy.hasSuccessfulRootEvidence(false, null))
-        assertFalse(AdviceCapabilityPolicy.hasSuccessfulRootEvidence(true, "Root 授权被拒绝"))
-        assertTrue(AdviceCapabilityPolicy.hasSuccessfulRootEvidence(true, null))
-    }
 }

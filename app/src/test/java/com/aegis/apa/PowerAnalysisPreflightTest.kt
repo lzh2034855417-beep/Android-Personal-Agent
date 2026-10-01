@@ -3,6 +3,7 @@ package com.aegis.apa
 import com.aegis.apa.agent.PowerAnalysisPreflight
 import com.aegis.apa.agent.PowerQuestionIntent
 import com.aegis.apa.agent.PowerQuestionSignals
+import com.aegis.apa.localization.AppLanguage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -10,6 +11,33 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PowerAnalysisPreflightTest {
+    @Test
+    fun classifiesEnglishBatteryQuestionsAndReturnsEnglishPreflightCopy() {
+        assertEquals(
+            PowerQuestionIntent.BATTERY_HEALTH,
+            PowerAnalysisPreflight.classify("Is my battery health bad?")
+        )
+        assertEquals(
+            PowerQuestionIntent.DRAIN_RATE,
+            PowerAnalysisPreflight.classify("Is my battery draining too fast?")
+        )
+        assertEquals(
+            PowerQuestionIntent.ATTRIBUTION,
+            PowerAnalysisPreflight.classify("Which app is draining my battery in the background?")
+        )
+
+        val message = PowerAnalysisPreflight.blockingMessage(
+            question = "Is my battery draining too fast?",
+            diagnosticAvailable = false,
+            diagnosticSelected = false,
+            language = AppLanguage.EN
+        ).orEmpty()
+
+        assertTrue(message.contains("battery observation"))
+        assertTrue(message.contains("30 minutes"))
+        assertFalse(message.any { it in '\u4E00'..'\u9FFF' })
+    }
+
     @Test
     fun classifiesRateAttributionAndOrdinaryBatteryQuestionsSeparately() {
         assertEquals(PowerQuestionIntent.BATTERY_HEALTH, PowerAnalysisPreflight.classify("电池是否该换？"))

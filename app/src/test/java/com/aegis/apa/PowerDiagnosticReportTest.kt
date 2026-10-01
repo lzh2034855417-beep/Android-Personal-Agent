@@ -1,6 +1,7 @@
 package com.aegis.apa
 
 import com.aegis.apa.agent.PowerDiagnosticReportBuilder
+import com.aegis.apa.localization.AppLanguage
 import com.aegis.apa.model.AdviceLevel
 import com.aegis.apa.model.BatteryDrainWindowEvidence
 import com.aegis.apa.model.DiagnosticConfidence
@@ -313,6 +314,52 @@ class PowerDiagnosticReportTest {
         val report = PowerDiagnosticReportBuilder.build(snapshotWithCandidates(listOf(candidate)))
 
         assertTrue(report.contains("1. com.example.unknown"))
+    }
+
+    @Test
+    fun englishReportLocalizesDiagnosticNarrativeAndPreservesRawEvidence() {
+        val candidate = RankedPowerCandidate(
+            uid = 10123,
+            packageNames = listOf("com.tencent.mm"),
+            displayNames = listOf("微信"),
+            facts = listOf(
+                "系统估算后台耗电 84.2 mAh，占该应用总耗电 100.0%",
+                "后台状态累计 3 分 13 秒"
+            ),
+            confidence = DiagnosticConfidence.MEDIUM,
+            maxAdviceLevel = AdviceLevel.OBSERVE,
+            reason = "后台耗电排行，值得优先核对；单一系统估算不足以证明异常。",
+            sceneAction = "在 Scene 中只限制该应用的后台活动，先保留通知与前台性能。",
+            risk = "可能造成后台同步或消息提醒延迟。",
+            rollback = "出现功能或通知异常时，把该应用的 Scene 后台策略恢复为默认。",
+            retest = "一次只改这个策略，正常使用一个完整观察时段后重新生成报告对比。"
+        )
+        val snapshot = snapshotWithCandidates(emptyList()).copy(
+            localVerdict = LocalPowerVerdict(
+                type = PowerVerdictType.SUFFICIENT,
+                totalConsumption = emptyList(),
+                backgroundConsumption = listOf(candidate),
+                backgroundSuspects = listOf(candidate),
+                schedulingObservations = emptyList(),
+                nextStep = null,
+                limits = listOf("WAKELOCK_TIME 未解析")
+            )
+        )
+
+        val report = PowerDiagnosticReportBuilder.build(snapshot, language = AppLanguage.EN)
+
+        assertTrue(report.contains("1. 微信 (com.tencent.mm)"))
+        assertTrue(report.contains("Estimated background drain: 84.2 mAh; 100.0% of this app's total drain"))
+        assertTrue(report.contains("Background state time: 3 min 13 sec"))
+        assertTrue(report.contains("Background-drain ranking; check this app first"))
+        assertTrue(report.contains("Confidence: Medium"))
+        assertTrue(report.contains("Maximum advice: observe"))
+        assertTrue(report.contains("Manual Scene action:"))
+        assertTrue(report.contains("Evidence limits: WAKELOCK_TIME was not parsed"))
+        assertTrue(report.contains("Packages: com.tencent.mm"))
+        listOf("系统估算", "后台状态累计", "值得优先核对", "可能造成", "回退", "复测", "未解析").forEach {
+            assertFalse("unexpected Chinese diagnostic template: $it", report.contains(it))
+        }
     }
 
     private fun snapshotWithCandidates(candidates: List<RankedPowerCandidate>) = PowerDiagnosticSnapshot(

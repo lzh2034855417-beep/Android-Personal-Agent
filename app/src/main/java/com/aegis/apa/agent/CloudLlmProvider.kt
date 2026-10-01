@@ -75,7 +75,8 @@ internal fun sanitizeCloudAnalysisResponse(
     selectedLevel: String?,
     powerIntent: PowerQuestionIntent = PowerQuestionIntent.OTHER,
     reportAttached: Boolean = false,
-    deviceAdviceMode: Boolean = true
+    deviceAdviceMode: Boolean = true,
+    language: com.aegis.apa.localization.AppLanguage = com.aegis.apa.localization.AppLanguage.ZH_CN
 ): String {
     val healthFiltered = if (powerIntent == PowerQuestionIntent.BATTERY_HEALTH) {
         val irrelevantPrefixes = listOf(
@@ -107,7 +108,7 @@ internal fun sanitizeCloudAnalysisResponse(
     } else {
         healthFiltered
     }
-    if (!deviceAdviceMode) return sanitizeGeneralChatResponse(reportSafe)
+    if (!deviceAdviceMode) return sanitizeGeneralChatResponse(reportSafe, language)
     if (allowsAdvancedAdvice(selectedLevel)) return reportSafe
     val advancedTerms = listOf(
         "scene", "adb", "shizuku", "root", "kernelsu", "ksu", "magisk",
@@ -124,7 +125,10 @@ internal fun sanitizeCloudAnalysisResponse(
         .trim()
 }
 
-private fun sanitizeGeneralChatResponse(content: String): String {
+private fun sanitizeGeneralChatResponse(
+    content: String,
+    language: com.aegis.apa.localization.AppLanguage
+): String {
     val advancedTerms = listOf(
         "adb", "shizuku", "root", "scene", "shell", "magisk", "kernelsu", "ksu",
         "冻结", "限频", "刷入", "停用", "禁用", "pm disable", "su -c"
@@ -145,7 +149,11 @@ private fun sanitizeGeneralChatResponse(content: String): String {
         .joinToString("\n")
         .trim()
     return safe.ifBlank {
-        "当前未选择设备能力等级，我不能提供可执行的 ADB、Shizuku、Root、冻结或限频操作。请选择相应等级并完成授权后再进行设备分析。"
+        if (language == com.aegis.apa.localization.AppLanguage.EN) {
+            "No device capability level is selected, so I cannot provide executable ADB, Shizuku, Root, freezing, or throttling steps. Select and authorize the appropriate level before requesting device actions."
+        } else {
+            "当前未选择设备能力等级，我不能提供可执行的 ADB、Shizuku、Root、冻结或限频操作。请选择相应等级并完成授权后再进行设备分析。"
+        }
     }
 }
 
@@ -155,8 +163,32 @@ internal fun buildCloudAnalysisPrompt(
     selectedLevel: String?,
     levelReport: String?,
     appReport: String?,
-    powerDiagnosticReport: String?
+    powerDiagnosticReport: String?,
+    language: com.aegis.apa.localization.AppLanguage = com.aegis.apa.localization.AppLanguage.ZH_CN
 ): String = buildString {
+    if (language == com.aegis.apa.localization.AppLanguage.EN) {
+        appendLine("[User question]")
+        appendLine(userQuestion)
+        appendLine()
+        appendLine("[Selected capability]")
+        appendLine(selectedLevel ?: "No device report attached")
+        appendLine()
+        context?.let { device ->
+            appendLine("[Device snapshot]")
+            appendLine("Device: ${device.deviceModel}")
+            appendLine("Android: ${device.androidVersion}")
+            appendLine("Charge: ${device.batteryLevel?.let { "$it%" } ?: "unavailable"}")
+            appendLine("RAM: ${device.availableRamBytes} B available / ${device.totalRamBytes} B total")
+            appendLine("Storage: ${device.availableStorageBytes} B available / ${device.totalStorageBytes} B total")
+            appendLine("Launchable apps: ${device.launchableAppCount}")
+        }
+        levelReport?.let { appendLine("[Device report]\n$it") }
+        appReport?.let { appendLine("[App report]\n$it") }
+        powerDiagnosticReport?.let { appendLine("[System power diagnostic]\n$it") }
+        appendLine()
+        append("Answer in English. Preserve all raw evidence exactly. Do not infer missing data or exceed the selected capability level.")
+        return@buildString
+    }
     val powerIntent = PowerAnalysisPreflight.classify(userQuestion)
     val deviceAdviceMode = context != null || selectedLevel != null || levelReport != null ||
         appReport != null || powerDiagnosticReport != null
@@ -290,7 +322,8 @@ object CloudLlmProvider {
         appReport: String?,
         powerDiagnosticReport: String? = null,
         conversationHistory: List<AgentConversationMessage>,
-        credentials: StoredApiKey
+        credentials: StoredApiKey,
+        language: com.aegis.apa.localization.AppLanguage = com.aegis.apa.localization.AppLanguage.ZH_CN
     ): AgentReport {
         val config = CloudProviderCatalog.find(credentials.provider)
             ?: throw AgentFailureException(AgentFailure.UNKNOWN_PROVIDER)
@@ -301,7 +334,7 @@ object CloudLlmProvider {
             powerDiagnosticReport != null
         val adviceScope = AdviceCapabilityPolicy.cloudAdviceScope(selectedLevel, hasDeviceEvidence)
         val deviceAdviceMode = adviceScope != CloudAdviceScope.GENERAL
-        val systemPrompt = AgentPromptPolicy.systemPrompt(deviceAdviceMode)
+        val systemPrompt = AgentPromptPolicy.systemPrompt(deviceAdviceMode, language)
 
         val prompt = buildCloudAnalysisPrompt(
             context = context,
@@ -309,7 +342,8 @@ object CloudLlmProvider {
             selectedLevel = selectedLevel,
             levelReport = levelReport,
             appReport = appReport,
-            powerDiagnosticReport = powerDiagnosticReport
+            powerDiagnosticReport = powerDiagnosticReport,
+            language = language
         )
 
         val historyMessages = JSONArray()
@@ -400,7 +434,8 @@ object CloudLlmProvider {
                 selectedLevel,
                 PowerAnalysisPreflight.classify(userQuestion),
                 reportAttached = powerDiagnosticReport != null,
-                deviceAdviceMode = deviceAdviceMode
+                deviceAdviceMode = deviceAdviceMode,
+                language = language
             )
             if (content.isBlank()) throw AgentFailureException(AgentFailure.EMPTY_RESPONSE)
             return AgentReport(

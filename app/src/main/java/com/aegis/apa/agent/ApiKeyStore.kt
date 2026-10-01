@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import androidx.core.content.edit
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -97,6 +98,12 @@ object ApiKeyStore {
             null
         }
     }
+
+    fun activate(context: Context, provider: String): StoredApiKey? =
+        load(context, provider)?.also {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit { putString(KEY_LAST_PROVIDER, provider) }
+        }
 
     fun clear(context: Context) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

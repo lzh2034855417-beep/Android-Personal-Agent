@@ -1,6 +1,7 @@
 package com.aegis.apa
 
 import com.aegis.apa.agent.AgentPromptPolicy
+import com.aegis.apa.localization.AppLanguage
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -24,11 +25,20 @@ class AgentPromptPolicyTest {
     }
 
     @Test
-    fun guidesHardwareAnswersToTreatBadgesAsConfigurationReferences() {
+    fun guidesHardwareAnswersToReportDetectedPartsWithoutRankingSuppliers() {
         val prompt = AgentPromptPolicy.systemPrompt()
 
-        assertTrue(prompt.contains("配置参考"))
-        assertTrue(prompt.contains("不得据此推断屏幕、内存或电池供应商"))
+        assertTrue(prompt.contains("只陈述本机已读取的厂商名称、规格与型号"))
+        assertTrue(prompt.contains("不得给厂商打分、分档或生成金银铜铁徽章"))
+        assertTrue(prompt.contains("不得把未读取的供应商、颗粒批次或质量状态说成已确认事实"))
+    }
+
+    @Test
+    fun englishHardwarePolicyAlsoForbidsSupplierRankings() {
+        val prompt = AgentPromptPolicy.systemPrompt(language = AppLanguage.EN)
+
+        assertTrue(prompt.contains("state only the vendor names, specifications, and model identifiers read from this device"))
+        assertTrue(prompt.contains("Do not score, tier, rank, or badge suppliers"))
     }
 
     @Test

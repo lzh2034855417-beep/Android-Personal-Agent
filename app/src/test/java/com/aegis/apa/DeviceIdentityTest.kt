@@ -9,6 +9,18 @@ import java.time.Instant
 import java.time.ZoneId
 
 class DeviceIdentityTest {
+    @Test fun androidVersionUsesCompactSeparatorAndHandlesMissingValues() {
+        val identity = DeviceIdentity(
+            identifiers = DeviceIdentifiers("Xiaomi", "2509FPN0BC"),
+            displayName = "Xiaomi 17 Pro Max",
+            nameSource = DeviceNameSource.CURATED
+        )
+
+        assertEquals("Android 17 · API 37", DeviceInfo(identity, "17", 37).androidVersion)
+        assertEquals("Android 未知 · API 37", DeviceInfo(identity, " ", 37).androidVersion)
+        assertEquals("Android 17", DeviceInfo(identity, "17", null).androidVersion)
+    }
+
     @Test fun curatedLookupNormalizesWithoutDestroyingRawIdentifiers() {
         val raw = DeviceIdentifiers(" xIaOmI ", "2509fpn0bc", "Xiaomi", "popsicle")
         val identity = DeviceNameResolver.resolve(raw)

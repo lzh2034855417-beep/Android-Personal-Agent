@@ -1,13 +1,19 @@
 package com.aegis.apa.tool
 
 import com.aegis.apa.model.DisplayInfo
+import com.aegis.apa.localization.AppLanguage
 
 import android.content.Context
 import android.hardware.display.DisplayManager
 import android.view.Display
 
 object DisplayReportText {
-    fun format(info: DisplayInfo): String = buildString {
+    fun format(info: DisplayInfo, language: AppLanguage = AppLanguage.ZH_CN): String = if (language == AppLanguage.EN) buildString {
+        appendLine("Resolution: ${info.widthPixels?.let { width -> info.heightPixels?.let { "$width × $it" } } ?: "Unavailable"}")
+        appendLine("Display density: ${info.densityDpi?.let { "$it dpi" } ?: "Unavailable"}")
+        appendLine("Current refresh rate: ${info.currentRefreshRate?.let { "${it.toInt()} Hz" } ?: "Unavailable"}")
+        appendLine("Maximum refresh rate: ${info.maxRefreshRate?.let { "${it.toInt()} Hz" } ?: "Unavailable"}")
+    } else buildString {
         appendLine("分辨率：${info.widthPixels?.let { width -> info.heightPixels?.let { "$width × $it" } } ?: "设备未提供"}")
         appendLine("屏幕密度：${info.densityDpi?.let { "$it dpi" } ?: "设备未提供"}")
         appendLine("当前刷新率：${info.currentRefreshRate?.let { "${it.toInt()} Hz" } ?: "设备未提供"}")

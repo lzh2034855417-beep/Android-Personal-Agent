@@ -1,11 +1,61 @@
 package com.aegis.apa.tool
 
+import com.aegis.apa.localization.AppLanguage
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 enum class DeviceProfileAccess {
     STANDARD,
     ROOT
+}
+
+enum class HardwareSupplySource {
+    ROOT_SYSFS,
+    ANDROID_BUGREPORT,
+    COMBINED
+}
+
+data class HardwareSupplyInfo(
+    val ramVendor: String? = null,
+    val ramType: String? = null,
+    val storageVendor: String? = null,
+    val storageModel: String? = null,
+    val storageSpec: String? = null,
+    val source: HardwareSupplySource
+) {
+    val hasDetails: Boolean
+        get() = listOf(ramVendor, ramType, storageVendor, storageModel, storageSpec)
+            .any { !it.isNullOrBlank() }
+
+    fun mergeMissingFrom(fallback: HardwareSupplyInfo?): HardwareSupplyInfo {
+        val usesFallback = fallback != null && (
+            (ramVendor == null && fallback.ramVendor != null) ||
+                (ramType == null && fallback.ramType != null) ||
+                (storageVendor == null && fallback.storageVendor != null) ||
+                (storageModel == null && fallback.storageModel != null) ||
+                (storageSpec == null && fallback.storageSpec != null)
+            )
+        return copy(
+            ramVendor = ramVendor ?: fallback?.ramVendor,
+            ramType = ramType ?: fallback?.ramType,
+            storageVendor = storageVendor ?: fallback?.storageVendor,
+            storageModel = storageModel ?: fallback?.storageModel,
+            storageSpec = storageSpec ?: fallback?.storageSpec,
+            source = if (usesFallback && fallback?.source != source) HardwareSupplySource.COMBINED else source
+        )
+    }
+}
+
+internal fun normalizeStorageVendor(raw: String?): String? = when (val value = raw?.trim()?.takeIf(String::isNotEmpty)) {
+    null -> null
+    else -> when (value.replace(" ", "").lowercase(Locale.ROOT)) {
+        "skhynix", "hynix" -> "SK hynix"
+        "samsung" -> "Samsung"
+        "micron" -> "Micron"
+        "toshiba", "kioxia" -> "Kioxia"
+        "xbstor" -> "飞存闪拓 (XBSTOR)"
+        else -> value
+    }
 }
 
 data class CpuPolicyProfile(
@@ -34,12 +84,16 @@ data class DeviceProfileSnapshot(
     val cpuPolicies: List<CpuPolicyProfile>,
     val thermalSensors: List<ThermalSensorProfile>,
     val access: DeviceProfileAccess,
+    val hardwareSupplyInfo: HardwareSupplyInfo? = null,
     val error: String? = null,
     val sampledAtInstant: java.time.Instant = java.time.Instant.now()
 ) {
     val sampledAt: String get() = com.aegis.apa.model.SampleTime.format(sampledAtInstant)
 
-    fun toReportText(): String = buildString {
+    fun toReportText(language: AppLanguage = AppLanguage.ZH_CN): String =
+        if (language == AppLanguage.EN) toEnglishReportText() else toChineseReportText()
+
+    private fun toChineseReportText(): String = buildString {
         appendLine("调度档案：只读")
         appendLine("档案采样时间：$sampledAt（需手动重读）")
         appendLine("APA 未修改系统调度")
@@ -53,6 +107,11 @@ data class DeviceProfileSnapshot(
         appendLine("内核：${kernelVersion ?: "设备未提供"}")
         appendLine("CPU present：${cpuPresent ?: "设备未提供"}")
         appendLine("CPU online：${cpuOnline ?: "设备未提供"}")
+        hardwareSupplyInfo?.takeIf(HardwareSupplyInfo::hasDetails)?.let { hardware ->
+            appendLine("内存规格：${hardware.ramType ?: "设备未提供"}")
+            appendLine("存储厂商：${hardware.storageVendor ?: "设备未提供"}")
+            appendLine("存储型号：${hardware.storageModel ?: "设备未提供"}")
+        }
         if (cpuPolicies.isEmpty()) {
             appendLine("CPU 策略：设备未提供")
         } else {
@@ -78,8 +137,54 @@ data class DeviceProfileSnapshot(
         error?.let { appendLine("采集提示：$it") }
     }
 
-    private fun formatFrequency(valueKhz: Long?): String =
-        valueKhz?.let { String.format(Locale.US, "%.0f MHz", it / 1_000.0) } ?: "未知"
+    private fun toEnglishReportText(): String = buildString {
+        appendLine("Scheduling profile: Read-only")
+        appendLine("Profile sample time: $sampledAt (refresh manually)")
+        appendLine("APA did not modify system scheduling")
+        appendLine("Access: ${if (access == DeviceProfileAccess.ROOT) "Root read-only" else "Standard access"}")
+        appendLine("Device: ${publicDeviceName(manufacturer = manufacturer, modelCode = model)}")
+        appendLine("SoC: ${soc ?: "Unavailable"}")
+        appendLine("Android: ${androidVersion ?: "Unavailable"}")
+        appendLine("System build: ${buildVersion ?: "Unavailable"}")
+        appendLine("Kernel: ${kernelVersion ?: "Unavailable"}")
+        appendLine("CPU present: ${cpuPresent ?: "Unavailable"}")
+        appendLine("CPU online: ${cpuOnline ?: "Unavailable"}")
+        hardwareSupplyInfo?.takeIf(HardwareSupplyInfo::hasDetails)?.let { hardware ->
+            appendLine("RAM specification: ${hardware.ramType ?: "Unavailable"}")
+            appendLine("Storage vendor: ${hardware.storageVendor ?: "Unavailable"}")
+            appendLine("Storage model: ${hardware.storageModel ?: "Unavailable"}")
+        }
+        if (cpuPolicies.isEmpty()) {
+            appendLine("CPU policies: Unavailable")
+        } else {
+            appendLine("CPU policies:")
+            cpuPolicies.forEach { policy ->
+                appendLine(
+                    "- ${policy.name} · CPU ${policy.cpus.joinToString(",")} · " +
+                        "${formatFrequency(policy.minFrequencyKhz, "Unknown")}–${formatFrequency(policy.maxFrequencyKhz, "Unknown")} · " +
+                        "${policy.governor ?: "governor unavailable"}"
+                )
+            }
+        }
+        if (thermalSensors.isEmpty()) {
+            appendLine("Thermal sensors: Unavailable")
+        } else {
+            appendLine("Thermal sensors:")
+            thermalSensors.forEach { sensor ->
+                appendLine("- ${sensor.type}: ${String.format(Locale.US, "%.1f", sensor.temperatureCelsius)}°C")
+            }
+        }
+        error?.let { appendLine("Collection note: ${collectionErrorEnglish(it)}") }
+    }
+
+    private fun formatFrequency(valueKhz: Long?, unavailable: String = "未知"): String =
+        valueKhz?.let { String.format(Locale.US, "%.0f MHz", it / 1_000.0) } ?: unavailable
+
+    private fun collectionErrorEnglish(value: String): String = when {
+        value.contains("超时") -> "Collection timed out."
+        value.contains("失败") || value.contains("拒绝") -> "Collection failed or access was denied."
+        else -> "Some profile data was unavailable."
+    }
 }
 
 data class ChipSchedulingDetails(
@@ -143,6 +248,32 @@ object DeviceProfileParser {
             .filter { it.startsWith("THERMAL=") }
             .mapNotNull(::parseThermalSensor)
             .toList()
+        val sysfsDdrType = raw.lineSequence()
+            .firstOrNull { it.startsWith("DDR_TYPE_HEX=") }
+            ?.substringAfter('=')
+            ?.trim()
+            ?.let(::decodeDdrType)
+        val storage = raw.lineSequence()
+            .firstOrNull { it.startsWith("STORAGE=") }
+            ?.substringAfter('=')
+            ?.split('|', limit = 2)
+        val sysfsHardware = HardwareSupplyInfo(
+            ramType = sysfsDdrType,
+            storageVendor = normalizeStorageVendor(storage?.getOrNull(0)),
+            storageModel = storage?.getOrNull(1)?.trim()?.ifEmpty { null },
+            source = HardwareSupplySource.ROOT_SYSFS
+        ).takeIf(HardwareSupplyInfo::hasDetails)
+        val bugReportHardware = HardwareSupplyInfo(
+            ramVendor = DDR_MANUFACTURER_ID.find(raw)?.groupValues?.get(1)?.let(::ddrVendorFromId),
+            ramType = DDR_DEVICE_TYPE.find(raw)?.groupValues?.get(1)?.let(::decodeDdrType),
+            storageVendor = UFS_INQUIRY_ID.find(raw)?.groupValues?.get(1)?.let(::ufsVendorFromId),
+            storageSpec = UFS_SPEC_VERSION.find(raw)?.groupValues?.get(1)?.let { "UFS ${it.trim()}" },
+            source = HardwareSupplySource.ANDROID_BUGREPORT
+        ).takeIf(HardwareSupplyInfo::hasDetails)
+        val hardwareSupplyInfo = when {
+            sysfsHardware != null -> sysfsHardware.mergeMissingFrom(bugReportHardware)
+            else -> bugReportHardware
+        }
 
         return DeviceProfileSnapshot(
             model = values["MODEL"],
@@ -157,8 +288,47 @@ object DeviceProfileParser {
             cpuPolicies = policies,
             thermalSensors = thermalSensors,
             access = access,
+            hardwareSupplyInfo = hardwareSupplyInfo,
             error = error
         )
+    }
+
+    private fun ddrVendorFromId(raw: String): String? {
+        val id = normalizedSupplierId(raw) ?: return null
+        return when (id.trimStart('0')) {
+            "1CE" -> "三星 (Samsung)"
+            "1AD" -> "海力士 (SK hynix)"
+            "12C" -> "美光 (Micron)"
+            else -> "JEDEC ID 0x$id"
+        }
+    }
+
+    private fun ufsVendorFromId(raw: String): String? {
+        val id = normalizedSupplierId(raw) ?: return null
+        return when (id.trimStart('0')) {
+            "1" -> "Samsung"
+            "6" -> "SK hynix"
+            "FF" -> "Micron"
+            else -> "UFS inquiry ID 0x$id"
+        }
+    }
+
+    private fun normalizedSupplierId(raw: String): String? = normalizeHexId(raw)
+        .takeIf { it.length <= 8 && it.any { digit -> digit != '0' } }
+
+    private fun normalizeHexId(raw: String): String = raw.trim()
+        .removePrefix("0x")
+        .removePrefix("0X")
+        .uppercase(Locale.ROOT)
+        .padStart(4, '0')
+
+    private fun decodeDdrType(raw: String): String? = when (normalizeHexId(raw).trimStart('0').ifEmpty { "0" }) {
+        "3" -> "LPDDR3"
+        "5" -> "LPDDR4"
+        "7" -> "LPDDR4X"
+        "8" -> "LPDDR5"
+        "9" -> "LPDDR5X"
+        else -> null
     }
 
     private fun parsePolicy(line: String): CpuPolicyProfile? {
@@ -182,6 +352,23 @@ object DeviceProfileParser {
         val milliCelsius = fields.getOrNull(1)?.trim()?.toLongOrNull() ?: return null
         return ThermalSensorProfile(type, milliCelsius / 1_000.0)
     }
+
+    private val DDR_DEVICE_TYPE = Regex(
+        "DDR\\s+Device\\s+Type\\s*=\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)",
+        RegexOption.IGNORE_CASE
+    )
+    private val DDR_MANUFACTURER_ID = Regex(
+        "DDR\\s+Manufacturer\\s+ID\\s*=\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)",
+        RegexOption.IGNORE_CASE
+    )
+    private val UFS_INQUIRY_ID = Regex(
+        "UFS\\s+INQUIRY\\s+ID\\s*[-:=]\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)",
+        RegexOption.IGNORE_CASE
+    )
+    private val UFS_SPEC_VERSION = Regex(
+        "UFS\\s+Spec\\s+Version\\s*[-:=]\\s*([0-9]+(?:\\.[0-9]+)?)",
+        RegexOption.IGNORE_CASE
+    )
 }
 
 data class ProfileCommandResult(
@@ -276,6 +463,22 @@ object DeviceProfileCollector {
         printf 'KERNEL=%s\n' "${'$'}(uname -r)"
         printf 'CPU_PRESENT=%s\n' "${'$'}(cat /sys/devices/system/cpu/present 2>/dev/null)"
         printf 'CPU_ONLINE=%s\n' "${'$'}(cat /sys/devices/system/cpu/online 2>/dev/null)"
+        ddr_type=/proc/device-tree/memory/ddr_device_type
+        if [ -r "${'$'}ddr_type" ]; then
+          printf 'DDR_TYPE_HEX=%s\n' "${'$'}(od -An -tx1 "${'$'}ddr_type" 2>/dev/null | tr -d ' \n')"
+        fi
+        for block in sda sdb sdc sdd sde sdf; do
+          vendor_path=/sys/block/${'$'}block/device/vendor
+          model_path=/sys/block/${'$'}block/device/model
+          if [ -r "${'$'}vendor_path" ]; then
+            vendor="${'$'}(cat "${'$'}vendor_path" 2>/dev/null | tr -d '\r\n')"
+            model="${'$'}(cat "${'$'}model_path" 2>/dev/null | tr -d '\r\n')"
+            if [ -n "${'$'}vendor" ]; then
+              printf 'STORAGE=%s|%s\n' "${'$'}vendor" "${'$'}model"
+              break
+            fi
+          fi
+        done
         for p in /sys/devices/system/cpu/cpufreq/policy*; do
           [ -d "${'$'}p" ] || continue
           name="${'$'}{p##*/}"

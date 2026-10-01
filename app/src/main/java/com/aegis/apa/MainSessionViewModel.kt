@@ -14,7 +14,9 @@ import com.aegis.apa.model.BatteryObservationValidity
 import com.aegis.apa.model.DeviceSnapshot
 import com.aegis.apa.model.PowerDiagnosticSnapshot
 import com.aegis.apa.tool.DeviceProfileSnapshot
+import com.aegis.apa.tool.HardwareSupplyInfo
 import com.aegis.apa.tool.RootBatteryInfo
+import com.aegis.apa.localization.AppLanguage
 
 sealed interface PowerDiagnosticUiState {
     data object Idle : PowerDiagnosticUiState
@@ -29,6 +31,7 @@ sealed interface PowerDiagnosticUiState {
 class MainSessionViewModel(
     private val savedStateHandle: SavedStateHandle = SavedStateHandle()
 ) : ViewModel() {
+    private var appLanguage = AppLanguage.ZH_CN
     val agent = AgentPageState()
     val snapshot = mutableStateOf<DeviceSnapshot?>(null)
     val selectedAppDetails = mutableStateOf<AppDetails?>(null)
@@ -36,6 +39,7 @@ class MainSessionViewModel(
     val rootBatteryReading = mutableStateOf(false)
     val deviceProfile = mutableStateOf<DeviceProfileSnapshot?>(null)
     val deviceProfileReading = mutableStateOf(false)
+    val hardwareSupplyInfo = mutableStateOf<HardwareSupplyInfo?>(null)
     val messages = mutableStateOf<List<AgentConversationMessage>>(emptyList())
     val analyzing = mutableStateOf(false)
     val powerDiagnostic = mutableStateOf<PowerDiagnosticSnapshot?>(null)
@@ -57,10 +61,28 @@ class MainSessionViewModel(
     private var onlineAnalysis = false
     private var consumedSharedBugReportUri: String? = null
 
+    fun setLanguage(language: AppLanguage) {
+        if (appLanguage == language) return
+        appLanguage = language
+        batteryObservationNotice.value = when {
+            batteryObservationResult.value != null -> BatteryObservationAnalyzer.explanation(
+                batteryObservationResult.value!!.validity,
+                language
+            )
+            batteryObservationStart.value != null && chargingObserved -> chargingObservedNotice()
+            batteryObservationStart.value != null -> observationStartedNotice()
+            else -> null
+        }
+    }
+
     fun consumeSharedBugReport(uri: String): Boolean {
         if (uri == consumedSharedBugReportUri) return false
         consumedSharedBugReportUri = uri
         return true
+    }
+
+    fun replaceImportedHardwareSupplyInfo(info: HardwareSupplyInfo?) {
+        hardwareSupplyInfo.value = info
     }
 
     fun completePowerDiagnostic(snapshot: PowerDiagnosticSnapshot) {
@@ -71,10 +93,10 @@ class MainSessionViewModel(
 
     fun startBatteryObservation(point: BatteryObservationPoint): Boolean {
         if (batteryObservationStart.value != null) {
-            batteryObservationNotice.value = "续航观察已经在进行中。"
+            batteryObservationNotice.value = if (appLanguage == AppLanguage.EN) "A battery observation is already running." else "续航观察已经在进行中。"
             return false
         }
-        val error = BatteryObservationAnalyzer.startError(point)
+        val error = BatteryObservationAnalyzer.startError(point, appLanguage)
         if (error != null) {
             batteryObservationNotice.value = error
             return false
@@ -84,14 +106,14 @@ class MainSessionViewModel(
         chargingObserved = false
         observationContinuity = BatteryObservationContinuity.PROCESS_OBSERVED
         saveObservationResult(null)
-        batteryObservationNotice.value = "观察已开始。保持设备不充电，建议正常使用至少 30 分钟。"
+        batteryObservationNotice.value = observationStartedNotice()
         return true
     }
 
     fun finishBatteryObservation(point: BatteryObservationPoint, userReportedCharging: Boolean) {
         val start = batteryObservationStart.value
         if (start == null) {
-            batteryObservationNotice.value = "还没有开始续航观察。"
+            batteryObservationNotice.value = if (appLanguage == AppLanguage.EN) "No battery observation has been started." else "还没有开始续航观察。"
             return
         }
         val result = BatteryObservationAnalyzer.finish(
@@ -110,13 +132,13 @@ class MainSessionViewModel(
             batteryObservationResult.value = result
             saveObservationResult(result)
         }
-        batteryObservationNotice.value = BatteryObservationAnalyzer.explanation(result.validity)
+        batteryObservationNotice.value = BatteryObservationAnalyzer.explanation(result.validity, appLanguage)
     }
 
     fun markBatteryObservationChargingObserved() {
         if (batteryObservationStart.value == null) return
         chargingObserved = true
-        batteryObservationNotice.value = "观察期间检测到连接电源；本次数据已作废，结束后请重新开始。"
+        batteryObservationNotice.value = chargingObservedNotice()
     }
 
     fun reconcileBatteryObservation(point: BatteryObservationPoint?, chargingWasObserved: Boolean = false) {
@@ -144,9 +166,9 @@ class MainSessionViewModel(
         observationContinuity = BatteryObservationContinuity.USER_CONFIRMED_AFTER_RESTORE
         saveObservationResult(null)
         batteryObservationNotice.value = if (chargingWasObserved) {
-            "已恢复观察起点，但期间记录到连接电源；本次数据已作废。"
+            if (appLanguage == AppLanguage.EN) "The observation start was restored, but power was connected during it, so this measurement is invalid." else "已恢复观察起点，但期间记录到连接电源；本次数据已作废。"
         } else {
-            "已恢复观察起点。结束时请确认期间是否充过电；结果将标为用户确认的粗略测量。"
+            if (appLanguage == AppLanguage.EN) "The observation start was restored. When finishing, confirm whether the phone was charged; the result will be marked as a user-confirmed rough measurement." else "已恢复观察起点。结束时请确认期间是否充过电；结果将标为用户确认的粗略测量。"
         }
     }
 
@@ -180,9 +202,12 @@ class MainSessionViewModel(
         analyzing.value = false
         messages.value = messages.value + AgentConversationMessage(
             role = MessageRole.ERROR,
-            content = if (onlineAnalysis)
+            content = if (appLanguage == AppLanguage.EN) {
+                if (onlineAnalysis) "This analysis is shown as interrupted. The online request may still be processing; retrying sends another request."
+                else "This analysis was interrupted. Send the question again."
+            } else if (onlineAnalysis) {
                 "本次分析显示已中断。在线请求可能仍在处理，重试会再次发送。"
-            else "本次分析已中断，请重新发送。",
+            } else "本次分析已中断，请重新发送。",
             source = "LOCAL · INTERRUPTED"
         )
     }
@@ -243,6 +268,14 @@ class MainSessionViewModel(
         }
         if (result == null) savedStateHandle.remove<String>(RESULT_CONTINUITY_KEY)
     }
+
+    private fun observationStartedNotice(): String =
+        if (appLanguage == AppLanguage.EN) "Observation started. Keep the phone unplugged and use it normally for at least 30 minutes."
+        else "观察已开始。保持设备不充电，建议正常使用至少 30 分钟。"
+
+    private fun chargingObservedNotice(): String =
+        if (appLanguage == AppLanguage.EN) "Power was connected during the observation. This measurement is invalid; finish it and start again."
+        else "观察期间检测到连接电源；本次数据已作废，结束后请重新开始。"
 
     private companion object {
         const val RESULT_START_PREFIX = "battery_observation_result_start"

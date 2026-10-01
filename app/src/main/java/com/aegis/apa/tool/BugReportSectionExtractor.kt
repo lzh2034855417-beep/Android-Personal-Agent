@@ -113,8 +113,21 @@ object BugReportSectionExtractor {
     ): BugReportReadResult {
         var entryCount = 0
         var reportBytes = 0L
+        var hardwareBytes = 0L
         var skippedBytes = 0L
         var sawNestedArchive = false
+        var reportSections: List<RawDiagnosticSection>? = null
+        var hardwareSection: RawDiagnosticSection? = null
+
+        fun completedReport(): BugReportReadResult.Success? = reportSections?.let { sections ->
+            BugReportReadResult.Success(
+                if (hardwareSection == null) sections else sections + hardwareSection!!
+            )
+        }
+
+        fun rejectUnlessComplete(reason: BugReportRejectReason): BugReportReadResult =
+            completedReport() ?: BugReportReadResult.Rejected(reason)
+
         return try {
             ZipInputStream(input).use { zip ->
                 while (true) {
@@ -122,14 +135,14 @@ object BugReportSectionExtractor {
                     val entry = zip.nextEntry ?: break
                     entryCount += 1
                     if (entryCount > limits.maxEntries) {
-                        return BugReportReadResult.Rejected(BugReportRejectReason.TOO_MANY_ENTRIES)
+                        return rejectUnlessComplete(BugReportRejectReason.TOO_MANY_ENTRIES)
                     }
                     if (!isSafeEntryName(entry.name)) {
-                        return BugReportReadResult.Rejected(BugReportRejectReason.UNSAFE_ENTRY_NAME)
+                        return rejectUnlessComplete(BugReportRejectReason.UNSAFE_ENTRY_NAME)
                     }
                     if (!entry.isDirectory && isZipEntry(entry.name)) {
                         sawNestedArchive = true
-                        if (allowNestedReport && isReportZipEntry(entry.name)) {
+                        if (reportSections == null && allowNestedReport && isReportZipEntry(entry.name)) {
                             val nestedInput = NonClosingInputStream(
                                 CheckedInputStream(
                                     input = zip,
@@ -138,19 +151,60 @@ object BugReportSectionExtractor {
                                     isCancelled = isCancelled
                                 )
                             )
-                            return extractZip(
+                            when (val nested = extractZip(
                                 input = nestedInput,
                                 limits = limits,
                                 isCancelled = isCancelled,
                                 allowNestedReport = false
-                            )
+                            )) {
+                                BugReportReadResult.Cancelled -> return BugReportReadResult.Cancelled
+                                is BugReportReadResult.Rejected -> return nested
+                                is BugReportReadResult.Success -> {
+                                    reportSections = nested.sections.filterNot { it.source == "hardware" }
+                                    nested.sections.firstOrNull { it.source == "hardware" }?.let { nestedHardware ->
+                                        hardwareSection = nestedHardware
+                                    }
+                                }
+                            }
+                            zip.closeEntry()
+                            continue
                         }
                         when (val skipped = skipBounded(zip, limits.maxSkippedBytes - skippedBytes, isCancelled)) {
                             BoundedSkip.Cancelled -> return BugReportReadResult.Cancelled
                             BoundedSkip.TotalTooLarge -> {
-                                return BugReportReadResult.Rejected(BugReportRejectReason.TOTAL_TOO_LARGE)
+                                return rejectUnlessComplete(BugReportRejectReason.TOTAL_TOO_LARGE)
                             }
                             is BoundedSkip.Bytes -> skippedBytes += skipped.value
+                        }
+                        zip.closeEntry()
+                        continue
+                    }
+                    if (isHardwareLogEntry(entry.name)) {
+                        when (
+                            val read = readHardwareLinesStreaming(
+                                input = zip,
+                                entryLimit = limits.maxEntryBytes,
+                                totalRemaining = limits.maxSkippedBytes - hardwareBytes,
+                                isCancelled = isCancelled
+                            )
+                        ) {
+                            HardwareRead.Cancelled -> return BugReportReadResult.Cancelled
+                            HardwareRead.EntryTooLarge -> {
+                                return rejectUnlessComplete(BugReportRejectReason.ENTRY_TOO_LARGE)
+                            }
+                            HardwareRead.TotalTooLarge -> {
+                                return rejectUnlessComplete(BugReportRejectReason.TOTAL_TOO_LARGE)
+                            }
+                            is HardwareRead.Lines -> {
+                                hardwareBytes += read.bytesRead
+                                if (read.output.isNotBlank()) {
+                                    hardwareSection = RawDiagnosticSection(
+                                        source = "hardware",
+                                        status = DiagnosticSourceStatus.AVAILABLE,
+                                        output = read.output
+                                    )
+                                }
+                            }
                         }
                         zip.closeEntry()
                         continue
@@ -159,7 +213,18 @@ object BugReportSectionExtractor {
                         when (val skipped = skipBounded(zip, limits.maxSkippedBytes - skippedBytes, isCancelled)) {
                             BoundedSkip.Cancelled -> return BugReportReadResult.Cancelled
                             BoundedSkip.TotalTooLarge -> {
-                                return BugReportReadResult.Rejected(BugReportRejectReason.TOTAL_TOO_LARGE)
+                                return rejectUnlessComplete(BugReportRejectReason.TOTAL_TOO_LARGE)
+                            }
+                            is BoundedSkip.Bytes -> skippedBytes += skipped.value
+                        }
+                        zip.closeEntry()
+                        continue
+                    }
+                    if (reportSections != null) {
+                        when (val skipped = skipBounded(zip, limits.maxSkippedBytes - skippedBytes, isCancelled)) {
+                            BoundedSkip.Cancelled -> return BugReportReadResult.Cancelled
+                            BoundedSkip.TotalTooLarge -> {
+                                return completedReport()!!
                             }
                             is BoundedSkip.Bytes -> skippedBytes += skipped.value
                         }
@@ -177,36 +242,37 @@ object BugReportSectionExtractor {
                     ) {
                         CandidateRead.Cancelled -> return BugReportReadResult.Cancelled
                         CandidateRead.EntryTooLarge -> {
-                            return BugReportReadResult.Rejected(BugReportRejectReason.ENTRY_TOO_LARGE)
+                            return rejectUnlessComplete(BugReportRejectReason.ENTRY_TOO_LARGE)
                         }
                         CandidateRead.TotalTooLarge -> {
-                            return BugReportReadResult.Rejected(BugReportRejectReason.TOTAL_TOO_LARGE)
+                            return rejectUnlessComplete(BugReportRejectReason.TOTAL_TOO_LARGE)
                         }
                         CandidateRead.Unsupported -> {
-                            return BugReportReadResult.Rejected(BugReportRejectReason.UNSUPPORTED_FORMAT)
+                            return rejectUnlessComplete(BugReportRejectReason.UNSUPPORTED_FORMAT)
                         }
                         is CandidateRead.Empty -> {
                             reportBytes += read.bytesRead
                             zip.closeEntry()
                         }
                         is CandidateRead.Sections -> {
+                            reportBytes += read.bytesRead
+                            reportSections = read.value
                             zip.closeEntry()
-                            return BugReportReadResult.Success(read.value)
                         }
                     }
                 }
             }
-            BugReportReadResult.Rejected(
-                if (sawNestedArchive) BugReportRejectReason.NESTED_ARCHIVE else BugReportRejectReason.EMPTY
-            )
+            completedReport() ?: BugReportReadResult.Rejected(
+                    if (sawNestedArchive) BugReportRejectReason.NESTED_ARCHIVE else BugReportRejectReason.EMPTY
+                )
         } catch (_: CancelledReadException) {
             BugReportReadResult.Cancelled
         } catch (error: LimitReadException) {
-            BugReportReadResult.Rejected(error.reason)
+            rejectUnlessComplete(error.reason)
         } catch (_: ZipException) {
-            BugReportReadResult.Rejected(BugReportRejectReason.CORRUPT_ARCHIVE)
+            rejectUnlessComplete(BugReportRejectReason.CORRUPT_ARCHIVE)
         } catch (_: IOException) {
-            BugReportReadResult.Rejected(BugReportRejectReason.CORRUPT_ARCHIVE)
+            rejectUnlessComplete(BugReportRejectReason.CORRUPT_ARCHIVE)
         }
     }
 
@@ -307,6 +373,91 @@ object BugReportSectionExtractor {
         }
     }
 
+    private fun readHardwareLinesStreaming(
+        input: InputStream,
+        entryLimit: Long,
+        totalRemaining: Long,
+        isCancelled: () -> Boolean
+    ): HardwareRead {
+        if (totalRemaining <= 0) return HardwareRead.TotalTooLarge
+        val fields = linkedMapOf<String, String>()
+        val line = StringBuilder()
+        var lineTruncated = false
+
+        fun consumeLine() {
+            val value = line.toString().removeSuffix("\r").trim()
+            if (!lineTruncated) {
+                hardwareFieldPatterns.forEach { (label, pattern) ->
+                    if (label !in fields) {
+                        pattern.find(value)?.groupValues?.get(1)?.let { fieldValue ->
+                            fields[label] = fieldValue
+                        }
+                    }
+                }
+            }
+            line.clear()
+            lineTruncated = false
+        }
+
+        val bounded = CheckedInputStream(input, entryLimit, totalRemaining, isCancelled)
+        return try {
+            val reader = InputStreamReader(bounded, Charsets.UTF_8)
+            val chars = CharArray(8 * 1024)
+            while (true) {
+                val count = reader.read(chars)
+                if (count < 0) break
+                for (index in 0 until count) {
+                    when (val char = chars[index]) {
+                        '\n' -> consumeLine()
+                        '\u0000' -> Unit
+                        else -> {
+                            if (line.length < MAX_HARDWARE_LINE_CHARS) line.append(char)
+                            else lineTruncated = true
+                        }
+                    }
+                }
+            }
+            if (line.isNotEmpty() || lineTruncated) consumeLine()
+            HardwareRead.Lines(
+                output = fields.entries.joinToString("\n") { (label, value) -> "$label = $value" },
+                bytesRead = bounded.bytesRead
+            )
+        } catch (_: CancelledReadException) {
+            HardwareRead.Cancelled
+        } catch (error: LimitReadException) {
+            when (error.reason) {
+                BugReportRejectReason.ENTRY_TOO_LARGE -> HardwareRead.EntryTooLarge
+                else -> HardwareRead.TotalTooLarge
+            }
+        }
+    }
+
+    private val hardwareFieldPatterns = listOf(
+        "DDR Device Type" to Regex(
+            "DDR\\s+Device\\s+Type\\s*=\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)",
+            RegexOption.IGNORE_CASE
+        ),
+        "DDR Manufacturer ID" to Regex(
+            "DDR\\s+Manufacturer\\s+ID\\s*=\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)",
+            RegexOption.IGNORE_CASE
+        ),
+        "UFS INQUIRY ID" to Regex(
+            "UFS\\s+INQUIRY\\s+ID\\s*[-:=]\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)",
+            RegexOption.IGNORE_CASE
+        ),
+        "UFS Spec Version" to Regex(
+            "UFS\\s+Spec\\s+Version\\s*[-:=]\\s*([0-9]+(?:\\.[0-9]+)?)",
+            RegexOption.IGNORE_CASE
+        )
+    )
+
+    private sealed interface HardwareRead {
+        data class Lines(val output: String, val bytesRead: Long) : HardwareRead
+        data object Cancelled : HardwareRead
+        data object EntryTooLarge : HardwareRead
+        data object TotalTooLarge : HardwareRead
+    }
+
     private fun markerSource(line: String): String? {
         val raw = dumSysMarker.matchEntire(line.trim())?.groupValues?.get(1)
             ?: serviceMarker.matchEntire(line.trim())?.groupValues?.get(1)
@@ -328,6 +479,11 @@ object BugReportSectionExtractor {
         val basename = name.substringAfterLast('/').lowercase(Locale.ROOT)
         return basename == "bugreport.txt" ||
             (basename.startsWith("bugreport-") && basename.endsWith(".txt"))
+    }
+
+    private fun isHardwareLogEntry(name: String): Boolean {
+        val basename = name.substringAfterLast('/').lowercase(Locale.ROOT)
+        return basename == "bootlog.txt"
     }
 
     private fun isZipEntry(name: String): Boolean =
@@ -438,5 +594,6 @@ object BugReportSectionExtractor {
     private class LimitReadException(val reason: BugReportRejectReason) : IOException()
 
     private const val MAX_BUFFERED_LINE_CHARS = 64 * 1024
+    private const val MAX_HARDWARE_LINE_CHARS = 512
     private const val MAX_TOLERATED_NUL_CHARS = 1_024
 }

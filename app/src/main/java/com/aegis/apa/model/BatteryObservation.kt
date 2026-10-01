@@ -1,5 +1,7 @@
 package com.aegis.apa.model
 
+import com.aegis.apa.localization.AppLanguage
+
 import java.time.Duration
 import java.time.Instant
 import java.util.Locale
@@ -82,10 +84,10 @@ data class BatteryObservationResult(
 object BatteryObservationAnalyzer {
     private val minimumDuration = Duration.ofMinutes(30)
 
-    fun startError(point: BatteryObservationPoint): String? = when {
-        point.levelPercent == null -> "未读取到电量，无法开始观察。"
-        !point.powerStateKnown -> "系统没有明确返回是否连接电源，无法安全开始观察。"
-        point.charging -> "请先拔掉充电器，再开始续航观察。"
+    fun startError(point: BatteryObservationPoint, language: AppLanguage = AppLanguage.ZH_CN): String? = when {
+        point.levelPercent == null -> if (language == AppLanguage.EN) "The charge level is unavailable, so the observation cannot start." else "未读取到电量，无法开始观察。"
+        !point.powerStateKnown -> if (language == AppLanguage.EN) "The system did not report whether power is connected, so the observation cannot start safely." else "系统没有明确返回是否连接电源，无法安全开始观察。"
+        point.charging -> if (language == AppLanguage.EN) "Unplug the charger before starting a battery observation." else "请先拔掉充电器，再开始续航观察。"
         else -> null
     }
 
@@ -121,7 +123,8 @@ object BatteryObservationAnalyzer {
         return BatteryObservationResult(start, end, validity, durationMillis, drop, rate, continuity)
     }
 
-    fun explanation(validity: BatteryObservationValidity): String = when (validity) {
+    fun explanation(validity: BatteryObservationValidity, language: AppLanguage = AppLanguage.ZH_CN): String =
+        if (language == AppLanguage.EN) validityEnglish(validity) else when (validity) {
         BatteryObservationValidity.VALID -> "观察有效，可用于判断这段时间的平均掉电速度。"
         BatteryObservationValidity.MISSING_BATTERY_LEVEL -> "系统没有返回起点或终点电量，本次观察无效。"
         BatteryObservationValidity.UNKNOWN_POWER_STATE -> "系统没有明确返回是否连接电源，本次观察无效。"
@@ -133,21 +136,59 @@ object BatteryObservationAnalyzer {
         BatteryObservationValidity.TOO_SHORT -> "观察不足 30 分钟，整数电量误差过大，请继续观察。"
         BatteryObservationValidity.BATTERY_INCREASED -> "结束电量高于开始电量，期间可能充过电，本次观察无效。"
         BatteryObservationValidity.NO_MEASURABLE_DROP -> "电量尚未下降至少 1%，暂时无法计算掉电速度。"
-    }
+        }
 
-    fun qualityLabel(quality: BatteryObservationQuality): String = when (quality) {
-        BatteryObservationQuality.ROUGH -> "粗略"
-        BatteryObservationQuality.MODERATE -> "较稳定"
-        BatteryObservationQuality.STABLE -> "稳定"
+    fun qualityLabel(quality: BatteryObservationQuality, language: AppLanguage = AppLanguage.ZH_CN): String =
+        if (language == AppLanguage.EN) when (quality) {
+            BatteryObservationQuality.ROUGH -> "Rough"
+            BatteryObservationQuality.MODERATE -> "Moderate"
+            BatteryObservationQuality.STABLE -> "Stable"
+        } else when (quality) {
+            BatteryObservationQuality.ROUGH -> "粗略"
+            BatteryObservationQuality.MODERATE -> "较稳定"
+            BatteryObservationQuality.STABLE -> "稳定"
+        }
+
+    private fun validityEnglish(validity: BatteryObservationValidity): String = when (validity) {
+        BatteryObservationValidity.VALID -> "The observation is valid for the average drain rate during this period."
+        BatteryObservationValidity.MISSING_BATTERY_LEVEL -> "The system did not return a start or end charge level, so this observation is invalid."
+        BatteryObservationValidity.UNKNOWN_POWER_STATE -> "The system did not report whether power was connected, so this observation is invalid."
+        BatteryObservationValidity.STARTED_WHILE_CHARGING -> "The observation started while charging and is invalid."
+        BatteryObservationValidity.CHARGING_DURING_OBSERVATION -> "Power was connected during the observation. Unplug the phone and start again."
+        BatteryObservationValidity.ENDED_WHILE_CHARGING -> "The phone was charging at the end, so this observation is invalid."
+        BatteryObservationValidity.CONTINUITY_LOST -> "The app process restarted, so continuous battery-only use cannot be confirmed. Start again."
+        BatteryObservationValidity.INVALID_TIME_RANGE -> "The observation time range is invalid."
+        BatteryObservationValidity.TOO_SHORT -> "The observation is under 30 minutes, so whole-percent rounding is too large. Keep observing."
+        BatteryObservationValidity.BATTERY_INCREASED -> "The ending charge is higher than the starting charge, so the phone may have been charged."
+        BatteryObservationValidity.NO_MEASURABLE_DROP -> "Charge has not fallen by at least 1%, so a drain rate cannot be calculated yet."
     }
 }
 
 object BatteryObservationReportBuilder {
-    fun build(result: BatteryObservationResult): String = buildString {
+    fun build(result: BatteryObservationResult, language: AppLanguage = AppLanguage.ZH_CN): String =
+        if (language == AppLanguage.EN) buildEnglish(result) else buildChinese(result)
+
+    private fun buildEnglish(result: BatteryObservationResult): String = buildString {
+        appendLine("[APA battery observation]")
+        appendLine("Start: ${SampleTime.format(result.start.sampledAtInstant)}, ${result.start.levelPercent?.let { "$it%" } ?: "unknown charge"}")
+        appendLine("End: ${SampleTime.format(result.end.sampledAtInstant)}, ${result.end.levelPercent?.let { "$it%" } ?: "unknown charge"}")
+        appendLine("Duration: ${durationText(result.durationMillis, AppLanguage.EN)}")
+        result.dropPercent?.let { appendLine("Charge change: down $it percentage points") }
+        result.drainPercentPerHour?.let { appendLine("Average drain: ${String.format(Locale.US, "%.2f", it)}%/hour") }
+        result.measurementQuality?.let { appendLine("Measurement quality: ${qualityEnglish(it)}") }
+        if (result.continuity == BatteryObservationContinuity.USER_CONFIRMED_AFTER_RESTORE) {
+            appendLine("Continuity: APA did not remain resident; this rough result relies on your confirmation that the phone was not charged.")
+        }
+        appendLine("Validity: ${validityEnglish(result.validity)}")
+        appendLine("Limit: this measures average drain only for this window and cannot attribute usage to an app; attribution requires a system power diagnostic.")
+        append("Next: if this was mostly screen-off standby and drain still seems abnormal, import an Android Bug Report. For active high-load use, repeat under comparable conditions.")
+    }
+
+    private fun buildChinese(result: BatteryObservationResult): String = buildString {
         appendLine("【APA 续航观察】")
         appendLine("起点：${SampleTime.format(result.start.sampledAtInstant)}，${result.start.levelPercent?.let { "$it%" } ?: "电量未知"}")
         appendLine("终点：${SampleTime.format(result.end.sampledAtInstant)}，${result.end.levelPercent?.let { "$it%" } ?: "电量未知"}")
-        appendLine("观察时长：${durationText(result.durationMillis)}")
+        appendLine("观察时长：${durationText(result.durationMillis, AppLanguage.ZH_CN)}")
         result.dropPercent?.let { appendLine("电量变化：下降 $it 个百分点") }
         result.drainPercentPerHour?.let {
             appendLine("平均掉电速度：${String.format(Locale.US, "%.2f", it)}%/小时")
@@ -163,10 +204,32 @@ object BatteryObservationReportBuilder {
         append("下一步：若这段时间主要是熄屏待机且你仍觉得掉电异常，请导入系统 Bug Report 定位后台来源；若是亮屏高负载，请在相同使用条件下再测一轮作对照。")
     }
 
-    private fun durationText(durationMillis: Long): String {
+    private fun durationText(durationMillis: Long, language: AppLanguage): String {
         val safeMinutes = (durationMillis.coerceAtLeast(0) / 60_000)
         val hours = safeMinutes / 60
         val minutes = safeMinutes % 60
-        return if (hours > 0) "${hours} 小时 ${minutes} 分钟" else "${minutes} 分钟"
+        return if (language == AppLanguage.EN) {
+            if (hours > 0) "$hours h $minutes min" else "$minutes min"
+        } else if (hours > 0) "${hours} 小时 ${minutes} 分钟" else "${minutes} 分钟"
+    }
+
+    private fun qualityEnglish(value: BatteryObservationQuality) = when (value) {
+        BatteryObservationQuality.ROUGH -> "Rough"
+        BatteryObservationQuality.MODERATE -> "Moderate"
+        BatteryObservationQuality.STABLE -> "Stable"
+    }
+
+    private fun validityEnglish(value: BatteryObservationValidity) = when (value) {
+        BatteryObservationValidity.VALID -> "Valid for the average drain rate during this window."
+        BatteryObservationValidity.MISSING_BATTERY_LEVEL -> "The system did not return a start or end charge level."
+        BatteryObservationValidity.UNKNOWN_POWER_STATE -> "The system did not report whether external power was connected."
+        BatteryObservationValidity.STARTED_WHILE_CHARGING -> "The observation started while charging."
+        BatteryObservationValidity.CHARGING_DURING_OBSERVATION -> "External power was detected during the observation."
+        BatteryObservationValidity.ENDED_WHILE_CHARGING -> "The phone was charging at the end."
+        BatteryObservationValidity.CONTINUITY_LOST -> "App continuity was lost, so uninterrupted battery-only operation cannot be confirmed."
+        BatteryObservationValidity.INVALID_TIME_RANGE -> "The time range is invalid."
+        BatteryObservationValidity.TOO_SHORT -> "The observation is shorter than 30 minutes."
+        BatteryObservationValidity.BATTERY_INCREASED -> "Charge increased, so the phone may have been charged."
+        BatteryObservationValidity.NO_MEASURABLE_DROP -> "Charge has not fallen by at least 1%, so a rate cannot be calculated yet."
     }
 }

@@ -1,9 +1,6 @@
 package com.aegis.apa.agent
 
 object AdviceCapabilityPolicy {
-    fun hasSuccessfulRootEvidence(readAttempted: Boolean, error: String?): Boolean =
-        readAttempted && error == null
-
     fun allowsLevel(
         level: String,
         shizukuAuthorized: Boolean,

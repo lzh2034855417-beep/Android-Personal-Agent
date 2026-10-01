@@ -4,6 +4,7 @@ import com.aegis.apa.agent.DeviceContext
 import com.aegis.apa.agent.PowerQuestionIntent
 import com.aegis.apa.agent.buildCloudAnalysisPrompt
 import com.aegis.apa.agent.sanitizeCloudAnalysisResponse
+import com.aegis.apa.localization.AppLanguage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -65,6 +66,19 @@ class PowerDiagnosticPromptTest {
             assertFalse("Unsafe response survived: $response", sanitized.contains("com.android.phone"))
             assertTrue(sanitized.contains("未选择设备能力等级"))
         }
+    }
+
+    @Test
+    fun englishNoReportChatUsesEnglishSafetyFallback() {
+        val sanitized = sanitizeCloudAnalysisResponse(
+            content = "Run adb shell pm disable-user com.android.phone.",
+            selectedLevel = null,
+            deviceAdviceMode = false,
+            language = AppLanguage.EN
+        )
+
+        assertTrue(sanitized.contains("No device capability level is selected"))
+        assertFalse(sanitized.contains("未选择设备能力等级"))
     }
 
     @Test

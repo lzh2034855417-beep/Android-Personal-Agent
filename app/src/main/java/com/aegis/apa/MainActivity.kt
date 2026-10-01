@@ -1,5 +1,6 @@
 package com.aegis.apa
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -35,12 +36,15 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Card
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.lifecycle.Lifecycle
@@ -65,6 +69,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.res.stringResource
 import com.aegis.apa.agent.MessageRole
 import com.aegis.apa.agent.PowerAnalysisPreflight
 import com.aegis.apa.agent.PowerQuestionIntent
@@ -79,10 +84,19 @@ import com.aegis.apa.agent.CloudProviderCatalog
 import com.aegis.apa.agent.ApiKeyStore
 import com.aegis.apa.agent.ApiSession
 import com.aegis.apa.agent.AgentMessageCopyPolicy
+import com.aegis.apa.agent.AppReportBuilder
 import com.aegis.apa.agent.DeviceContext
+import com.aegis.apa.agent.AdvancedLevelReportBuilder
 import com.aegis.apa.agent.Level0ReportBuilder
 import com.aegis.apa.agent.LocalDeviceAnalyzer
 import com.aegis.apa.agent.PowerDiagnosticReportBuilder
+import com.aegis.apa.localization.AppLanguage
+import com.aegis.apa.localization.AppLanguageStore
+import com.aegis.apa.localization.LocalAppLanguage
+import com.aegis.apa.localization.DeviceUiCopy
+import com.aegis.apa.localization.RuntimeNotice
+import com.aegis.apa.localization.RuntimeUiCopy
+import com.aegis.apa.localization.withAppLanguage
 import com.aegis.apa.navigation.ShizukuDestination
 import com.aegis.apa.navigation.ShizukuNavigationPolicy
 import com.aegis.apa.tool.AppTool
@@ -97,10 +111,14 @@ import com.aegis.apa.tool.BatteryTool
 import com.aegis.apa.tool.BatteryObservationStore
 import com.aegis.apa.tool.ChargingEvidenceWriteResult
 import com.aegis.apa.model.DeviceInfo
+import com.aegis.apa.model.CapabilityAccessFeedback
+import com.aegis.apa.model.ShizukuAccessState
 import com.aegis.apa.tool.DeviceProfileAccess
 import com.aegis.apa.tool.DeviceProfileCollector
+import com.aegis.apa.tool.DeviceProfileParser
 import com.aegis.apa.tool.DeviceProfileSnapshot
-import com.aegis.apa.tool.HardwareExperienceEvaluator
+import com.aegis.apa.tool.HardwareSupplyInfo
+import com.aegis.apa.tool.HardwareSupplierRecognition
 import com.aegis.apa.tool.DeviceInfoTool
 import com.aegis.apa.model.DisplayInfo
 import com.aegis.apa.tool.DisplayInfoTool
@@ -113,10 +131,10 @@ import com.aegis.apa.model.RootStatus
 import com.aegis.apa.tool.RootTool
 import com.aegis.apa.tool.RootBatteryInfo
 import com.aegis.apa.tool.RootBatteryTool
+import com.aegis.apa.tool.ShizukuCapabilityTool
 import com.aegis.apa.tool.SystemPowerDiagnosticsCollector
 import com.aegis.apa.tool.BugReportImporter
 import com.aegis.apa.tool.BugReportReadResult
-import com.aegis.apa.tool.BugReportRejectReason
 import com.aegis.apa.tool.PowerDiagnosticPipeline
 import com.aegis.apa.model.DiagnosticInputSource
 import com.aegis.apa.model.PowerDiagnosticSnapshot
@@ -126,6 +144,7 @@ import com.aegis.apa.tool.UsageStatsTool
 import com.aegis.apa.model.UsageSummary
 import com.aegis.apa.agent.AdviceCapabilityPolicy
 import com.aegis.apa.agent.AgentAttachmentPolicy
+import com.aegis.apa.agent.AgentCapabilityAccess
 import com.aegis.apa.ui.theme.AndroidPersonalAgentTheme
 import java.util.Locale
 import com.aegis.apa.model.DeviceSnapshot
@@ -135,15 +154,23 @@ import java.text.SimpleDateFormat
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import rikka.shizuku.Shizuku
 
 
 @OptIn(ExperimentalLayoutApi::class)
 class MainActivity : ComponentActivity() {
     private val session by lazy { androidx.lifecycle.ViewModelProvider(this)[MainSessionViewModel::class.java] }
     private val batteryObservationStore by lazy { BatteryObservationStore(this) }
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(newBase.withAppLanguage(AppLanguageStore.load(newBase)))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ApiSession.update(ApiKeyStore.load(this))
+        val appLanguage = AppLanguageStore.load(this)
+        session.setLanguage(appLanguage)
         val persistedObservation = batteryObservationStore.load()
         session.reconcileBatteryObservation(
             persistedObservation?.start,
@@ -153,15 +180,17 @@ class MainActivity : ComponentActivity() {
         if (apaApplication.chargingEvidenceWriteFailed && session.batteryObservationStart.value != null) {
             session.markBatteryObservationChargingObserved()
             session.batteryObservationNotice.value =
-                "检测到连接电源，本次观察已作废；充电标记写入失败，请结束或取消后重试。"
+                RuntimeUiCopy.text(RuntimeNotice.CHARGING_EVIDENCE_WRITE_FAILED, appLanguage)
         }
         enableEdgeToEdge()
         setContent {
-            AndroidPersonalAgentTheme {
+            CompositionLocalProvider(LocalAppLanguage provides appLanguage) {
+                AndroidPersonalAgentTheme {
                 var selectedPage by rememberSaveable { mutableIntStateOf(0) }
                 var snapshot by session.snapshot
                 val pageStates = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
                 var isSnapshotRefreshing by remember { mutableStateOf(false) }
+                var shizukuRevision by remember { mutableIntStateOf(0) }
                 var snapshotError by remember { mutableStateOf<String?>(null) }
                 val scope = rememberCoroutineScope()
                 val snapshotMutex = remember { Mutex() }
@@ -180,15 +209,17 @@ class MainActivity : ComponentActivity() {
                     scope.launch {
                         try { refreshSnapshot() }
                         catch (cancelled: CancellationException) { throw cancelled }
-                        catch (_: Exception) { snapshotError = "读取失败，请重试；当前显示的是上次采样。" }
+                        catch (_: Exception) { snapshotError = RuntimeUiCopy.text(RuntimeNotice.SNAPSHOT_READ_FAILED, appLanguage) }
                     }
                 }
                 DisposableEffect(Unit) {
                     val observer = LifecycleEventObserver { _, event ->
-                        if (event == Lifecycle.Event.ON_RESUME) onRefresh()
+                        if (event == Lifecycle.Event.ON_RESUME) {
+                            shizukuRevision += 1
+                            onRefresh()
+                        }
                     }
                     lifecycle.addObserver(observer)
-                    if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) onRefresh()
                     onDispose { lifecycle.removeObserver(observer) }
                 }
                 var selectedAppDetails by session.selectedAppDetails
@@ -196,6 +227,7 @@ class MainActivity : ComponentActivity() {
                 var isRootBatteryReading by session.rootBatteryReading
                 var deviceProfile by session.deviceProfile
                 var isDeviceProfileReading by session.deviceProfileReading
+                var importedHardwareSupplyInfo by session.hardwareSupplyInfo
                 var chatMessages by session.messages
                 var isOnlineAnalyzing by session.analyzing
                 var powerDiagnostic by session.powerDiagnostic
@@ -203,6 +235,27 @@ class MainActivity : ComponentActivity() {
                 var batteryObservationStart by session.batteryObservationStart
                 var batteryObservationResult by session.batteryObservationResult
                 var batteryObservationNotice by session.batteryObservationNotice
+                DisposableEffect(Unit) {
+                    val binderReceivedListener = Shizuku.OnBinderReceivedListener {
+                        shizukuRevision += 1
+                    }
+                    val binderDeadListener = Shizuku.OnBinderDeadListener {
+                        shizukuRevision += 1
+                    }
+                    val permissionResultListener = Shizuku.OnRequestPermissionResultListener { requestCode, _ ->
+                        if (requestCode == ShizukuCapabilityTool.PERMISSION_REQUEST_CODE) {
+                            shizukuRevision += 1
+                        }
+                    }
+                    Shizuku.addBinderReceivedListenerSticky(binderReceivedListener)
+                    Shizuku.addBinderDeadListener(binderDeadListener)
+                    Shizuku.addRequestPermissionResultListener(permissionResultListener)
+                    onDispose {
+                        Shizuku.removeBinderReceivedListener(binderReceivedListener)
+                        Shizuku.removeBinderDeadListener(binderDeadListener)
+                        Shizuku.removeRequestPermissionResultListener(permissionResultListener)
+                    }
+                }
                 DisposableEffect(session) {
                     val powerReceiver = object : android.content.BroadcastReceiver() {
                         override fun onReceive(context: android.content.Context?, intent: Intent?) {
@@ -210,7 +263,7 @@ class MainActivity : ComponentActivity() {
                                 session.markBatteryObservationChargingObserved()
                                 if (apaApplication.persistChargingEvidence() == ChargingEvidenceWriteResult.WRITE_FAILED) {
                                     batteryObservationNotice =
-                                        "检测到连接电源，本次观察已作废；充电标记写入失败，请结束或取消后重试。"
+                                        RuntimeUiCopy.text(RuntimeNotice.CHARGING_EVIDENCE_WRITE_FAILED, appLanguage)
                                 }
                             }
                         }
@@ -242,6 +295,16 @@ class MainActivity : ComponentActivity() {
                                 }
                                 when (imported) {
                                     is BugReportReadResult.Success -> {
+                                        val importedHardware = imported.sections
+                                            .firstOrNull { it.source == "hardware" }
+                                            ?.let { section ->
+                                                DeviceProfileParser.parse(
+                                                    raw = section.output,
+                                                    access = DeviceProfileAccess.STANDARD
+                                                ).hardwareSupplyInfo
+                                            }
+                                        session.replaceImportedHardwareSupplyInfo(importedHardware)
+                                        importedHardwareSupplyInfo = importedHardware
                                         val analyzed = PowerDiagnosticPipeline.analyze(
                                             sections = imported.sections,
                                             inputSource = DiagnosticInputSource.BUGREPORT,
@@ -253,7 +316,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                     is BugReportReadResult.Rejected -> {
                                         powerDiagnosticState = PowerDiagnosticUiState.Error(
-                                            imported.reason.userMessage()
+                                            RuntimeUiCopy.bugReportReject(imported.reason, appLanguage)
                                         )
                                     }
                                     BugReportReadResult.Cancelled -> {
@@ -265,7 +328,7 @@ class MainActivity : ComponentActivity() {
                                 throw cancelled
                             } catch (_: Exception) {
                                 powerDiagnosticState = PowerDiagnosticUiState.Error(
-                                    "无法读取这个系统报告，请重新生成后再试。"
+                                    RuntimeUiCopy.text(RuntimeNotice.BUG_REPORT_READ_FAILED, appLanguage)
                                 )
                             }
                         }
@@ -296,15 +359,42 @@ class MainActivity : ComponentActivity() {
                 val currentSnapshot = snapshot
                 if (currentSnapshot == null) {
                     Column(modifier = Modifier.fillMaxSize().padding(32.dp)) {
-                        Text(text = if (snapshotError == null) "正在读取设备信息…" else "设备信息读取失败，请重试。")
-                        if (snapshotError != null) Button(onClick = onRefresh) { Text("重试") }
+                        Text(text = if (appLanguage == AppLanguage.EN) {
+                            if (snapshotError == null) "Reading device information…" else "Could not read device information. Try again."
+                        } else if (snapshotError == null) "正在读取设备信息…" else "设备信息读取失败，请重试。")
+                        if (snapshotError != null) Button(onClick = onRefresh) { Text(if (appLanguage == AppLanguage.EN) "Retry" else "重试") }
                     }
                     return@AndroidPersonalAgentTheme
                 }
+                val shizukuAccessState = remember(
+                    currentSnapshot.rootStatus.isShizukuInstalled,
+                    shizukuRevision
+                ) {
+                    ShizukuCapabilityTool.read(currentSnapshot.rootStatus.isShizukuInstalled)
+                }
+                val rootAuthorized = CapabilityAccessFeedback.hasRootEvidence(
+                    rootBatteryAttempted = rootBatteryInfo != null,
+                    rootBatteryError = rootBatteryInfo?.error,
+                    profileUsedRoot = deviceProfile?.access == DeviceProfileAccess.ROOT,
+                    diagnosticHasSuccessfulCommand =
+                        powerDiagnostic?.inputSource == DiagnosticInputSource.ROOT &&
+                            powerDiagnostic?.sources?.values?.any { source ->
+                                source.status == com.aegis.apa.model.DiagnosticSourceStatus.AVAILABLE ||
+                                    source.status == com.aegis.apa.model.DiagnosticSourceStatus.TRUNCATED
+                            } == true
+                )
+                val agentCapabilityAccess = AgentCapabilityAccess.from(
+                    shizukuAccessState = shizukuAccessState,
+                    rootAuthorized = rootAuthorized
+                )
                 val onCollectPowerDiagnostic: () -> Unit = {
                     if (powerDiagnosticState !is PowerDiagnosticUiState.Collecting) {
                         session.agent.includePowerDiagnosticReport.value = false
-                        powerDiagnosticState = PowerDiagnosticUiState.Collecting(0, 8, "准备 Root 授权")
+                        powerDiagnosticState = PowerDiagnosticUiState.Collecting(
+                            0,
+                            8,
+                            if (appLanguage == AppLanguage.EN) "Preparing Root authorization" else "准备 Root 授权"
+                        )
                         scope.launch {
                             try {
                                 val result = withContext(Dispatchers.IO) {
@@ -313,7 +403,7 @@ class MainActivity : ComponentActivity() {
                                         packageLabelResolver = ::resolveInstalledAppLabel
                                     ).collect(
                                         onProgress = { completed, total, source ->
-                                            this@MainActivity.runOnUiThread {
+                                            scope.launch {
                                                 powerDiagnosticState = PowerDiagnosticUiState.Collecting(completed, total, source)
                                             }
                                         },
@@ -325,7 +415,9 @@ class MainActivity : ComponentActivity() {
                                 powerDiagnosticState = PowerDiagnosticUiState.Interrupted
                                 throw cancelled
                             } catch (_: Exception) {
-                                powerDiagnosticState = PowerDiagnosticUiState.Error("无法完成系统耗电采集，请检查 Root 授权后重试。")
+                                powerDiagnosticState = PowerDiagnosticUiState.Error(
+                                    RuntimeUiCopy.text(RuntimeNotice.ROOT_DIAGNOSTIC_FAILED, appLanguage)
+                                )
                             }
                         }
                     }
@@ -341,12 +433,12 @@ class MainActivity : ComponentActivity() {
                         if (session.startBatteryObservation(point)) {
                             if (!batteryObservationStore.saveStart(point)) {
                                 session.clearBatteryObservation()
-                                batteryObservationNotice = "无法在本机保存观察起点，请检查存储状态后重试。"
+                                batteryObservationNotice = RuntimeUiCopy.text(RuntimeNotice.BATTERY_START_SAVE_FAILED, appLanguage)
                             } else {
                                 apaApplication.clearChargingEvidenceWriteFailure()
                             }
                         }
-                    }.onFailure { batteryObservationNotice = "无法读取当前电量，请重试。" }
+                    }.onFailure { batteryObservationNotice = RuntimeUiCopy.text(RuntimeNotice.BATTERY_START_READ_FAILED, appLanguage) }
                 }
                 val onFinishBatteryObservation: (Boolean) -> Unit = { userReportedCharging ->
                     if (userReportedCharging) {
@@ -356,12 +448,12 @@ class MainActivity : ComponentActivity() {
                         if (batteryObservationStore.clear()) {
                             session.clearBatteryObservation()
                             apaApplication.clearChargingEvidenceWriteFailure()
-                            batteryObservationNotice = "已按“充过电或不确定”作废本次测量。"
+                            batteryObservationNotice = RuntimeUiCopy.text(RuntimeNotice.BATTERY_DISCARDED, appLanguage)
                         } else {
                             batteryObservationNotice = if (chargingWriteResult == ChargingEvidenceWriteResult.WRITE_FAILED) {
-                                "本次已在当前会话作废，但充电标记写入和起点清除都失败；请勿继续计算，检查存储后取消重试。"
+                                RuntimeUiCopy.text(RuntimeNotice.BATTERY_DISCARD_WRITE_AND_CLEAR_FAILED, appLanguage)
                             } else {
-                                "本次已作废，但本机观察起点清除失败；请取消后重试。"
+                                RuntimeUiCopy.text(RuntimeNotice.BATTERY_DISCARD_CLEAR_FAILED, appLanguage)
                             }
                         }
                     } else {
@@ -377,12 +469,12 @@ class MainActivity : ComponentActivity() {
                             )
                             if (session.batteryObservationStart.value == null) {
                                 if (!batteryObservationStore.clear()) {
-                                    batteryObservationNotice = "结果已计算，但旧观察起点清除失败；请点“清除”后再开始下一次。"
+                                    batteryObservationNotice = RuntimeUiCopy.text(RuntimeNotice.BATTERY_RESULT_CLEAR_FAILED, appLanguage)
                                 } else {
                                     apaApplication.clearChargingEvidenceWriteFailure()
                                 }
                             }
-                        }.onFailure { batteryObservationNotice = "无法读取结束电量，请重试；观察仍在继续。" }
+                        }.onFailure { batteryObservationNotice = RuntimeUiCopy.text(RuntimeNotice.BATTERY_END_READ_FAILED, appLanguage) }
                     }
                 }
                 val onClearBatteryObservation: () -> Unit = {
@@ -390,21 +482,24 @@ class MainActivity : ComponentActivity() {
                         session.clearBatteryObservation()
                         apaApplication.clearChargingEvidenceWriteFailure()
                     } else {
-                        batteryObservationNotice = "无法清除本机观察起点，请重试。"
+                        batteryObservationNotice = RuntimeUiCopy.text(RuntimeNotice.BATTERY_CLEAR_FAILED, appLanguage)
                     }
                 }
                 val onReadDeviceProfile = {
                     if (!isDeviceProfileReading) {
                         isDeviceProfileReading = true
-                        Thread {
-                            val result = DeviceProfileCollector.read(
-                                preferRoot = currentSnapshot.rootStatus.hasSuBinary
-                            )
-                            this@MainActivity.runOnUiThread {
+                        scope.launch {
+                            try {
+                                val result = withContext(Dispatchers.IO) {
+                                    DeviceProfileCollector.read(
+                                        preferRoot = currentSnapshot.rootStatus.hasSuBinary
+                                    )
+                                }
                                 deviceProfile = result
+                            } finally {
                                 isDeviceProfileReading = false
                             }
-                        }.start()
+                        }
                     }
                 }
                 Scaffold(
@@ -412,7 +507,13 @@ class MainActivity : ComponentActivity() {
                     bottomBar = {
                         if (!WindowInsets.isImeVisible) {
                         androidx.compose.material3.NavigationBar {
-                            listOf(0 to "设备", 3 to "Agent", 2 to "能力", 1 to "应用", 4 to "设置").forEach { (page, title) ->
+                            listOf(
+                                0 to stringResource(R.string.nav_device),
+                                3 to stringResource(R.string.nav_agent),
+                                2 to stringResource(R.string.nav_capabilities),
+                                1 to stringResource(R.string.nav_apps),
+                                4 to stringResource(R.string.nav_settings)
+                            ).forEach { (page, title) ->
                                 NavigationBarItem(
                                     selected = selectedPage == page,
                                     onClick = { selectedPage = page },
@@ -441,8 +542,28 @@ class MainActivity : ComponentActivity() {
                                 rootBatteryInfo = rootBatteryInfo,
                                 sampledAt = currentSnapshot.sampledAt,
                                 deviceProfile = deviceProfile,
+                                importedHardwareSupplyInfo = importedHardwareSupplyInfo,
                                 isDeviceProfileReading = isDeviceProfileReading,
                                 onReadDeviceProfile = onReadDeviceProfile,
+                                onImportHardwareReport = {
+                                    bugReportPicker.launch(
+                                        arrayOf("application/zip", "text/plain", "application/octet-stream")
+                                    )
+                                },
+                                isHardwareReportBusy =
+                                    powerDiagnosticState is PowerDiagnosticUiState.Collecting ||
+                                        powerDiagnosticState == PowerDiagnosticUiState.Importing,
+                                onCopyHardwareFeedback = { feedback ->
+                                    val clipboard = getSystemService(android.content.ClipboardManager::class.java)
+                                    clipboard.setPrimaryClip(
+                                        android.content.ClipData.newPlainText("APA 硬件识别反馈", feedback)
+                                    )
+                                    android.widget.Toast.makeText(
+                                        this@MainActivity,
+                                        RuntimeUiCopy.text(RuntimeNotice.SUPPLIER_FEEDBACK_COPIED, appLanguage),
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                },
                                 onOpenUsageAccessSettings = ::openUsageAccessSettings,
                                 onRefresh = onRefresh,
                                 isRefreshing = isSnapshotRefreshing,
@@ -475,13 +596,24 @@ class MainActivity : ComponentActivity() {
                             }
                             2 -> CapabilitySectionsScreen(
                                 launchableAppCount = currentSnapshot.installedApps.size,
+                                usageAccessGranted = currentSnapshot.usageSummary.accessGranted,
                                 onOpenUsageAccessSettings = { openUsageAccessSettings() },
                                 rootStatus = currentSnapshot.rootStatus,
+                                shizukuAccessState = shizukuAccessState,
+                                rootAuthorized = rootAuthorized,
                                 rootBatteryInfo = rootBatteryInfo,
                                 isRootBatteryReading = isRootBatteryReading,
                                 deviceProfile = deviceProfile,
                                 isDeviceProfileReading = isDeviceProfileReading,
-                                onOpenShizuku = { openShizuku() },
+                                onShizukuAction = {
+                                    when (shizukuAccessState) {
+                                        ShizukuAccessState.PERMISSION_REQUIRED -> {
+                                            if (!ShizukuCapabilityTool.requestPermission()) openShizuku()
+                                        }
+                                        ShizukuAccessState.AUTHORIZED -> Unit
+                                        else -> openShizuku()
+                                    }
+                                },
                                 onOpenRootManager = {
                                     val rootManagerPackage =
                                         currentSnapshot.rootStatus.kernelSuManagerPackage
@@ -489,14 +621,17 @@ class MainActivity : ComponentActivity() {
                                     openRootManager(rootManagerPackage)
                                 },
                                 onReadRootBattery = {
-                                    isRootBatteryReading = true
-                                    Thread {
-                                        val result = RootBatteryTool.read()
-                                        this@MainActivity.runOnUiThread {
+                                    if (!isRootBatteryReading) {
+                                        isRootBatteryReading = true
+                                        scope.launch {
+                                            try {
+                                                val result = withContext(Dispatchers.IO) { RootBatteryTool.read() }
                                             rootBatteryInfo = result
+                                            } finally {
                                             isRootBatteryReading = false
                                         }
-                                    }.start()
+                                        }
+                                    }
                                 },
                                 onReadDeviceProfile = onReadDeviceProfile,
                                 modifier = Modifier.padding(24.dp)
@@ -504,10 +639,8 @@ class MainActivity : ComponentActivity() {
                             3 -> AgentChatScreen(
                                 state = session.agent,
                                 messages = chatMessages,
-                                rootAdviceAuthorized = AdviceCapabilityPolicy.hasSuccessfulRootEvidence(
-                                    readAttempted = rootBatteryInfo != null,
-                                    error = rootBatteryInfo?.error
-                                ),
+                                shizukuAdviceAuthorized = agentCapabilityAccess.shizukuAuthorized,
+                                rootAdviceAuthorized = agentCapabilityAccess.rootAuthorized,
                                 onAnalyze = { question, attachedReportLabel, attachedPowerDiagnosticReport ->
                                     chatMessages = chatMessages + AgentConversationMessage(
                                         role = MessageRole.USER, content = question, attachedReportLabel = attachedReportLabel
@@ -516,11 +649,11 @@ class MainActivity : ComponentActivity() {
                                     scope.launch {
                                         try {
                                             val fresh = refreshSnapshot()
-                                            val report = LocalDeviceAnalyzer.analyze(fresh.toDeviceContext())
+                                            val report = LocalDeviceAnalyzer.analyze(fresh.toDeviceContext(), appLanguage)
                                             session.appendAnalysisMessage(generation, AgentConversationMessage(
                                                 role = MessageRole.ASSISTANT,
                                                 content = buildString {
-                                                    appendLine("采样时间：${fresh.sampledAt}")
+                                                    appendLine(if (appLanguage == AppLanguage.EN) "Sample time: ${fresh.sampledAt}" else "采样时间：${fresh.sampledAt}")
                                                     append(report.toChatContent())
                                                     attachedPowerDiagnosticReport?.let {
                                                         appendLine()
@@ -535,7 +668,9 @@ class MainActivity : ComponentActivity() {
                                             throw cancelled
                                         } catch (_: Exception) {
                                             session.appendAnalysisMessage(generation, AgentConversationMessage(
-                                                role = MessageRole.ERROR, content = "设备数据刷新失败，请重试。", source = "LOCAL · ERROR"
+                                                role = MessageRole.ERROR,
+                                                content = if (appLanguage == AppLanguage.EN) "Could not refresh device data. Try again." else "设备数据刷新失败，请重试。",
+                                                source = "LOCAL · ERROR"
                                             ))
                                         } finally { session.finishAnalysis(generation) }
                                     }
@@ -548,11 +683,8 @@ class MainActivity : ComponentActivity() {
                                     val attachedDeviceProfile = deviceProfile
                                     val effectiveLevel = AdviceCapabilityPolicy.effectiveLevel(
                                         requestedLevel = selectedLevel,
-                                        shizukuAuthorized = false,
-                                        rootAuthorized = AdviceCapabilityPolicy.hasSuccessfulRootEvidence(
-                                            readAttempted = attachedRootBattery != null,
-                                            error = attachedRootBattery?.error
-                                        )
+                                        shizukuAuthorized = agentCapabilityAccess.shizukuAuthorized,
+                                        rootAuthorized = agentCapabilityAccess.rootAuthorized
                                     )
                                     val cloudAdviceScope = AdviceCapabilityPolicy.cloudAdviceScope(
                                         selectedLevel = effectiveLevel,
@@ -584,13 +716,19 @@ class MainActivity : ComponentActivity() {
                                                     selectedLevel = effectiveLevel,
                                                     levelReport = effectiveLevel?.let { level ->
                                                         checkNotNull(fresh).buildLevelReport(
-                                                            level, attachedRootBattery, attachedDeviceProfile, includeUsageReport
+                                                            level,
+                                                            attachedRootBattery,
+                                                            attachedDeviceProfile,
+                                                            includeUsageReport,
+                                                            appLanguage,
+                                                            shizukuAccessState
                                                         )
                                                     },
-                                                    appReport = fresh?.buildAppReport().takeIf { includeAppReport },
+                                                    appReport = fresh?.buildAppReport(appLanguage).takeIf { includeAppReport },
                                                     powerDiagnosticReport = attachedPowerDiagnosticReport,
                                                     conversationHistory = previousMessages,
-                                                    credentials = credentials
+                                                    credentials = credentials,
+                                                    language = appLanguage
                                                 )
                                             }
                                             session.appendAnalysisMessage(generation, AgentConversationMessage(
@@ -606,7 +744,7 @@ class MainActivity : ComponentActivity() {
                                             throw cancelled
                                         } catch (error: Exception) {
                                             session.appendAnalysisMessage(generation, AgentConversationMessage(
-                                                role = MessageRole.ERROR, content = AgentErrorMessage.from(error), source = "MODEL · ERROR"
+                                                role = MessageRole.ERROR, content = AgentErrorMessage.from(error, appLanguage), source = "MODEL · ERROR"
                                             ))
                                         } finally { session.finishAnalysis(generation) }
                                     }
@@ -668,21 +806,36 @@ class MainActivity : ComponentActivity() {
                                 onCopyMessage = { messageText ->
                                     val clipboard = getSystemService(android.content.ClipboardManager::class.java)
                                     clipboard.setPrimaryClip(
-                                        android.content.ClipData.newPlainText("APA 回复", messageText)
+                                        android.content.ClipData.newPlainText(
+                                            if (appLanguage == AppLanguage.EN) "APA reply" else "APA 回复",
+                                            messageText
+                                        )
                                     )
                                     android.widget.Toast.makeText(
-                                        this@MainActivity, "回复已复制", android.widget.Toast.LENGTH_SHORT
+                                        this@MainActivity,
+                                        if (appLanguage == AppLanguage.EN) "Reply copied" else "回复已复制",
+                                        android.widget.Toast.LENGTH_SHORT
                                     ).show()
                                 },
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 16.dp)
                             )
-                                else -> SettingsPrivacyScreen(modifier = Modifier.padding(24.dp))
+                                else -> SettingsPrivacyScreen(
+                                    currentLanguage = appLanguage,
+                                    onLanguageSelected = { language ->
+                                        if (language != appLanguage) {
+                                            AppLanguageStore.save(this@MainActivity, language)
+                                            this@MainActivity.recreate()
+                                        }
+                                    },
+                                    modifier = Modifier.padding(24.dp)
+                                )
                             }
                             }
 
                         }
                     }
                 }
+            }
             }
         }
     }
@@ -695,17 +848,6 @@ class MainActivity : ComponentActivity() {
             @Suppress("DEPRECATION")
             sourceIntent.getParcelableExtra(Intent.EXTRA_STREAM)
         }
-    }
-
-    private fun BugReportRejectReason.userMessage(): String = when (this) {
-        BugReportRejectReason.EMPTY -> "报告里没有找到可识别的系统耗电段落。"
-        BugReportRejectReason.UNSUPPORTED_FORMAT -> "只支持系统生成的 Bug Report ZIP 或文本文件。"
-        BugReportRejectReason.CORRUPT_ARCHIVE -> "压缩包已损坏或无法安全读取，请重新生成报告。"
-        BugReportRejectReason.UNSAFE_ENTRY_NAME -> "报告压缩包包含不安全路径，已拒绝读取。"
-        BugReportRejectReason.NESTED_ARCHIVE -> "报告包含嵌套压缩包，已拒绝读取。"
-        BugReportRejectReason.TOO_MANY_ENTRIES -> "报告文件条目过多，已停止读取。"
-        BugReportRejectReason.ENTRY_TOO_LARGE -> "报告中的单个文件过大，已停止读取。"
-        BugReportRejectReason.TOTAL_TOO_LARGE -> "报告解压后的内容过大，已停止读取。"
     }
 
     private fun readDeviceSnapshot(): DeviceSnapshot {
@@ -744,7 +886,11 @@ class MainActivity : ComponentActivity() {
                 runCatching { startActivity(browserIntent) }.onFailure {
                     android.widget.Toast.makeText(
                         this,
-                        "未找到可打开下载页面的浏览器",
+                        if (AppLanguageStore.load(this) == AppLanguage.EN) {
+                            "No browser is available to open the download page"
+                        } else {
+                            "未找到可打开下载页面的浏览器"
+                        },
                         android.widget.Toast.LENGTH_SHORT
                     ).show()
                 }
@@ -781,7 +927,9 @@ private fun DeviceSnapshot.buildLevelReport(
     selectedLevel: String,
     rootBatteryInfo: RootBatteryInfo?,
     deviceProfile: DeviceProfileSnapshot?,
-    includeUsageReport: Boolean = false
+    includeUsageReport: Boolean = false,
+    language: AppLanguage = AppLanguage.ZH_CN,
+    shizukuAccessState: ShizukuAccessState = ShizukuAccessState.NOT_INSTALLED
 ): String = when (selectedLevel) {
     "Level 0" -> Level0ReportBuilder.build(
         sampledAt = sampledAt,
@@ -796,58 +944,37 @@ private fun DeviceSnapshot.buildLevelReport(
         socName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             listOf(Build.SOC_MANUFACTURER, Build.SOC_MODEL).filter { it.isNotBlank() }.joinToString(" ")
         } else null,
-        supportedAbis = Build.SUPPORTED_ABIS.toList()
+        supportedAbis = Build.SUPPORTED_ABIS.toList(),
+        language = language
     )
 
-    "Level 1" -> buildString {
-        appendLine("采样时间：$sampledAt")
-        appendLine("Shizuku 应用：${if (rootStatus.isShizukuInstalled) "已安装" else "未检测到"}")
-        appendLine("Shizuku 服务连接状态：当前版本尚未读取")
-        appendLine("Shizuku 授权状态：当前版本尚未读取")
-        appendLine("说明：仅凭安装状态不能判断服务已启动或应用已获授权。")
-    }
+    "Level 1" -> AdvancedLevelReportBuilder.buildLevel1(
+        sampledAt = sampledAt,
+        rootStatus = rootStatus,
+        shizukuAccessState = shizukuAccessState,
+        language = language
+    )
 
-    "Level 2" -> buildString {
-        appendLine("采样时间：$sampledAt")
-        appendLine("su 接口：${if (rootStatus.hasSuBinary) "检测到" else "未检测到"}")
-        appendLine("KernelSU 管理器：${if (rootStatus.isKernelSuManagerInstalled) "已安装" else "未检测到"}")
-        appendLine("Magisk 管理器：${if (rootStatus.isMagiskManagerInstalled) "已安装" else "未检测到"}")
-        when {
-            rootBatteryInfo == null -> appendLine("Root 高级电池信息：本次尚未读取")
-            rootBatteryInfo.error != null -> appendLine("Root 高级电池信息：${rootBatteryInfo.error}")
-            else -> {
-                appendLine("高级电池采样时间：${rootBatteryInfo.sampledAt}（需在能力页手动重读）")
-                appendLine("设计容量：${rootBatteryInfo.designCapacityMah?.let { "$it mAh" } ?: "设备未提供"}")
-                appendLine("满充容量：${rootBatteryInfo.fullChargeCapacityMah?.let { "$it mAh" } ?: "设备未提供"}")
-                appendLine("循环次数：${rootBatteryInfo.cycleCount ?: "设备未提供"}")
-                appendLine("瞬时电流：${rootBatteryInfo.currentMilliAmp?.let { "$it mA" } ?: "设备未提供"}")
-                appendLine("电压：${rootBatteryInfo.voltageMilliVolt?.let { "$it mV" } ?: "设备未提供"}")
-                appendLine("温度：${rootBatteryInfo.temperatureCelsius?.let { "$it°C" } ?: "设备未提供"}")
-            }
-        }
-        if (deviceProfile == null) {
-            appendLine("调度档案：本次尚未读取；APA 未修改系统调度")
-        } else {
-            appendLine()
-            append(deviceProfile.toReportText())
-        }
-    }
+    "Level 2" -> AdvancedLevelReportBuilder.buildLevel2(
+        sampledAt = sampledAt,
+        rootStatus = rootStatus,
+        rootBatteryInfo = rootBatteryInfo,
+        deviceProfile = deviceProfile,
+        language = language
+    )
 
-    else -> "未知报告等级：$selectedLevel"
-}
-
-private fun DeviceSnapshot.buildAppReport(): String = buildString {
-    appendLine("可启动应用数量：${installedApps.size}")
-    detectedApps.forEach { app ->
-        appendLine(
-            if (app.isInstalled) {
-                "${app.displayName}：已安装（${app.packageName ?: "包名未知"}）"
-            } else {
-                "${app.displayName}：未检测到"
-            }
-        )
+    else -> if (language == AppLanguage.EN) {
+        "Unknown report level: $selectedLevel"
+    } else {
+        "未知报告等级：$selectedLevel"
     }
 }
+
+private fun DeviceSnapshot.buildAppReport(language: AppLanguage): String = AppReportBuilder.build(
+    launchableAppCount = installedApps.size,
+    detectedApps = detectedApps,
+    language = language
+)
 
 @Composable
 fun DeviceReportScreen(
@@ -860,147 +987,194 @@ fun DeviceReportScreen(
     rootBatteryInfo: RootBatteryInfo?,
     sampledAt: String,
     deviceProfile: DeviceProfileSnapshot?,
+    importedHardwareSupplyInfo: HardwareSupplyInfo?,
     isDeviceProfileReading: Boolean,
     onReadDeviceProfile: () -> Unit,
+    onImportHardwareReport: () -> Unit,
+    isHardwareReportBusy: Boolean,
+    onCopyHardwareFeedback: (String) -> Unit,
     onOpenUsageAccessSettings: () -> Unit,
     onRefresh: () -> Unit,
     isRefreshing: Boolean = false,
     refreshError: String? = null,
     modifier: Modifier = Modifier
 ) {
+    val appLanguage = LocalAppLanguage.current
     var isChipDetailsExpanded by rememberSaveable { mutableStateOf(false) }
+    var showHardwareImportHelp by rememberSaveable { mutableStateOf(false) }
+    val hardwareSupplyInfo = importedHardwareSupplyInfo
+        ?.mergeMissingFrom(deviceProfile?.hardwareSupplyInfo)
+        ?: deviceProfile?.hardwareSupplyInfo
+    val hardwareSummary = HardwareSupplySummary.format(
+        hardware = hardwareSupplyInfo,
+        totalRamBytes = ramInfo.totalBytes,
+        totalStorageBytes = storageInfo.totalBytes,
+        language = appLanguage
+    )
+    val hardwareNeedsReview = HardwareSupplierRecognition.needsReview(hardwareSupplyInfo)
+    val hardwareFeedback = HardwareSupplierFeedback.format(
+        deviceName = deviceInfo.model,
+        androidVersion = deviceInfo.androidVersion,
+        hardware = hardwareSupplyInfo,
+        appVersion = BuildConfig.VERSION_NAME,
+        language = appLanguage
+    )
+    val chipDetails = deviceProfile?.toChipSchedulingDetails()
     Column(
         modifier = modifier.verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(text = "设备概览", style = androidx.compose.material3.MaterialTheme.typography.headlineMedium)
-        QuickReportPanel(deviceInfo.model, sampledAt, batteryInfo,
-            "${deviceInfo.androidVersion}\n" +
-                "当前刷新率：${displayInfo.currentRefreshRate?.let { "${it.toInt()} Hz" } ?: "未获取到"}\n" +
-                "可用内存：${formatSize(ramInfo.availableBytes)} / ${formatSize(ramInfo.totalBytes)}\n" +
-                "可用存储：${formatSize(storageInfo.availableBytes)} / ${formatSize(storageInfo.totalBytes)}\n\n" +
-                "内存和存储是当前快照，不能单独用来确定卡顿原因。")
-        Text(text = "LAST SAMPLE · 最近采样：$sampledAt")
-        refreshError?.let { Text(text = it) }
-        Button(onClick = onRefresh, enabled = !isRefreshing) {
-            Text(text = if (isRefreshing) "正在刷新…" else "REFRESH · 刷新")
-        }
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(text = "实时状态", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
-                InfoLine("🔋", "电池", "${batteryInfo.levelText}（${batteryInfo.status}）")
-                InfoLine("⚡", "电流", batteryInfo.currentMilliAmp?.let { "$it mA" } ?: "设备未上报")
-                InfoLine("🔋", "剩余电量", batteryInfo.remainingMilliAmpHour?.let { "$it mAh" } ?: "设备未上报")
-                InfoLine("⚙", "剩余能量", batteryInfo.remainingMilliWattHour?.let { "$it mWh" } ?: "设备未上报")
-                InfoLine("🌡", "电池温度", batteryInfo.temperatureCelsius?.let { "$it°C" } ?: "设备未上报")
-                InfoLine("⚙", "电池电压", batteryInfo.voltageMilliVolt?.let { "$it mV" } ?: "设备未上报")
-                InfoLine("", "电池健康", batteryInfo.health ?: "设备未上报")
-                InfoLine("", "充电方式", batteryInfo.plugged ?: "设备未上报")
-            }
-        }
-
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(text = "屏幕体验", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
-                DisplayReportText.format(displayInfo).trim().lines().forEach { line -> Text(text = line) }
-            }
-        }
-
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(text = "使用习惯（可选）", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
-                if (!usageSummary.accessGranted) {
-                    Text(text = "未授权，不影响基础报告")
-                    Text(text = "授权后可汇总当天应用前台使用时长；这不是精确亮屏时长。")
-                    Text(text = "授权后返回 APA 会自动更新数据。")
-                    Button(onClick = onOpenUsageAccessSettings) { Text(text = "授权使用情况") }
-                } else {
-                    val total = usageSummary.foregroundTimeMillis
-                    InfoLine("⏱", "当天应用前台使用（估算）", total?.let {
-                        "${it / 3_600_000} 小时 ${(it / 60_000) % 60} 分"
-                    } ?: "未获取到")
-                    usageSummary.rangeText?.let { Text(text = "统计范围：$it") }
-                    Text(text = "按系统前后台事件估算，记录可能缺失或延迟，不等同于精确亮屏时长。")
-                    if (usageSummary.isPartial) Text(text = "部分事件缺失，时长可能偏低。")
-                    usageSummary.topApps.forEach { app ->
-                        InfoLine("", app.label, "${app.foregroundTimeMillis / 60_000} 分")
-                    }
-                    if (usageSummary.topApps.isEmpty()) Text(text = "系统暂未返回今天的应用使用数据")
-                }
-            }
-        }
-
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(text = "设备与系统", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
-                DetailLine("📱", "设备型号", deviceInfo.model)
-                DetailLine("", "系统型号", deviceInfo.identity.identifiers.modelCode ?: "未获取到")
-                DetailLine("", "名称来源", when (deviceInfo.identity.nameSource) {
-                    com.aegis.apa.model.DeviceNameSource.CURATED -> "项目机型映射"
-                    com.aegis.apa.model.DeviceNameSource.OFFLINE_DATABASE -> "离线名称库"
-                    com.aegis.apa.model.DeviceNameSource.SYSTEM_MODEL -> "系统原值（未匹配商品名）"
-                    com.aegis.apa.model.DeviceNameSource.UNAVAILABLE -> "未获取到"
-                })
-                InfoLine("🤖", "Android", deviceInfo.androidVersion)
-                val chipDetails = deviceProfile?.toChipSchedulingDetails()
-                val hardwareGrade = HardwareExperienceEvaluator.evaluate(
-                    totalRamBytes = ramInfo.totalBytes,
-                    totalStorageBytes = storageInfo.totalBytes,
-                    maxCpuFrequencyKhz = deviceProfile
-                        ?.cpuPolicies
-                        ?.mapNotNull { it.maxFrequencyKhz }
-                        ?.maxOrNull()
-                )
-                DetailLine("🏅", "硬件等级", "${hardwareGrade.label} · ${hardwareGrade.summary}")
-                hardwareGrade.reasons.forEach { reason ->
-                    InfoLine("", "依据", reason)
-                }
-                Text(text = "芯片：${chipDetails?.chipset ?: "未读取"}")
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "调度：${chipDetails?.scheduler ?: "未读取"}",
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(
-                        onClick = {
-                            if (chipDetails == null) onReadDeviceProfile() else {
-                                isChipDetailsExpanded = !isChipDetailsExpanded
-                            }
-                        },
-                        enabled = !isDeviceProfileReading
-                    ) {
+        Text(text = stringResource(R.string.device_overview), style = androidx.compose.material3.MaterialTheme.typography.headlineMedium)
+        QuickReportPanel(
+            model = deviceInfo.model,
+            sampledAt = sampledAt,
+            battery = batteryInfo,
+            deviceSummary = if (appLanguage == AppLanguage.EN) {
+                "${deviceInfo.androidVersion}\n" +
+                    "Current refresh rate: ${displayInfo.currentRefreshRate?.let { "${it.toInt()} Hz" } ?: "Unavailable"}\n" +
+                    "Available RAM: ${formatSize(ramInfo.availableBytes)} / ${formatSize(ramInfo.totalBytes)}\n" +
+                    "Available storage: ${formatSize(storageInfo.availableBytes)} / ${formatSize(storageInfo.totalBytes)}\n\n" +
+                    "RAM and storage are current snapshots and cannot identify the cause of lag on their own."
+            } else {
+                "${deviceInfo.androidVersion}\n" +
+                    "当前刷新率：${displayInfo.currentRefreshRate?.let { "${it.toInt()} Hz" } ?: "未获取到"}\n" +
+                    "可用内存：${formatSize(ramInfo.availableBytes)} / ${formatSize(ramInfo.totalBytes)}\n" +
+                    "可用存储：${formatSize(storageInfo.availableBytes)} / ${formatSize(storageInfo.totalBytes)}\n\n" +
+                    "内存和存储是当前快照，不能单独用来确定卡顿原因。"
+            },
+            hardwareSummary = hardwareSummary
+        ) {
+            DetailLine(
+                "",
+                if (appLanguage == AppLanguage.EN) "System model" else "系统型号",
+                deviceInfo.identity.identifiers.modelCode ?: if (appLanguage == AppLanguage.EN) "Unavailable" else "未获取到"
+            )
+            Text(
+                text = deviceInfo.androidVersion,
+                maxLines = 1
+            )
+            hardwareSummary?.let { summary ->
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    summary.lineSequence().forEach { line ->
                         Text(
-                            text = when {
-                                isDeviceProfileReading -> "读取中…"
-                                chipDetails == null -> "读取⌄"
-                                isChipDetailsExpanded -> "收起⌃"
-                                else -> "详细⌄"
-                            }
+                            text = line,
+                            color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                            style = androidx.compose.material3.MaterialTheme.typography.bodyLarge
                         )
                     }
                 }
-                if (isChipDetailsExpanded && chipDetails != null) {
-                    InfoLine("", "读取方式", chipDetails.access)
-                    InfoLine("", "核心", chipDetails.cpuTopology)
-                    chipDetails.policySummaries.forEach { Text(text = it) }
-                    InfoLine("", "温度", chipDetails.thermalSummary)
-                    InfoLine("", "系统", chipDetails.kernelSummary)
-                    deviceProfile.error?.let { InfoLine("⚠", "采集提示", it) }
+            }
+            if (hardwareNeedsReview) {
+                HardwareReportImportAction(isHardwareReportBusy, onImportHardwareReport)
+                hardwareFeedback?.let { feedback ->
+                    OutlinedButton(onClick = { onCopyHardwareFeedback(feedback) }) {
+                        Text(stringResource(R.string.copy_identification))
+                    }
+                }
+                TextButton(onClick = { showHardwareImportHelp = !showHardwareImportHelp }) {
+                    Text(if (showHardwareImportHelp) stringResource(R.string.collapse_generation_steps) else stringResource(R.string.how_generate_system_report))
+                }
+                if (showHardwareImportHelp) {
+                    BugReportImportHelpContent()
+                }
+            }
+            Text(text = if (appLanguage == AppLanguage.EN) "Chip: ${chipDetails?.chipset ?: "Not read"}" else "芯片：${chipDetails?.chipset ?: "未读取"}")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (appLanguage == AppLanguage.EN) "Scheduler: ${chipDetails?.scheduler ?: "Not read"}" else "调度：${chipDetails?.scheduler ?: "未读取"}",
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(
+                    onClick = {
+                        if (chipDetails == null) onReadDeviceProfile() else {
+                            isChipDetailsExpanded = !isChipDetailsExpanded
+                        }
+                    },
+                    enabled = !isDeviceProfileReading
+                ) {
+                    Text(
+                        text = when {
+                            isDeviceProfileReading -> if (appLanguage == AppLanguage.EN) "Reading…" else "读取中…"
+                            chipDetails == null -> if (appLanguage == AppLanguage.EN) "Read⌄" else "读取⌄"
+                            isChipDetailsExpanded -> if (appLanguage == AppLanguage.EN) "Collapse⌃" else "收起⌃"
+                            else -> if (appLanguage == AppLanguage.EN) "Details⌄" else "详细⌄"
+                        }
+                    )
+                }
+            }
+            if (isChipDetailsExpanded && chipDetails != null) {
+                InfoLine("", if (appLanguage == AppLanguage.EN) "Access" else "读取方式", chipDetails.access)
+                InfoLine("", if (appLanguage == AppLanguage.EN) "Cores" else "核心", chipDetails.cpuTopology)
+                chipDetails.policySummaries.forEach { Text(text = it) }
+                InfoLine("", if (appLanguage == AppLanguage.EN) "Temperature" else "温度", chipDetails.thermalSummary)
+                InfoLine("", if (appLanguage == AppLanguage.EN) "System" else "系统", chipDetails.kernelSummary)
+                deviceProfile.error?.let { InfoLine("⚠", if (appLanguage == AppLanguage.EN) "Collection note" else "采集提示", it) }
+            }
+        }
+        Text(text = stringResource(R.string.last_sample_format, sampledAt))
+        refreshError?.let { Text(text = it) }
+        Button(onClick = onRefresh, enabled = !isRefreshing) {
+            Text(text = if (isRefreshing) {
+                if (appLanguage == AppLanguage.EN) "Refreshing…" else "正在刷新…"
+            } else if (appLanguage == AppLanguage.EN) "REFRESH" else "REFRESH · 刷新")
+        }
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(text = stringResource(R.string.live_status), style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
+                val unavailable = if (appLanguage == AppLanguage.EN) "Not reported" else "设备未上报"
+                InfoLine("🔋", if (appLanguage == AppLanguage.EN) "Battery" else "电池", "${batteryInfo.levelText} (${DeviceUiCopy.batteryStatus(batteryInfo.status, appLanguage)})")
+                InfoLine("⚡", if (appLanguage == AppLanguage.EN) "Current" else "电流", batteryInfo.currentMilliAmp?.let { "$it mA" } ?: unavailable)
+                InfoLine("🔋", if (appLanguage == AppLanguage.EN) "Remaining charge" else "剩余电量", batteryInfo.remainingMilliAmpHour?.let { "$it mAh" } ?: unavailable)
+                InfoLine("⚙", if (appLanguage == AppLanguage.EN) "Remaining energy" else "剩余能量", batteryInfo.remainingMilliWattHour?.let { "$it mWh" } ?: unavailable)
+                InfoLine("🌡", if (appLanguage == AppLanguage.EN) "Battery temperature" else "电池温度", batteryInfo.temperatureCelsius?.let { "$it°C" } ?: unavailable)
+                InfoLine("⚙", if (appLanguage == AppLanguage.EN) "Battery voltage" else "电池电压", batteryInfo.voltageMilliVolt?.let { "$it mV" } ?: unavailable)
+                InfoLine("", if (appLanguage == AppLanguage.EN) "Battery health" else "电池健康", batteryInfo.health?.let { DeviceUiCopy.batteryHealth(it, appLanguage) } ?: unavailable)
+                InfoLine("", if (appLanguage == AppLanguage.EN) "Power source" else "充电方式", batteryInfo.plugged?.let { DeviceUiCopy.plugged(it, appLanguage) } ?: unavailable)
+            }
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(text = stringResource(R.string.screen_experience), style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
+                DisplayReportText.format(displayInfo, appLanguage).trim().lines().forEach { line -> Text(text = line) }
+            }
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(text = stringResource(R.string.usage_habits_optional), style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
+                if (!usageSummary.accessGranted) {
+                    Text(text = stringResource(R.string.usage_not_authorized))
+                    Text(text = stringResource(R.string.usage_authorization_explanation))
+                    Text(text = stringResource(R.string.usage_return_refresh))
+                    Button(onClick = onOpenUsageAccessSettings) { Text(text = stringResource(R.string.authorize_usage_access)) }
+                } else {
+                    val total = usageSummary.foregroundTimeMillis
+                    InfoLine(
+                        "⏱",
+                        if (appLanguage == AppLanguage.EN) "Foreground app use today (estimated)" else "当天应用前台使用（估算）",
+                        total?.let { DeviceUiCopy.duration(it, appLanguage) }
+                            ?: if (appLanguage == AppLanguage.EN) "Unavailable" else "未获取到"
+                    )
+                    usageSummary.rangeText(appLanguage)?.let { Text(text = stringResource(R.string.usage_range_format, it)) }
+                    Text(text = stringResource(R.string.usage_estimate_notice))
+                    if (usageSummary.isPartial) Text(text = stringResource(R.string.usage_partial_notice))
+                    usageSummary.topApps.forEach { app ->
+                        InfoLine("", app.label, if (appLanguage == AppLanguage.EN) "${app.foregroundTimeMillis / 60_000} min" else "${app.foregroundTimeMillis / 60_000} 分")
+                    }
+                    if (usageSummary.topApps.isEmpty()) Text(text = stringResource(R.string.usage_no_data))
                 }
             }
         }
@@ -1010,34 +1184,39 @@ fun DeviceReportScreen(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(text = "内存与存储", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
-                DetailLine("💾", "内存", "${formatSize(ramInfo.availableBytes)} 可用 / ${formatSize(ramInfo.totalBytes)} 总量")
-                InfoLine("", "内存状态", if (ramInfo.isLowMemory) "内存不足" else "正常")
-                DetailLine("🗄", "内置存储", "${formatSize(storageInfo.usedBytes)} 已用 / ${formatSize(storageInfo.totalBytes)} 总量")
-                InfoLine("", "可用空间", formatSize(storageInfo.availableBytes))
-            }
-        }
-
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(text = "进阶电池", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
+                Text(text = stringResource(R.string.advanced_battery), style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
                 when {
-                    rootBatteryInfo == null -> Text(text = "尚未读取 · 需要 Root 授权")
-                    rootBatteryInfo.error != null -> InfoLine("⚠", "读取结果", rootBatteryInfo.error)
+                    rootBatteryInfo == null -> Text(text = stringResource(R.string.root_battery_not_read))
+                    rootBatteryInfo.error != null -> InfoLine("⚠", if (appLanguage == AppLanguage.EN) "Read result" else "读取结果", rootBatteryInfo.error)
                     else -> {
-                        InfoLine("🔋", "设计容量", "${rootBatteryInfo.designCapacityMah ?: "N/A"} mAh")
-                        InfoLine("", "满充容量", "${rootBatteryInfo.fullChargeCapacityMah ?: "N/A"} mAh")
-                        InfoLine("", "循环次数", rootBatteryInfo.cycleCount?.toString() ?: "N/A")
-                        InfoLine("⚡", "电池电流", "${rootBatteryInfo.currentMilliAmp ?: "N/A"} mA")
-                        InfoLine("⚙", "电池电压", "${rootBatteryInfo.voltageMilliVolt ?: "N/A"} mV")
-                        InfoLine("🌡", "电池温度", "${rootBatteryInfo.temperatureCelsius ?: "N/A"} °C")
+                        InfoLine("🔋", if (appLanguage == AppLanguage.EN) "Design capacity" else "设计容量", "${rootBatteryInfo.designCapacityMah ?: "N/A"} mAh")
+                        InfoLine("", if (appLanguage == AppLanguage.EN) "Full-charge capacity" else "满充容量", "${rootBatteryInfo.fullChargeCapacityMah ?: "N/A"} mAh")
+                        InfoLine("", if (appLanguage == AppLanguage.EN) "Cycle count" else "循环次数", rootBatteryInfo.cycleCount?.toString() ?: "N/A")
+                        InfoLine("⚡", if (appLanguage == AppLanguage.EN) "Battery current" else "电池电流", "${rootBatteryInfo.currentMilliAmp ?: "N/A"} mA")
+                        InfoLine("⚙", if (appLanguage == AppLanguage.EN) "Battery voltage" else "电池电压", "${rootBatteryInfo.voltageMilliVolt ?: "N/A"} mV")
+                        InfoLine("🌡", if (appLanguage == AppLanguage.EN) "Battery temperature" else "电池温度", "${rootBatteryInfo.temperatureCelsius ?: "N/A"} °C")
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun HardwareReportImportAction(
+    busy: Boolean,
+    onImportHardwareReport: () -> Unit
+) {
+    val language = LocalAppLanguage.current
+    OutlinedButton(
+        onClick = onImportHardwareReport,
+        enabled = !busy
+    ) {
+        Text(
+            text = if (language == AppLanguage.EN) {
+                if (busy) "Processing system report…" else "Import system report to read vendors"
+            } else if (busy) "系统报告处理中…" else "导入系统报告读取厂商"
+        )
     }
 }
 
@@ -1049,14 +1228,15 @@ fun AppPerceptionScreen(
     onAppSelected: (InstalledApp) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val language = LocalAppLanguage.current
     Column(
         modifier = modifier.verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(text = "应用检测", style = androidx.compose.material3.MaterialTheme.typography.headlineMedium)
-        Text(text = "检测常见 Root、框架与应用生态工具")
+        Text(text = stringResource(R.string.app_detection), style = androidx.compose.material3.MaterialTheme.typography.headlineMedium)
+        Text(text = stringResource(R.string.app_detection_description))
         Button(onClick = onRefresh) {
-            Text(text = "重新扫描应用")
+            Text(text = stringResource(R.string.rescan_apps))
         }
         detectedApps.groupBy { it.category }.forEach { (category, apps) ->
             Card(modifier = Modifier.fillMaxWidth()) {
@@ -1064,9 +1244,9 @@ fun AppPerceptionScreen(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(text = category.displayName)
+                    Text(text = category.displayName(language))
                     apps.forEach { detectedApp ->
-                        val status = if (detectedApp.isInstalled) "已安装" else "未检测到"
+                        val status = DeviceUiCopy.installedState(detectedApp.isInstalled, language)
                         Text(
                             text = "${detectedApp.displayName} · $status" +
                                 (detectedApp.packageName?.let { "\n$it" } ?: ""),
@@ -1085,10 +1265,10 @@ fun AppPerceptionScreen(
                 }
             }
         }
-        Text(text = "全部可启动应用", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
-        Text(text = "应用概览")
-        Text(text = "已识别可启动应用：${installedApps.size}")
-        Text(text = "点击应用查看详情")
+        Text(text = stringResource(R.string.all_launchable_apps), style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
+        Text(text = stringResource(R.string.app_overview))
+        Text(text = stringResource(R.string.identified_apps_format, installedApps.size))
+        Text(text = stringResource(R.string.tap_app_details))
         installedApps.take(5).forEach { app ->
             Text(
                 text = "• ${app.name}\n  ${app.packageName}",
@@ -1110,15 +1290,15 @@ fun AppDetailScreen(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(text = "应用详情", style = androidx.compose.material3.MaterialTheme.typography.headlineMedium)
-        Text(text = "名称：${appDetails.name}")
-        Text(text = "包名：${appDetails.packageName}")
-        Text(text = "版本：${appDetails.versionName} (${appDetails.versionCode})")
-        Text(text = "首次安装：${dateFormat.format(appDetails.firstInstallTime)}")
-        Text(text = "最近更新：${dateFormat.format(appDetails.lastUpdateTime)}")
-        Text(text = "类型：${if (appDetails.isSystemApp) "系统应用" else "用户应用"}")
+        Text(text = stringResource(R.string.app_details), style = androidx.compose.material3.MaterialTheme.typography.headlineMedium)
+        Text(text = stringResource(R.string.app_name_format, appDetails.name))
+        Text(text = stringResource(R.string.package_name_format, appDetails.packageName))
+        Text(text = stringResource(R.string.app_version_format, appDetails.versionName, appDetails.versionCode))
+        Text(text = stringResource(R.string.first_installed_format, dateFormat.format(appDetails.firstInstallTime)))
+        Text(text = stringResource(R.string.last_updated_format, dateFormat.format(appDetails.lastUpdateTime)))
+        Text(text = stringResource(R.string.app_type_format, stringResource(if (appDetails.isSystemApp) R.string.system_app else R.string.user_app)))
         Button(onClick = onBack) {
-            Text(text = "返回")
+            Text(text = stringResource(R.string.common_back))
         }
     }
 }
@@ -1204,35 +1384,52 @@ fun CapabilityScreen(
 @Composable
 fun CapabilitySectionsScreen(
     launchableAppCount: Int,
+    usageAccessGranted: Boolean,
     rootStatus: RootStatus,
+    shizukuAccessState: ShizukuAccessState,
+    rootAuthorized: Boolean,
     rootBatteryInfo: RootBatteryInfo?,
     isRootBatteryReading: Boolean,
     deviceProfile: DeviceProfileSnapshot?,
     isDeviceProfileReading: Boolean,
     onOpenUsageAccessSettings: () -> Unit,
-    onOpenShizuku: () -> Unit,
+    onShizukuAction: () -> Unit,
     onOpenRootManager: () -> Unit,
     onReadRootBattery: () -> Unit,
     onReadDeviceProfile: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val language = LocalAppLanguage.current
+    val english = language == AppLanguage.EN
+    val accessFeedback = CapabilityAccessFeedback(
+        usageAccessGranted = usageAccessGranted,
+        shizukuAccessState = shizukuAccessState,
+        rootAuthorized = rootAuthorized
+    )
     Column(
         modifier = modifier.verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(text = "能力中心", style = androidx.compose.material3.MaterialTheme.typography.headlineMedium)
+        Text(text = stringResource(R.string.capability_center), style = androidx.compose.material3.MaterialTheme.typography.headlineMedium)
 
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(text = "Level 0 · Android API", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
-                Text(text = "本机基础感知：设备、电池、内存、存储与应用列表。")
-                Text(text = "当前已读取可启动应用：$launchableAppCount 个")
-                Text(text = "亮屏时间、近期使用等数据需要你在系统设置中授予“使用情况访问”。")
-                Button(onClick = onOpenUsageAccessSettings) {
-                    Text(text = "授权使用情况访问")
+                Text(text = stringResource(R.string.level0_title), style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
+                Text(text = stringResource(R.string.level0_description))
+                Text(text = stringResource(R.string.launchable_apps_read_format, launchableAppCount))
+                Text(
+                    text = if (english) {
+                        if (usageAccessGranted) "Usage access is granted. APA can read screen-time and recent usage data."
+                        else "Screen-time and recent usage data require Usage Access in system settings."
+                    } else if (usageAccessGranted) {
+                        "使用情况访问已确认，可读取亮屏时间与近期使用数据。"
+                    } else "亮屏时间、近期使用等数据需要你在系统设置中授予“使用情况访问”。"
+                )
+                Button(onClick = onOpenUsageAccessSettings, enabled = accessFeedback.usageActionEnabled) {
+                    Text(text = accessFeedback.usageActionLabel(language))
                 }
             }
         }
@@ -1242,47 +1439,64 @@ fun CapabilitySectionsScreen(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(text = "Level 1 · Shizuku", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
+                Text(text = stringResource(R.string.level1_title), style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
                 Text(
-                    text = if (rootStatus.isShizukuInstalled) {
-                        "已检测到 Shizuku。打开后启动服务，并在 Shizuku 中授权 APA。"
-                    } else {
-                        "未安装 Shizuku。点击按钮用浏览器打开官方下载页面，可选择酷安、GitHub 或 F-Droid。"
-                    }
-                )
-                Button(onClick = onOpenShizuku) {
-                    Text(text = if (rootStatus.isShizukuInstalled) "打开 Shizuku" else "浏览器下载 Shizuku")
-                }
-            }
-        }
-
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(text = "Level 2 · Root 授权接口", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
-                Text(
-                    text = if (rootStatus.isKernelSuManagerInstalled) {
-                        "Root 管理器：KernelSU"
-                    } else if (rootStatus.isMagiskManagerInstalled) {
-                        "Root 管理器：Magisk"
-                    } else {
-                        "未检测到 KernelSU 或 Magisk 管理器"
-                    }
-                )
-                Text(
-                    text = if (rootStatus.hasSuBinary) {
-                        "Root 接口可用，可读取高级系统与电池信息。"
-                    } else {
-                        "Root 接口尚未可用；请在 KernelSU 或 Magisk 中授权 APA。"
+                    text = if (english) when (shizukuAccessState) {
+                        ShizukuAccessState.NOT_INSTALLED -> "Shizuku is not installed. Open the official download page in a browser."
+                        ShizukuAccessState.SERVICE_UNAVAILABLE -> "Shizuku is installed, but its service is not connected. Open Shizuku and start the service."
+                        ShizukuAccessState.PERMISSION_REQUIRED -> "The Shizuku service is connected and waiting for APA authorization."
+                        ShizukuAccessState.AUTHORIZED -> "The Shizuku service is connected and APA has access."
+                    } else when (shizukuAccessState) {
+                        ShizukuAccessState.NOT_INSTALLED -> "未安装 Shizuku。点击按钮用浏览器打开官方下载页面。"
+                        ShizukuAccessState.SERVICE_UNAVAILABLE -> "已安装 Shizuku，但服务尚未连接。请打开 Shizuku 并启动服务。"
+                        ShizukuAccessState.PERMISSION_REQUIRED -> "Shizuku 服务已连接，等待授权 APA。"
+                        ShizukuAccessState.AUTHORIZED -> "Shizuku 服务已连接，APA 已获得访问。"
                     }
                 )
                 Button(
-                    onClick = onOpenRootManager,
-                    enabled = rootStatus.isKernelSuManagerInstalled || rootStatus.isMagiskManagerInstalled
+                    onClick = onShizukuAction,
+                    enabled = accessFeedback.shizukuActionEnabled
                 ) {
-                    Text(text = if (rootStatus.isKernelSuManagerInstalled) "打开 KernelSU" else "打开 Magisk")
+                    Text(text = accessFeedback.shizukuActionLabel(language))
+                }
+            }
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(text = stringResource(R.string.level2_title), style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
+                Text(
+                    text = if (english) {
+                        if (rootStatus.isKernelSuManagerInstalled) "Root manager: KernelSU"
+                        else if (rootStatus.isMagiskManagerInstalled) "Root manager: Magisk"
+                        else "KernelSU or Magisk manager not detected"
+                    } else if (rootStatus.isKernelSuManagerInstalled) "Root 管理器：KernelSU"
+                    else if (rootStatus.isMagiskManagerInstalled) "Root 管理器：Magisk"
+                    else "未检测到 KernelSU 或 Magisk 管理器"
+                )
+                Text(
+                    text = if (english) {
+                        if (rootAuthorized) "A Root command completed successfully; APA has access."
+                        else if (rootStatus.hasSuBinary) "A Root interface was detected, but access has not been confirmed by a successful command."
+                        else "Root is not available yet. Authorize APA in KernelSU or Magisk."
+                    } else if (rootAuthorized) "Root 命令已实际执行成功，APA 已获得访问。"
+                    else if (rootStatus.hasSuBinary) "已检测到 Root 接口，但尚未通过成功命令确认授权。"
+                    else "Root 接口尚未可用；请在 KernelSU 或 Magisk 中授权 APA。"
+                )
+                Button(
+                    onClick = onOpenRootManager,
+                    enabled = accessFeedback.rootActionEnabled &&
+                        (rootStatus.isKernelSuManagerInstalled || rootStatus.isMagiskManagerInstalled)
+                ) {
+                    Text(
+                        text = if (rootAuthorized) accessFeedback.rootActionLabel(language)
+                        else if (english) {
+                            if (rootStatus.isKernelSuManagerInstalled) "Open KernelSU" else "Open Magisk"
+                        } else if (rootStatus.isKernelSuManagerInstalled) "打开 KernelSU" else "打开 Magisk"
+                    )
                 }
                 Button(
                     onClick = onReadRootBattery,
@@ -1290,48 +1504,51 @@ fun CapabilitySectionsScreen(
                 ) {
                     Text(
                         text = if (isRootBatteryReading) {
-                            "正在请求 Root 授权…"
+                            if (english) "Requesting Root access…" else "正在请求 Root 授权…"
                         } else {
-                            "读取高级电池信息"
+                            if (english) "Read advanced battery information" else "读取高级电池信息"
                         }
                     )
                 }
                 rootBatteryInfo?.let { info ->
-                    Text(text = info.error ?: "循环次数：${info.cycleCount ?: "未知"} · 满充容量：${info.fullChargeCapacityMah ?: "未知"} mAh")
+                    Text(text = info.error ?: if (english) {
+                        "Cycle count: ${info.cycleCount ?: "Unknown"} · Full-charge capacity: ${info.fullChargeCapacityMah ?: "Unknown"} mAh"
+                    } else "循环次数：${info.cycleCount ?: "未知"} · 满充容量：${info.fullChargeCapacityMah ?: "未知"} mAh")
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
-                Text(text = "调度实验 · 只读档案")
-                Text(text = "APA 未修改系统调度")
-                Text(text = "只读取设备与CPU信息，不会修改频率、温控或线程亲和性。")
+                Text(text = stringResource(R.string.scheduler_profile))
+                Text(text = stringResource(R.string.scheduler_unchanged))
+                Text(text = stringResource(R.string.scheduler_read_only_notice))
                 Button(
                     onClick = onReadDeviceProfile,
                     enabled = !isDeviceProfileReading
                 ) {
                     Text(
                         text = if (isDeviceProfileReading) {
-                            "正在读取调度档案…"
+                            if (english) "Reading scheduling profile…" else "正在读取调度档案…"
                         } else {
-                            "读取调度档案"
+                            if (english) "Read scheduling profile" else "读取调度档案"
                         }
                     )
                 }
                 deviceProfile?.let { profile ->
                     val accessLabel = if (profile.access == DeviceProfileAccess.ROOT) {
-                        "Root 只读"
+                        if (english) "Root read-only" else "Root 只读"
                     } else {
-                        "标准权限"
+                        if (english) "Standard access" else "标准权限"
                     }
-                    Text(text = "设备：${profile.model ?: "未知"} · ${profile.soc ?: "SoC未知"}")
-                    Text(text = "读取方式：$accessLabel · CPU：${profile.cpuPresent ?: "未知"}")
+                    Text(text = if (english) "Device: ${profile.model ?: "Unknown"} · ${profile.soc ?: "Unknown SoC"}" else "设备：${profile.model ?: "未知"} · ${profile.soc ?: "SoC未知"}")
+                    Text(text = if (english) "Access: $accessLabel · CPU: ${profile.cpuPresent ?: "Unknown"}" else "读取方式：$accessLabel · CPU：${profile.cpuPresent ?: "未知"}")
                     profile.cpuPolicies.forEach { policy ->
                         Text(
-                            text = "${policy.name}：CPU ${policy.cpus.joinToString(",")} · " +
-                                "最高 ${policy.maxFrequencyKhz?.div(1_000) ?: "未知"} MHz"
+                            text = if (english) {
+                                "${policy.name}: CPU ${policy.cpus.joinToString(",")} · Maximum ${policy.maxFrequencyKhz?.div(1_000) ?: "Unknown"} MHz"
+                            } else "${policy.name}：CPU ${policy.cpus.joinToString(",")} · 最高 ${policy.maxFrequencyKhz?.div(1_000) ?: "未知"} MHz"
                         )
                     }
-                    Text(text = "温度节点：${profile.thermalSensors.size} 个")
-                    profile.error?.let { Text(text = "提示：$it") }
+                    Text(text = if (english) "Thermal nodes: ${profile.thermalSensors.size}" else "温度节点：${profile.thermalSensors.size} 个")
+                    profile.error?.let { Text(text = if (english) "Note: $it" else "提示：$it") }
                 }
             }
         }
@@ -1355,6 +1572,7 @@ fun AgentChatScreen(
     batteryObservationResult: BatteryObservationResult?,
     batteryObservationNotice: String?,
     rootAvailable: Boolean,
+    shizukuAdviceAuthorized: Boolean = false,
     rootAdviceAuthorized: Boolean = false,
     onCollectPowerDiagnostic: () -> Unit,
     onImportBugReport: () -> Unit,
@@ -1366,6 +1584,7 @@ fun AgentChatScreen(
     onCopyMessage: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val appLanguage = LocalAppLanguage.current
     var selectedLevel by state.selectedLevel
     var includeUsageReport by state.includeUsageReport
     var includeAppReport by state.includeAppReport
@@ -1378,17 +1597,18 @@ fun AgentChatScreen(
     val usableBatteryObservation = batteryObservationResult?.takeIf { it.isUsableEvidence }
     val effectiveSelectedLevel = AdviceCapabilityPolicy.effectiveLevel(
         requestedLevel = selectedLevel,
-        shizukuAuthorized = false,
+        shizukuAuthorized = shizukuAdviceAuthorized,
         rootAuthorized = rootAdviceAuthorized
     )
     val attachedReportLabel = listOfNotNull(
         effectiveSelectedLevel?.replace("Level ", "L"),
-        "应用".takeIf { includeAppReport && ApiSession.apiKey.isNotBlank() },
-        "使用习惯".takeIf { includeUsageReport && effectiveSelectedLevel == "Level 0" && ApiSession.apiKey.isNotBlank() },
-        "续航观察（本地）".takeIf { usableBatteryObservation != null },
-        "系统耗电诊断".takeIf { includePowerDiagnosticReport && powerDiagnostic != null }
-    ).joinToString(" · ").ifBlank { "未附带报告" }
-    val providerLabel = CloudProviderCatalog.find(ApiSession.provider)?.shortLabel ?: "未配置模型"
+        (if (appLanguage == AppLanguage.EN) "Apps" else "应用").takeIf { includeAppReport && ApiSession.apiKey.isNotBlank() },
+        (if (appLanguage == AppLanguage.EN) "Usage" else "使用习惯").takeIf { includeUsageReport && effectiveSelectedLevel == "Level 0" && ApiSession.apiKey.isNotBlank() },
+        (if (appLanguage == AppLanguage.EN) "Battery observation (local)" else "续航观察（本地）").takeIf { usableBatteryObservation != null },
+        (if (appLanguage == AppLanguage.EN) "System power diagnostic" else "系统耗电诊断").takeIf { includePowerDiagnosticReport && powerDiagnostic != null }
+    ).joinToString(" · ").ifBlank { if (appLanguage == AppLanguage.EN) "No report attached" else "未附带报告" }
+    val providerLabel = CloudProviderCatalog.find(ApiSession.provider)?.shortLabel
+        ?: if (appLanguage == AppLanguage.EN) "No model configured" else "未配置模型"
 
     LaunchedEffect(messages.size) {
         if (state.lastAutoScrollMessageCount != messages.size) {
@@ -1418,7 +1638,9 @@ fun AgentChatScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(text = "APA Agent", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
                     Text(
-                        text = "$providerLabel · ${if (CloudProviderCatalog.find(ApiSession.provider) != null) "已配置" else "本地分析"}",
+                        text = "$providerLabel · ${if (CloudProviderCatalog.find(ApiSession.provider) != null) {
+                            if (appLanguage == AppLanguage.EN) "Configured" else "已配置"
+                        } else if (appLanguage == AppLanguage.EN) "On-device analysis" else "本地分析"}",
                         color = colors.primary,
                         style = androidx.compose.material3.MaterialTheme.typography.labelMedium
                     )
@@ -1427,8 +1649,8 @@ fun AgentChatScreen(
                     TextButton(
                         onClick = onClearConversation,
                         enabled = messages.isNotEmpty() && !isOnlineAnalyzing
-                    ) { Text("清空") }
-                    TextButton(onClick = onOpenSettings) { Text("设置") }
+                    ) { Text(stringResource(R.string.agent_clear)) }
+                    TextButton(onClick = onOpenSettings) { Text(stringResource(R.string.common_settings)) }
                 }
             }
         }
@@ -1449,10 +1671,14 @@ fun AgentChatScreen(
                         modifier = Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Text("今天想了解手机什么？", style = androidx.compose.material3.MaterialTheme.typography.titleLarge)
-                        Text("不选报告可直接与云端 AI 聊天；选择报告后，我会根据本次附带的数据回答。", color = colors.onSurfaceVariant)
+                        Text(stringResource(R.string.agent_empty_title), style = androidx.compose.material3.MaterialTheme.typography.titleLarge)
+                        Text(stringResource(R.string.agent_empty_description), color = colors.onSurfaceVariant)
                         Column {
-                            listOf("电池是否该换？", "为什么发热？", "今天耗电快吗？").forEach { question ->
+                            listOf(
+                                stringResource(R.string.question_replace_battery),
+                                stringResource(R.string.question_phone_hot),
+                                stringResource(R.string.question_battery_drain)
+                            ).forEach { question ->
                                 TextButton(onClick = { userMessage = question }) { Text(question) }
                             }
                         }
@@ -1482,7 +1708,7 @@ fun AgentChatScreen(
                         ) {
                             Text(text = message.content)
                             message.attachedReportLabel?.let { label ->
-                                Text(text = "本次分析 · $label", color = colors.primary, style = androidx.compose.material3.MaterialTheme.typography.labelMedium)
+                                Text(text = stringResource(R.string.analysis_with_report_format, label), color = colors.primary, style = androidx.compose.material3.MaterialTheme.typography.labelMedium)
                             }
                             message.source?.let { source ->
                                 Text(text = source, color = colors.onSurfaceVariant, style = androidx.compose.material3.MaterialTheme.typography.labelSmall)
@@ -1493,7 +1719,7 @@ fun AgentChatScreen(
                                     horizontalArrangement = Arrangement.End
                                 ) {
                                     TextButton(onClick = { onCopyMessage(text) }) {
-                                        Text("复制全文")
+                                        Text(stringResource(R.string.copy_full_text))
                                     }
                                 }
                             }
@@ -1509,10 +1735,10 @@ fun AgentChatScreen(
                 ) {
                     Card(modifier = Modifier.fillMaxWidth(0.9f)) {
                         Text(
-                            text = if (attachedReportLabel == "未附带报告") {
-                                "正在请求云端模型…"
+                            text = if (effectiveSelectedLevel == null && !includePowerDiagnosticReport && !includeAppReport && usableBatteryObservation == null) {
+                                stringResource(R.string.requesting_cloud_model)
                             } else {
-                                "正在读取设备并分析…"
+                                stringResource(R.string.reading_device_and_analyzing)
                             },
                             modifier = Modifier.padding(12.dp)
                         )
@@ -1535,10 +1761,10 @@ fun AgentChatScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(text = "本次分析", style = androidx.compose.material3.MaterialTheme.typography.titleSmall)
+                    Text(text = stringResource(R.string.current_analysis), style = androidx.compose.material3.MaterialTheme.typography.titleSmall)
                     Text(text = attachedReportLabel, color = colors.primary, style = androidx.compose.material3.MaterialTheme.typography.labelMedium)
                 }
-                Text(text = if (isReportPickerExpanded) "收起" else "选择报告", color = colors.primary)
+                Text(text = if (isReportPickerExpanded) stringResource(R.string.common_collapse) else stringResource(R.string.choose_reports), color = colors.primary)
             }
         }
         if (isReportPickerExpanded) {
@@ -1554,7 +1780,7 @@ fun AgentChatScreen(
                     listOf("Level 0", "Level 1", "Level 2").forEach { level ->
                         val isAllowed = AdviceCapabilityPolicy.allowsLevel(
                             level = level,
-                            shizukuAuthorized = false,
+                            shizukuAuthorized = shizukuAdviceAuthorized,
                             rootAuthorized = rootAdviceAuthorized
                         )
                         Button(
@@ -1567,18 +1793,24 @@ fun AgentChatScreen(
                     }
                 }
                 Text(
-                    text = "L1 尚未接入 Shizuku 授权；L2 需先在能力页成功读取 Root 数据。",
+                    text = if (appLanguage == AppLanguage.EN) {
+                        "L1 requires Shizuku authorization; L2 requires confirmed Root access on the Capabilities page."
+                    } else {
+                        "L1 需先授权 Shizuku；L2 需先在能力页确认 Root 权限。"
+                    },
                     style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant
                 )
-                Text(text = "附加报告（可多选）", color = colors.onSurfaceVariant)
+                Text(text = stringResource(R.string.attach_reports_multi), color = colors.onSurfaceVariant)
                 if (ApiSession.apiKey.isNotBlank() && effectiveSelectedLevel == "Level 0") {
                     TextButton(onClick = { includeUsageReport = !includeUsageReport }) {
-                        Text(if (includeUsageReport) "● 发送使用习惯排行" else "发送使用习惯排行（默认关闭）")
+                        Text(if (appLanguage == AppLanguage.EN) {
+                            if (includeUsageReport) "● Send usage ranking" else "Send usage ranking (off by default)"
+                        } else if (includeUsageReport) "● 发送使用习惯排行" else "发送使用习惯排行（默认关闭）")
                     }
                 }
                 Text(
-                    text = AgentAttachmentPolicy.disclosure(isOnlineMode),
+                    text = AgentAttachmentPolicy.disclosure(isOnlineMode, appLanguage),
                     style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant
                 )
@@ -1591,7 +1823,9 @@ fun AgentChatScreen(
                             onClick = { includeAppReport = !includeAppReport },
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text(text = if (includeAppReport) "● 应用报告" else "应用报告")
+                            Text(text = if (appLanguage == AppLanguage.EN) {
+                                if (includeAppReport) "● App report" else "App report"
+                            } else if (includeAppReport) "● 应用报告" else "应用报告")
                         }
                     }
                 }
@@ -1610,6 +1844,7 @@ fun AgentChatScreen(
                     onClearObservation = onClearBatteryObservation,
                     onToggleSelected = { includePowerDiagnosticReport = !includePowerDiagnosticReport },
                     onRemove = onRemovePowerDiagnostic,
+                    showDiagnosticDetails = false,
                     onCopyPackage = onCopyPackage
                 )
             }
@@ -1626,7 +1861,7 @@ fun AgentChatScreen(
                 OutlinedTextField(
                     value = userMessage,
                     onValueChange = { userMessage = it },
-                    label = { Text(text = "问问你的设备…") },
+                    label = { Text(text = stringResource(R.string.ask_your_device)) },
                     modifier = Modifier.weight(1f),
                     enabled = !isOnlineAnalyzing,
                     maxLines = 4
@@ -1640,7 +1875,8 @@ fun AgentChatScreen(
                                 question = message,
                                 diagnosticAvailable = powerDiagnostic != null,
                                 diagnosticSelected = includePowerDiagnosticReport,
-                                observationAvailable = usableBatteryObservation != null
+                                observationAvailable = usableBatteryObservation != null,
+                                language = appLanguage
                             )
                             if (blockingMessage != null) {
                                 onPreflightMessage(message, attachedReportLabel, blockingMessage)
@@ -1651,7 +1887,7 @@ fun AgentChatScreen(
                                 onLocalEvidenceMessage(
                                     message,
                                     attachedReportLabel,
-                                    BatteryObservationReportBuilder.build(usableBatteryObservation)
+                                    BatteryObservationReportBuilder.build(usableBatteryObservation, appLanguage)
                                 )
                             } else if (CloudProviderCatalog.find(ApiSession.provider) != null && ApiSession.apiKey.isNotBlank()) {
                                 onOnlineAnalyze(
@@ -1663,7 +1899,8 @@ fun AgentChatScreen(
                                     powerDiagnostic?.let {
                                         PowerDiagnosticReportBuilder.build(
                                             it,
-                                            includeAdvancedActions = effectiveSelectedLevel?.let { level -> level != "Level 0" } == true
+                                            includeAdvancedActions = effectiveSelectedLevel?.let { level -> level != "Level 0" } == true,
+                                            language = appLanguage
                                         )
                                     }
                                         .takeIf { includePowerDiagnosticReport }
@@ -1682,7 +1919,8 @@ fun AgentChatScreen(
                                         powerDiagnostic?.let {
                                             PowerDiagnosticReportBuilder.build(
                                                 it,
-                                                includeAdvancedActions = effectiveSelectedLevel?.let { level -> level != "Level 0" } == true
+                                                includeAdvancedActions = effectiveSelectedLevel?.let { level -> level != "Level 0" } == true,
+                                                language = appLanguage
                                             )
                                         }.takeIf { includePowerDiagnosticReport }
                                     )
@@ -1692,7 +1930,7 @@ fun AgentChatScreen(
                     },
                     enabled = userMessage.isNotBlank() && !isOnlineAnalyzing
                 ) {
-                    Text(text = if (isOnlineAnalyzing) "分析中" else "发送")
+                    Text(text = if (isOnlineAnalyzing) stringResource(R.string.analyzing) else stringResource(R.string.send))
                 }
             }
         }
@@ -1700,14 +1938,21 @@ fun AgentChatScreen(
 }
 
 @Composable
-fun SettingsPrivacyScreen(modifier: Modifier = Modifier) {
+fun SettingsPrivacyScreen(
+    currentLanguage: AppLanguage = LocalAppLanguage.current,
+    onLanguageSelected: (AppLanguage) -> Unit = {},
+    modifier: Modifier = Modifier
+) {
     val settingsScrollState = rememberScrollState()
     val context = androidx.compose.ui.platform.LocalContext.current
-    val initiallyStoredApiKey = remember { ApiKeyStore.load(context) }
-    var provider by rememberSaveable { mutableStateOf(initiallyStoredApiKey?.provider ?: "OpenAI · GPT") }
-    val selectedStoredApiKey = remember(provider) { ApiKeyStore.load(context, provider) }
-    var apiKey by remember(provider) { mutableStateOf(selectedStoredApiKey?.apiKey.orEmpty()) }
-    var storedApiKey by remember(provider) { mutableStateOf(selectedStoredApiKey) }
+    val scope = rememberCoroutineScope()
+    var provider by rememberSaveable {
+        mutableStateOf(ApiSession.provider.ifBlank { "OpenAI · GPT" })
+    }
+    var apiKey by remember { mutableStateOf("") }
+    var storedApiKey by remember { mutableStateOf<com.aegis.apa.agent.StoredApiKey?>(null) }
+    var savedProviders by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var isKeyOperationInProgress by remember { mutableStateOf(true) }
     var isApiKeyFocused by remember { mutableStateOf(false) }
     val apiKeyBringIntoViewRequester = remember { BringIntoViewRequester() }
     val privacyNoticeColor by animateColorAsState(
@@ -1724,21 +1969,49 @@ fun SettingsPrivacyScreen(modifier: Modifier = Modifier) {
         }
     }
 
+    LaunchedEffect(Unit) {
+        savedProviders = withContext(Dispatchers.IO) {
+            CloudProviderCatalog.providers
+                .map { it.name }
+                .filter { ApiKeyStore.load(context, it) != null }
+                .toSet()
+        }
+    }
+
+    LaunchedEffect(provider) {
+        isKeyOperationInProgress = true
+        val loaded = withContext(Dispatchers.IO) { ApiKeyStore.activate(context, provider) }
+        storedApiKey = loaded
+        apiKey = loaded?.apiKey.orEmpty()
+        ApiSession.update(loaded)
+        isKeyOperationInProgress = false
+    }
+
     Column(
         modifier = modifier
             .verticalScroll(settingsScrollState),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(text = "设置与隐私", style = androidx.compose.material3.MaterialTheme.typography.headlineMedium)
+        Text(text = stringResource(R.string.settings_privacy), style = androidx.compose.material3.MaterialTheme.typography.headlineMedium)
         Text(text = "APA ${BuildConfig.VERSION_NAME} · ${BuildConfig.BUILD_TYPE}")
-        Text(text = "Language")
-        Button(onClick = {}, enabled = false) {
-            Text(text = "English")
+        Text(text = stringResource(R.string.language_title))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = currentLanguage == AppLanguage.ZH_CN,
+                onClick = { onLanguageSelected(AppLanguage.ZH_CN) },
+                label = { Text(stringResource(R.string.language_chinese)) }
+            )
+            FilterChip(
+                selected = currentLanguage == AppLanguage.EN,
+                onClick = { onLanguageSelected(AppLanguage.EN) },
+                label = { Text(stringResource(R.string.language_english)) }
+            )
         }
-        Text(text = "模型服务", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
+        Text(text = stringResource(R.string.model_service), style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
         CloudProviderCatalog.providers.forEach { option ->
-            val optionHasKey = ApiKeyStore.load(context, option.name) != null
+            val optionHasKey = option.name in savedProviders
             Button(
+                enabled = !isKeyOperationInProgress,
                 onClick = {
                     provider = option.name
                 }
@@ -1749,8 +2022,8 @@ fun SettingsPrivacyScreen(modifier: Modifier = Modifier) {
             }
         }
         val selectedConfig = CloudProviderCatalog.find(provider)
-        Text(text = "已选择：$provider")
-        Text(text = "模型：${selectedConfig?.model ?: "未配置"}")
+        Text(text = stringResource(R.string.selected_provider_format, provider))
+        Text(text = stringResource(R.string.model_format, selectedConfig?.model ?: stringResource(R.string.not_configured)))
         OutlinedTextField(
             value = apiKey,
             onValueChange = {
@@ -1759,6 +2032,7 @@ fun SettingsPrivacyScreen(modifier: Modifier = Modifier) {
             label = { Text("API Key · Private") },
             visualTransformation = PasswordVisualTransformation(),
             singleLine = true,
+            enabled = !isKeyOperationInProgress,
             modifier = Modifier
                 .bringIntoViewRequester(apiKeyBringIntoViewRequester)
                 .onFocusChanged { isApiKeyFocused = it.isFocused },
@@ -1769,17 +2043,31 @@ fun SettingsPrivacyScreen(modifier: Modifier = Modifier) {
             )
         )
         Text(
-            text = "隐私声明：API Key 使用 Android Keystore 加密，仅保存在本机 7 天，不会写入代码或上传至 APA 服务器。只有你主动发起云端分析时，Key 才会发送给所选 AI 服务商用于鉴权。",
+            text = if (currentLanguage == AppLanguage.EN) {
+                "Privacy: the API key is encrypted with Android Keystore and stored only on this device for 7 days. APA does not write it into code or upload it to an APA server. It is sent to the selected AI provider for authentication only when you start cloud analysis."
+            } else "隐私声明：API Key 使用 Android Keystore 加密，仅保存在本机 7 天，不会写入代码或上传至 APA 服务器。只有你主动发起云端分析时，Key 才会发送给所选 AI 服务商用于鉴权。",
             color = privacyNoticeColor
         )
-        Button(onClick = {
-            val saved = ApiKeyStore.save(context, provider, apiKey, validDays = 7)
-            storedApiKey = saved
-            if (saved != null) {
-                ApiSession.update(saved)
+        Button(
+            enabled = !isKeyOperationInProgress,
+            onClick = {
+                val providerToSave = provider
+                val keyToSave = apiKey
+                isKeyOperationInProgress = true
+                scope.launch {
+                    val saved = withContext(Dispatchers.IO) {
+                        ApiKeyStore.save(context, providerToSave, keyToSave, validDays = 7)
+                    }
+                    if (provider == providerToSave) storedApiKey = saved
+                    if (saved != null) {
+                        savedProviders = savedProviders + providerToSave
+                        ApiSession.update(saved)
+                    }
+                    isKeyOperationInProgress = false
+                }
             }
-        }) {
-            Text(text = "加密保存 7 天")
+        ) {
+            Text(text = stringResource(R.string.save_key_seven_days))
         }
         Text(
             text = if (storedApiKey != null) {
@@ -1787,28 +2075,38 @@ fun SettingsPrivacyScreen(modifier: Modifier = Modifier) {
                     "yyyy-MM-dd HH:mm",
                     Locale.getDefault()
                 ).format(java.util.Date(requireNotNull(storedApiKey).expiresAt))
-                "API KEY：已加密保存，有效期至 $expiresAtText"
+                if (currentLanguage == AppLanguage.EN) "API KEY: encrypted; expires $expiresAtText" else "API KEY：已加密保存，有效期至 $expiresAtText"
             } else {
-                "API KEY：未设置"
+                if (currentLanguage == AppLanguage.EN) "API KEY: not set" else "API KEY：未设置"
             }
         )
         Button(
             onClick = {
-                ApiKeyStore.clear(context, provider)
-                apiKey = ""
-                storedApiKey = null
+                val providerToDelete = provider
+                isKeyOperationInProgress = true
+                scope.launch {
+                    withContext(Dispatchers.IO) { ApiKeyStore.clear(context, providerToDelete) }
+                    if (provider == providerToDelete) {
+                        apiKey = ""
+                        storedApiKey = null
+                    }
+                    savedProviders = savedProviders - providerToDelete
+                    if (ApiSession.provider == providerToDelete) ApiSession.update(null)
+                    isKeyOperationInProgress = false
+                }
             },
-            enabled = storedApiKey != null
+            enabled = storedApiKey != null && !isKeyOperationInProgress
         ) {
-            Text(text = "删除 $provider 的 API Key")
+            Text(text = if (currentLanguage == AppLanguage.EN) "Delete $provider API key" else "删除 $provider 的 API Key")
         }
-        Text(text = "设备数据在本机采集；在线提问会发送本次附带的报告。")
+        Text(text = stringResource(R.string.device_data_notice))
         Text(
-            text = if (storedApiKey != null) {
+            text = if (currentLanguage == AppLanguage.EN) {
+                if (storedApiKey != null) "Cloud analysis: ${CloudProviderCatalog.find(requireNotNull(storedApiKey).provider)?.shortLabel ?: "MODEL"} configured"
+                else "Cloud analysis: not configured"
+            } else if (storedApiKey != null) {
                 "云端分析：${CloudProviderCatalog.find(requireNotNull(storedApiKey).provider)?.shortLabel ?: "MODEL"} 已配置"
-            } else {
-                "云端分析：未配置"
-            }
+            } else "云端分析：未配置"
         )
         Spacer(modifier = Modifier.height(24.dp))
     }
@@ -1868,8 +2166,12 @@ fun DeviceReportPreview() {
             rootBatteryInfo = null,
             sampledAt = "12:48:03",
             deviceProfile = null,
+            importedHardwareSupplyInfo = null,
             isDeviceProfileReading = false,
             onReadDeviceProfile = {},
+            onImportHardwareReport = {},
+            isHardwareReportBusy = false,
+            onCopyHardwareFeedback = {},
             onOpenUsageAccessSettings = {},
             onRefresh = {}
         )

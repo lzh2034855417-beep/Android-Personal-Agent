@@ -1,5 +1,7 @@
 package com.aegis.apa.agent
 
+import com.aegis.apa.localization.AppLanguage
+
 enum class PowerQuestionIntent {
     OTHER,
     BATTERY_HEALTH,
@@ -39,25 +41,52 @@ object PowerAnalysisPreflight {
         "哪个应用", "哪些应用", "哪个程序", "哪些程序", "这个应用", "这款应用",
         "哪个软件", "这个软件", "这款软件", "哪个app", "哪个 app"
     )
+    private val englishBatteryHealthMarkers = listOf(
+        "battery health", "battery aging", "battery age", "battery wear", "battery lifespan",
+        "replace the battery", "replace my battery", "cycle count", "design capacity",
+        "full charge capacity", "full-charge capacity"
+    )
+    private val englishDrainContextMarkers = listOf(
+        "battery drain", "battery draining", "draining my battery", "power drain",
+        "losing charge", "loses charge", "battery usage", "battery discharge"
+    )
+    private val englishRateMarkers = listOf(
+        "draining fast", "drains fast", "drain fast", "drain rate", "battery life",
+        "per hour", "hourly drain", "normal battery drain"
+    )
+    private val englishAttributionCues = listOf(
+        "which app", "what app", "which application", "what application", "why",
+        "background", "cause", "causing", "culprit", "uses the most battery",
+        "using the most battery", "consuming battery"
+    )
+    private val englishAppSpecificCues = listOf(
+        "which app", "what app", "which application", "what application", "this app", "this application"
+    )
 
     fun detect(question: String): PowerQuestionSignals {
         val normalized = question.trim().lowercase()
         val asksBatteryHealth = batteryHealthMarkers.any(normalized::contains)
+            || englishBatteryHealthMarkers.any(normalized::contains)
         val hasDrainContext = drainContextMarkers.any(normalized::contains)
+            || englishDrainContextMarkers.any(normalized::contains)
         val hasAttributionCue = attributionCues.any(normalized::contains)
+            || englishAttributionCues.any(normalized::contains)
         val hasAppSpecificCue = appSpecificCues.any(normalized::contains)
+            || englishAppSpecificCues.any(normalized::contains)
         val hasBatteryLevelContext = normalized.contains("电量") || normalized.contains("电池")
+            || normalized.contains("battery") || normalized.contains("charge")
         val quantitativeDrop = hasBatteryLevelContext &&
             (normalized.contains("%") || normalized.contains("％")) &&
-            normalized.contains("小时") &&
-            (normalized.contains("掉") || normalized.contains("降"))
+            (normalized.contains("小时") || normalized.contains("hour")) &&
+            (normalized.contains("掉") || normalized.contains("降") || normalized.contains("drop") || normalized.contains("drain"))
         val barePowerComplaint = listOf("费电", "耗电").any(normalized::contains) &&
             listOf("太", "很", "比较", "有点").any(normalized::contains)
         val asksAboutSpeed = normalized.contains("快") &&
             listOf("耗电", "掉电", "电量", "电池").any(normalized::contains)
+            || normalized.contains("fast") && hasDrainContext
         val asksAttribution = (hasDrainContext || quantitativeDrop) && hasAttributionCue
         val asksRate = quantitativeDrop || hasDrainContext && (
-            explicitRateMarkers.any(normalized::contains) || asksAboutSpeed ||
+            explicitRateMarkers.any(normalized::contains) || englishRateMarkers.any(normalized::contains) || asksAboutSpeed ||
                 barePowerComplaint && !hasAppSpecificCue
             )
         return PowerQuestionSignals(
@@ -81,24 +110,33 @@ object PowerAnalysisPreflight {
         question: String,
         diagnosticAvailable: Boolean,
         diagnosticSelected: Boolean,
-        observationAvailable: Boolean = false
+        observationAvailable: Boolean = false,
+        language: AppLanguage = AppLanguage.ZH_CN
     ): String? {
         val signals = detect(question)
         if (signals.asksBatteryHealth) return null
         if (!signals.asksDrainRate && !signals.asksAttribution) return null
         if (signals.asksDrainRate && signals.asksAttribution) {
-            return "这个问题同时包含两个问题：掉电速度需要先完成续航观察；具体应用归因需要附加系统耗电诊断。请拆成两问分别发送，避免漏答或混用证据。"
+            return if (language == AppLanguage.EN) {
+                "This combines two questions: drain rate requires a completed battery observation, while app attribution requires an attached system power diagnostic. Send them separately to avoid mixing evidence."
+            } else "这个问题同时包含两个问题：掉电速度需要先完成续航观察；具体应用归因需要附加系统耗电诊断。请拆成两问分别发送，避免漏答或混用证据。"
         }
         if (signals.asksDrainRate) {
             return if (observationAvailable || diagnosticAvailable && diagnosticSelected) null else {
-                "目前只有单点快照，不能判断掉电速度。请展开“选择报告”，先开始续航观察，拔掉充电器正常使用至少 30 分钟后结束观察；若还想定位具体应用，再导入 Android 系统 Bug Report。"
+                if (language == AppLanguage.EN) {
+                    "A single snapshot cannot measure drain rate. Open Attach reports, start a battery observation, unplug the charger, use the phone normally for at least 30 minutes, then finish the observation. Import an Android Bug Report as well if you want app attribution."
+                } else "目前只有单点快照，不能判断掉电速度。请展开“选择报告”，先开始续航观察，拔掉充电器正常使用至少 30 分钟后结束观察；若还想定位具体应用，再导入 Android 系统 Bug Report。"
             }
         }
         if (!diagnosticAvailable) {
-            return "这次没有系统耗电诊断。请展开“选择报告”，点击“导入系统报告”，选择 Android 系统 Bug Report；导入成功后诊断摘要会自动附加。"
+            return if (language == AppLanguage.EN) {
+                "No system power diagnostic is available. Open Attach reports, import an Android system Bug Report, and the diagnostic summary will be attached automatically."
+            } else "这次没有系统耗电诊断。请展开“选择报告”，点击“导入系统报告”，选择 Android 系统 Bug Report；导入成功后诊断摘要会自动附加。"
         }
         if (!diagnosticSelected) {
-            return "系统报告已经导入，但本次没有附加诊断摘要。请点击“附加诊断摘要”后重新发送；原始 ZIP 不会发送。"
+            return if (language == AppLanguage.EN) {
+                "The system report was imported, but its diagnostic summary is not attached. Attach the summary and send again; the original ZIP is never sent."
+            } else "系统报告已经导入，但本次没有附加诊断摘要。请点击“附加诊断摘要”后重新发送；原始 ZIP 不会发送。"
         }
         return null
     }

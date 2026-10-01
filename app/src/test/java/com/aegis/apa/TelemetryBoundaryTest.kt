@@ -4,10 +4,24 @@ import android.os.BatteryManager
 import com.aegis.apa.tool.BatteryReading
 import com.aegis.apa.agent.DeviceContext
 import com.aegis.apa.agent.LocalDeviceAnalyzer
+import com.aegis.apa.localization.AppLanguage
 import org.junit.Assert.*
 import org.junit.Test
 
 class TelemetryBoundaryTest {
+    @Test fun localAnalyzerProducesEnglishNarrativeWithoutChangingEvidence() {
+        val report = LocalDeviceAnalyzer.analyze(
+            DeviceContext("Xiaomi 17 Pro Max", "17", 80, 8, 16, 256, 512, 143),
+            AppLanguage.EN
+        )
+
+        assertTrue(report.summary.contains("Xiaomi 17 Pro Max"))
+        assertTrue(report.summary.contains("basic device health check"))
+        assertTrue(report.findings.any { it.contains("143 launchable apps") })
+        assertEquals("LOCAL BASELINE", report.source)
+        assertFalse((listOf(report.summary) + report.findings).any { text -> text.any { it in '\u4E00'..'\u9FFF' } })
+    }
+
     @Test fun invalidResourceReadingsCannotBeCalledHealthy() {
         val report = LocalDeviceAnalyzer.analyze(DeviceContext("Phone", "16", 80, 0, 0, -1, 128, 0))
         assertFalse(report.findings.any { it.contains("正常") || it.contains("充足") })
