@@ -30,7 +30,12 @@ data class AgentConversationMessage(
     val cloudProvider: String? = null,
     /** Cloud conversation partition; null is legacy/local and is never inferred from display labels. */
     val cloudAdviceScope: CloudAdviceScope? = null
-)
+) {
+    /** UI identity only: deliberately excluded from equality and the encrypted archive. */
+    val displayId: Long = messageIds.incrementAndGet()
+}
+
+private val messageIds = java.util.concurrent.atomic.AtomicLong()
 
 interface LlmProvider {
     val id: String

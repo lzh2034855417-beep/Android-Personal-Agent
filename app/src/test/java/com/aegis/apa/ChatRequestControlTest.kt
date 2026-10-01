@@ -6,6 +6,23 @@ import org.junit.Test
 import java.util.concurrent.CancellationException
 
 class ChatRequestControlTest {
+    @Test fun duplicateMessagesHaveDistinctUiKeysWithoutChangingArchiveEquality() {
+        val first = AgentConversationMessage(MessageRole.USER, "same")
+        val second = AgentConversationMessage(MessageRole.USER, "same")
+        assertEquals(first, second)
+        assertNotEquals(first.displayId, second.displayId)
+        val messages = listOf(first, second)
+        assertEquals(second.displayId, messages.takeLast(1).first().displayId)
+    }
+    @Test fun sessionKeepsOnlyHundredRecentMessagesBeforeQueuingPersistence() {
+        val state = ConversationMessageState()
+        var saved: List<AgentConversationMessage> = emptyList()
+        state.onChanged = { saved = it }
+        state.value = (0..149).map { AgentConversationMessage(MessageRole.USER, "message $it") }
+        assertEquals(100, state.value.size)
+        assertEquals("message 50", state.value.first().content)
+        assertEquals(state.value, saved)
+    }
     @Test fun stopClosesActiveConnectionOnlyOnce() {
         val handle = CloudRequestCancellation()
         var closed = 0

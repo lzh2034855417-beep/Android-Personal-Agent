@@ -4,13 +4,87 @@ import com.aegis.apa.tool.DeviceProfileAccess
 import com.aegis.apa.tool.DeviceProfileCollector
 import com.aegis.apa.tool.ProfileCommandResult
 import com.aegis.apa.tool.ProfileCommandRunner
+import com.aegis.apa.localization.AppLanguage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CancellationException
 
 class DeviceProfileCollectorTest {
+    @Test
+    fun cancelledRootFailureNeverStartsStandardFallback() {
+        var cancelled = false
+        var calls = 0
+        val runner = ProfileCommandRunner {
+            calls++
+            cancelled = true
+            ProfileCommandResult(1, "Permission denied")
+        }
+        val failure = runCatching {
+            DeviceProfileCollector.read(true, runner) { cancelled }
+        }.exceptionOrNull()
+        assertTrue(failure is CancellationException)
+        assertEquals(1, calls)
+    }
+
+    @Test
+    fun truncatedRootPrefixRemainsUsableAndWarningAppearsInBothLanguages() {
+        val runner = RecordingRunner(ProfileCommandResult(0, "MODEL=Phone\n", truncated = true))
+        val profile = DeviceProfileCollector.read(true, runner)
+        assertEquals("Phone", profile.model)
+        assertEquals(DeviceProfileAccess.ROOT, profile.access)
+        assertTrue(profile.toReportText().contains("截断"))
+        assertTrue(profile.toReportText(AppLanguage.EN).contains("truncated"))
+        assertEquals(1, runner.commands.size)
+    }
+
+    @Test
+    fun truncatedStandardPrefixDoesNotExposeUnexpectedProperties() {
+        val runner = RecordingRunner(ProfileCommandResult(
+            0, "MODEL=Phone\nSERIAL=private-id\n", truncated = true
+        ))
+        val profile = DeviceProfileCollector.read(false, runner)
+        assertEquals("Phone", profile.model)
+        assertTrue(profile.error.orEmpty().contains("截断"))
+        assertTrue(!profile.toReportText().contains("private-id"))
+    }
+
+    @Test
+    fun interruptedCollectionDoesNotStartAnyCommand() {
+        var calls = 0
+        val runner = ProfileCommandRunner {
+            calls++
+            ProfileCommandResult(0, "MODEL=Should not read")
+        }
+        Thread.currentThread().interrupt()
+        val failure = try {
+            runCatching { DeviceProfileCollector.read(true, runner) }.exceptionOrNull()
+        } finally {
+            Thread.interrupted()
+        }
+        assertTrue(failure is CancellationException)
+        assertEquals(0, calls)
+    }
+
+    @Test
+    fun interruptionAfterRootFailureDoesNotFallBack() {
+        var calls = 0
+        val runner = ProfileCommandRunner {
+            calls++
+            Thread.currentThread().interrupt()
+            ProfileCommandResult(1, "Permission denied")
+        }
+        val failure = try {
+            runCatching { DeviceProfileCollector.read(true, runner) }.exceptionOrNull()
+        } finally {
+            Thread.interrupted()
+        }
+        assertTrue(failure is CancellationException)
+        assertEquals(1, calls)
+    }
+
     @Test
     fun successfulRootReadUsesRootProfile() {
         val runner = RecordingRunner(

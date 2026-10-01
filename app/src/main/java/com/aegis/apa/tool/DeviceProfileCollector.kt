@@ -2,7 +2,6 @@ package com.aegis.apa.tool
 
 import com.aegis.apa.localization.AppLanguage
 import java.util.Locale
-import java.util.concurrent.TimeUnit
 
 enum class DeviceProfileAccess {
     STANDARD,
@@ -180,10 +179,13 @@ data class DeviceProfileSnapshot(
     private fun formatFrequency(valueKhz: Long?, unavailable: String = "未知"): String =
         valueKhz?.let { String.format(Locale.US, "%.0f MHz", it / 1_000.0) } ?: unavailable
 
-    private fun collectionErrorEnglish(value: String): String = when {
-        value.contains("超时") -> "Collection timed out."
-        value.contains("失败") || value.contains("拒绝") -> "Collection failed or access was denied."
-        else -> "Some profile data was unavailable."
+    private fun collectionErrorEnglish(value: String): String = value.split('；').joinToString(" ") { note ->
+        when {
+            note.contains("截断") -> "Output was truncated or incomplete."
+            note.contains("超时") -> "Collection timed out."
+            note.contains("失败") || note.contains("拒绝") -> "Collection failed or access was denied."
+            else -> "Some profile data was unavailable."
+        }
     }
 }
 
@@ -374,7 +376,8 @@ object DeviceProfileParser {
 data class ProfileCommandResult(
     val exitCode: Int?,
     val output: String,
-    val timedOut: Boolean = false
+    val timedOut: Boolean = false,
+    val truncated: Boolean = false
 ) {
     val succeeded: Boolean
         get() = !timedOut && exitCode == 0
@@ -382,26 +385,37 @@ data class ProfileCommandResult(
 
 fun interface ProfileCommandRunner {
     fun run(command: List<String>): ProfileCommandResult
+
+    fun run(
+        command: List<String>,
+        cancellationRequested: () -> Boolean = { false }
+    ): ProfileCommandResult {
+        checkCollectionCancellation(cancellationRequested)
+        val result = run(command)
+        checkCollectionCancellation(cancellationRequested)
+        return result
+    }
 }
 
 object SystemProfileCommandRunner : ProfileCommandRunner {
-    override fun run(command: List<String>): ProfileCommandResult {
+    override fun run(command: List<String>): ProfileCommandResult = run(command) { false }
+
+    override fun run(command: List<String>, cancellationRequested: () -> Boolean): ProfileCommandResult {
+        checkCollectionCancellation(cancellationRequested)
         val process = runCatching {
             ProcessBuilder(command)
                 .redirectErrorStream(true)
                 .start()
         }.getOrElse { error ->
+            checkCollectionCancellation(cancellationRequested)
             return ProfileCommandResult(exitCode = null, output = error.message.orEmpty())
         }
-
-        if (!process.waitFor(10, TimeUnit.SECONDS)) {
-            process.destroyForcibly()
-            return ProfileCommandResult(exitCode = null, output = "", timedOut = true)
-        }
-
+        val result = collectProcessOutput(process, 10_000, 128 * 1024, cancellationRequested)
         return ProfileCommandResult(
-            exitCode = process.exitValue(),
-            output = process.inputStream.bufferedReader().use { it.readText() }
+            exitCode = result.exitCode.takeUnless { result.timedOut },
+            output = result.output,
+            timedOut = result.timedOut,
+            truncated = result.truncated
         )
     }
 }
@@ -409,15 +423,18 @@ object SystemProfileCommandRunner : ProfileCommandRunner {
 object DeviceProfileCollector {
     fun read(
         preferRoot: Boolean,
-        runner: ProfileCommandRunner = SystemProfileCommandRunner
+        runner: ProfileCommandRunner = SystemProfileCommandRunner,
+        cancellationRequested: () -> Boolean = { false }
     ): DeviceProfileSnapshot {
+        checkCollectionCancellation(cancellationRequested)
         if (preferRoot) {
-            val rootResult = runner.run(listOf("su", "-c", collectionScript))
+            val rootResult = runner.run(listOf("su", "-c", collectionScript), cancellationRequested)
+            checkCollectionCancellation(cancellationRequested)
             if (rootResult.succeeded) {
                 return DeviceProfileParser.parse(
                     raw = rootResult.output,
                     access = DeviceProfileAccess.ROOT,
-                    error = emptyOutputWarning(rootResult.output)
+                    error = outputWarnings(rootResult)
                 )
             }
 
@@ -426,22 +443,24 @@ object DeviceProfileCollector {
             } else {
                 "Root 读取失败或被拒绝，已回退标准权限"
             }
-            return readStandard(runner, rootWarning)
+            return readStandard(runner, rootWarning, cancellationRequested)
         }
 
-        return readStandard(runner, null)
+        return readStandard(runner, null, cancellationRequested)
     }
 
     private fun readStandard(
         runner: ProfileCommandRunner,
-        priorWarning: String?
+        priorWarning: String?,
+        cancellationRequested: () -> Boolean
     ): DeviceProfileSnapshot {
-        val result = runner.run(listOf("sh", "-c", collectionScript))
+        checkCollectionCancellation(cancellationRequested)
+        val result = runner.run(listOf("sh", "-c", collectionScript), cancellationRequested)
+        checkCollectionCancellation(cancellationRequested)
         val error = when {
             result.timedOut -> listOfNotNull(priorWarning, "标准权限读取超时").joinToString("；")
             !result.succeeded -> listOfNotNull(priorWarning, "标准权限采集失败").joinToString("；")
-            result.output.isBlank() -> listOfNotNull(priorWarning, "设备未返回调度档案数据").joinToString("；")
-            else -> priorWarning
+            else -> listOfNotNull(priorWarning, outputWarnings(result)).joinToString("；").ifBlank { null }
         }
         return DeviceProfileParser.parse(
             raw = result.output.takeIf { result.succeeded }.orEmpty(),
@@ -450,8 +469,10 @@ object DeviceProfileCollector {
         )
     }
 
-    private fun emptyOutputWarning(output: String): String? =
-        "设备未返回调度档案数据".takeIf { output.isBlank() }
+    private fun outputWarnings(result: ProfileCommandResult): String? = listOfNotNull(
+        "设备未返回调度档案数据".takeIf { result.output.isBlank() },
+        "输出过长或不完整，已截断".takeIf { result.truncated }
+    ).joinToString("；").ifBlank { null }
 
     private val collectionScript = """
         printf 'MANUFACTURER=%s\n' "${'$'}(getprop ro.product.manufacturer)"

@@ -11,8 +11,9 @@ class ConversationMessageState : MutableState<List<AgentConversationMessage>> {
     override var value: List<AgentConversationMessage>
         get() = state.value
         set(value) {
-            if (state.value == value) return
-            state.value = value.toList()
+            val bounded = value.takeLast(100)
+            if (state.value == bounded) return
+            state.value = bounded
             onChanged?.invoke(state.value)
         }
     override fun component1() = value

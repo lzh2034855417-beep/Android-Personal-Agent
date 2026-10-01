@@ -1,5 +1,9 @@
 package com.aegis.apa
 
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.SavedStateHandle
@@ -338,5 +342,8 @@ class AgentPageState {
     val includePowerDiagnosticReport = mutableStateOf(false)
     val reportPickerExpanded = mutableStateOf(false)
     val draft = mutableStateOf("")
-    var lastAutoScrollMessageCount = -1
+    var visibleMessageCount by mutableIntStateOf(30)
+    var followLatest by mutableStateOf(true)
+    var firstVisibleIndex = 0
+    var firstVisibleOffset = 0
 }

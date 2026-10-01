@@ -4,7 +4,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -25,13 +28,11 @@ import com.aegis.apa.model.BatteryObservationAnalyzer
 import com.aegis.apa.model.BatteryObservationPoint
 import com.aegis.apa.model.BatteryObservationResult
 import com.aegis.apa.model.DiagnosticConfidence
-import com.aegis.apa.model.DiagnosticSourceStatus
 import com.aegis.apa.model.PowerDiagnosticSnapshot
-import com.aegis.apa.agent.PowerDiagnosticReportBuilder
+import com.aegis.apa.model.PowerVerdictType
 import com.aegis.apa.model.RankedPowerCandidate
 import com.aegis.apa.model.SampleTime
 import com.aegis.apa.model.packageCopyText
-import com.aegis.apa.model.packageSummary
 import com.aegis.apa.model.userFacingName
 import com.aegis.apa.localization.AppLanguage
 import com.aegis.apa.localization.LocalAppLanguage
@@ -193,53 +194,7 @@ fun PowerDiagnosticPanel(
             }
             snapshot?.let { report ->
                 if (showDiagnosticDetails) {
-                    if (english) {
-                        Text(
-                            PowerDiagnosticReportBuilder.build(
-                                snapshot = report,
-                                includeAdvancedActions = true,
-                                language = AppLanguage.EN
-                            ),
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    } else {
-                    val display = PowerDiagnosticDisplayModel.from(report)
-                    Text(if (english) "Sample: ${report.sampledAtInstant} · ${report.collectionDurationMillis} ms" else "采样：${report.sampledAtInstant} · ${report.collectionDurationMillis} ms", style = MaterialTheme.typography.labelSmall)
-                    Text(if (english) "Source: ${display.sourceLabel}" else "来源：${display.sourceLabel}", style = MaterialTheme.typography.labelMedium)
-                    val unavailable = report.sources.values.filter { it.status != DiagnosticSourceStatus.AVAILABLE }
-                    if (unavailable.isNotEmpty()) {
-                        Text(
-                            "未完整获取：" + unavailable.joinToString { "${it.source}(${it.status.name})" },
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                    Text(if (english) "On-device verdict" else "本地结论（不联网也可用）", style = MaterialTheme.typography.titleSmall)
-                    display.nextStep?.let { Text(if (english) "Insufficient evidence: $it" else "证据不足：$it") }
-                    Text(if (english) "Total consumption" else "耗电总量排行", style = MaterialTheme.typography.titleSmall)
-                    if (display.totalConsumption.isEmpty()) {
-                        Text(if (english) "No comparable app-consumption data." else "没有可比较的应用耗电量数据。")
-                    } else {
-                        display.totalConsumption.forEach { candidate ->
-                            PowerCandidateCard(candidate, showAction = false, onCopyPackage)
-                        }
-                    }
-                    Text(if (english) "Background anomaly suspects" else "后台异常嫌疑", style = MaterialTheme.typography.titleSmall)
-                    if (display.backgroundSuspects.isEmpty()) {
-                        Text(if (english) "No app reached the background-anomaly threshold; high consumption is not proof of an anomaly." else "没有达到后台异常阈值的应用；耗电多不等于后台异常。")
-                    } else {
-                        display.backgroundSuspects.forEach { candidate ->
-                            PowerCandidateCard(candidate, showAction = true, onCopyPackage)
-                        }
-                    }
-                    if (display.limits.isNotEmpty()) {
-                        Text(
-                            "证据覆盖与限制：${display.limits.joinToString("；")}",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                    }
+                    PowerDiagnosticReportCards(report, onCopyPackage)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = onToggleSelected) {
@@ -250,6 +205,97 @@ fun PowerDiagnosticPanel(
             }
         }
     }
+}
+
+@Composable
+internal fun PowerDiagnosticReportCards(report: PowerDiagnosticSnapshot, onCopyPackage: (String) -> Unit) {
+    val language = LocalAppLanguage.current
+    val english = language == AppLanguage.EN
+    val display = PowerDiagnosticDisplayModel.from(report, language)
+    var expanded by rememberSaveable(report.sampledAtInstant.toString()) { mutableStateOf(false) }
+    DiagnosticSection(if (english) "Conclusion" else "本地结论") {
+        Text(display.conclusion)
+        Text(if (english) "Sample: ${display.sampleTime} · Collection: ${display.collectionDurationMillis} ms"
+            else "采样：${display.sampleTime} · 采集用时：${display.collectionDurationMillis} ms",
+            style = MaterialTheme.typography.labelSmall)
+        Text(if (english) "Source: ${display.sourceLabel}" else "来源：${display.sourceLabel}",
+            style = MaterialTheme.typography.labelMedium)
+        if (display.sourceResults.isNotEmpty()) {
+            Column(Modifier.heightIn(max = 160.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                display.sourceResults.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+            }
+        }
+    }
+    DiagnosticSection(if (english) "Supporting evidence" else "支持证据") {
+        CandidateSection(if (english) "Total consumption" else "耗电总量排行", display.totalConsumption,
+            if (english) "No comparable app-consumption data." else "没有可比较的应用耗电量数据。", false, onCopyPackage)
+        CandidateSection(if (english) "Background anomaly suspects" else "后台异常嫌疑", display.backgroundSuspects,
+            if (report.localVerdict?.type != PowerVerdictType.SUFFICIENT) {
+                if (english) "Evidence is insufficient to assess background anomalies."
+                else "证据不足，尚不能判断后台是否异常。"
+            } else if (english) "No app reached the background-anomaly threshold in the available evidence; high consumption does not prove an anomaly."
+            else "已获取的证据中没有达到后台异常阈值的应用；耗电多不等于后台异常。", true, onCopyPackage)
+    }
+    DiagnosticSection(if (english) "Next step" else "下一步") {
+        Text(display.nextStepDisplay)
+        Text(if (english) "Advice is manual. APA does not change Scene policies or freeze apps."
+            else "建议需手动执行；APA 不会更改 Scene 策略或冻结应用。", style = MaterialTheme.typography.bodySmall)
+    }
+    DiagnosticSection(if (english) "Evidence coverage and limits" else "证据覆盖与限制") {
+        if (display.limits.isEmpty()) {
+            Text(if (english) "No additional coverage limits were reported; this does not prove complete coverage."
+                else "未报告额外覆盖限制；这不代表证据覆盖完整。", style = MaterialTheme.typography.bodySmall)
+        } else {
+            Column(Modifier.heightIn(max = 180.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                display.limits.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+            }
+        }
+    }
+    TextButton(onClick = { expanded = !expanded }) {
+        Text(if (english) { if (expanded) "Collapse additional evidence" else "Show additional evidence" }
+            else if (expanded) "收起补充证据" else "展开补充证据")
+    }
+    if (expanded) {
+        Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            report.system.batteryDrainWindow?.let { window ->
+                Text(if (english) "Battery window evidence" else "电量窗口证据", style = MaterialTheme.typography.titleSmall)
+                Text(if (english) "Window duration: ${window.durationMillis / 60_000} min"
+                    else "窗口时长：${window.durationMillis / 60_000} 分钟", style = MaterialTheme.typography.bodySmall)
+                Text(if (english) "Window drain: ${window.drainMah} mAh · Capacity: ${window.capacityMah} mAh"
+                    else "窗口耗电：${window.drainMah} mAh · 容量：${window.capacityMah} mAh", style = MaterialTheme.typography.bodySmall)
+                Text(if (english) { if (window.usesActualDrain) "Drain uses the recorded charge decrease." else "Drain is a system estimate." }
+                    else if (window.usesActualDrain) "耗电量采用记录的电量下降值。" else "耗电量采用系统估算值。", style = MaterialTheme.typography.bodySmall)
+            }
+            CandidateSection(if (english) "Background consumption" else "后台耗电排行", display.backgroundConsumption,
+                if (english) "No comparable background-consumption data." else "没有可比较的应用后台耗电量。", false, onCopyPackage)
+            CandidateSection(if (english) "Scheduling observations" else "系统调度观察", display.schedulingObservations,
+                if (english) "No cumulative scheduling data parsed." else "没有解析到应用调度累计数据。", false, onCopyPackage)
+            Text(if (english) "Cumulative scheduling counts can cover another period; they do not establish a same-window anomaly."
+                else "调度累计值可能来自另一统计周期，不能据此认定本次窗口的后台异常。",
+                style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun DiagnosticSection(title: String, content: @Composable () -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            content()
+        }
+    }
+}
+
+@Composable
+private fun CandidateSection(title: String, candidates: List<RankedPowerCandidate>, emptyText: String,
+    showAction: Boolean, onCopyPackage: (String) -> Unit) {
+    Text(title, style = MaterialTheme.typography.titleSmall)
+    if (candidates.isEmpty()) Text(emptyText, style = MaterialTheme.typography.bodySmall)
+    else candidates.forEach { PowerCandidateCard(it, showAction, onCopyPackage) }
 }
 
 @Composable
@@ -277,22 +323,39 @@ private fun PowerCandidateCard(
     showAction: Boolean,
     onCopyPackage: (String) -> Unit
 ) {
-    val english = LocalAppLanguage.current == AppLanguage.EN
-    val name = candidate.userFacingName()
+    val language = LocalAppLanguage.current
+    val english = language == AppLanguage.EN
+    val name = if (english) {
+        when {
+            candidate.packageNames.size > 1 -> {
+                val group = if ((candidate.uid ?: Int.MAX_VALUE) < 10_000 || candidate.packageNames.any {
+                    it == "android" || it.startsWith("com.android.") || it.startsWith("com.miui.")
+                }) "System component group" else "Shared UID group"
+                "$group: ${candidate.displayNames.ifEmpty { candidate.packageNames }.joinToString()}"
+            }
+            candidate.packageNames.isEmpty() -> candidate.uid?.let { "UID $it" } ?: "Unknown app"
+            else -> candidate.displayNames.firstOrNull()?.let { "$it (${candidate.packageNames.single()})" }
+                ?: candidate.packageNames.single()
+        }
+    } else candidate.userFacingName()
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(name, style = MaterialTheme.typography.titleSmall)
-            candidate.packageSummary()?.let { summary ->
-                Text(summary, style = MaterialTheme.typography.bodySmall)
+            if (candidate.packageNames.isNotEmpty()) {
+                Text((if (english) "Packages: " else "包名：") + candidate.packageNames.joinToString(), style = MaterialTheme.typography.bodySmall)
             }
-            Text(if (english) "Facts: ${candidate.facts.joinToString("; ")}" else "事实：${candidate.facts.joinToString("；")}")
-            Text(if (english) "Interpretation: ${candidate.reason}" else "解释：${candidate.reason}")
-            Text(if (english) "Confidence: ${candidate.confidence.name.lowercase()} · Maximum advice: ${candidate.maxAdviceLevel.name.lowercase().replace('_', ' ')}" else "置信度：${candidate.confidence.label()} · 最高建议：${candidate.maxAdviceLevel.label()}")
+            Text((if (english) "Facts: " else "事实：") + candidate.facts.joinToString(if (english) "; " else "；") { diagnosticDisplayText(it, language) })
+            Text((if (english) "Interpretation: " else "解释：") + diagnosticDisplayText(candidate.reason, language))
+            if (english && (candidate.facts + listOfNotNull(candidate.reason, candidate.sceneAction, candidate.risk,
+                    candidate.rollback, candidate.retest)).any { text -> diagnosticDisplayText(text, language).any { it in '\u4E00'..'\u9FFF' } }) {
+                Text("Unrecognized evidence or advice is shown in its original language.", style = MaterialTheme.typography.labelSmall)
+            }
+            Text(if (english) "Confidence: ${candidate.confidence.englishLabel()} · Maximum advice: ${candidate.maxAdviceLevel.englishLabel()}" else "置信度：${candidate.confidence.label()} · 最高建议：${candidate.maxAdviceLevel.label()}")
             if (showAction) {
-                candidate.sceneAction?.let { Text("Scene：$it") }
-                candidate.risk?.let { Text(if (english) "Risk: $it" else "风险：$it", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                candidate.rollback?.let { Text(if (english) "Rollback: $it" else "回退：$it", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                candidate.retest?.let { Text(if (english) "Retest: $it" else "复测：$it", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                candidate.sceneAction?.let { Text((if (english) "Manual Scene action: " else "Scene 手动操作：") + diagnosticDisplayText(it, language)) }
+                candidate.risk?.let { Text((if (english) "Risk: " else "风险：") + diagnosticDisplayText(it, language), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                candidate.rollback?.let { Text((if (english) "Rollback: " else "回退：") + diagnosticDisplayText(it, language), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                candidate.retest?.let { Text((if (english) "Retest: " else "复测：") + diagnosticDisplayText(it, language), color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
             candidate.packageCopyText()?.let { copyText ->
                 TextButton(onClick = { onCopyPackage(copyText) }) {
@@ -315,4 +378,16 @@ private fun AdviceLevel.label() = when (this) {
     AdviceLevel.OBSERVE -> "观察"
     AdviceLevel.RESTRICT -> "限制"
     AdviceLevel.FREEZE_CANDIDATE -> "冻结候选"
+}
+
+private fun DiagnosticConfidence.englishLabel() = when (this) {
+    DiagnosticConfidence.LOW -> "Low"
+    DiagnosticConfidence.MEDIUM -> "Medium"
+    DiagnosticConfidence.HIGH -> "High"
+}
+
+private fun AdviceLevel.englishLabel() = when (this) {
+    AdviceLevel.OBSERVE -> "Observe"
+    AdviceLevel.RESTRICT -> "Restrict"
+    AdviceLevel.FREEZE_CANDIDATE -> "Freeze candidate"
 }

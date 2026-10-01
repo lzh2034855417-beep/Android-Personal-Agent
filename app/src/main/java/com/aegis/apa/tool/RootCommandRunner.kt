@@ -1,12 +1,9 @@
 package com.aegis.apa.tool
 
 import com.aegis.apa.model.DiagnosticSourceStatus
-import java.io.ByteArrayOutputStream
 import java.util.Locale
 import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.concurrent.thread
 
 enum class AllowedRootCommand(
     val source: String,
@@ -61,15 +58,17 @@ object RootCommandRunner : DiagnosticCommandRunner {
                 "",
                 detail = "无法启动 Root 命令"
             )
+        checkCollectionCancellation(cancellationRequested)
         if (execution.timedOut) {
             return RootCommandResult(command, DiagnosticSourceStatus.TIMED_OUT, "", detail = "采集超时")
         }
         return classify(command, execution.exitCode, execution.output, execution.truncated)
     }
 
-    internal fun runBatteryHealth(): FixedRootResult {
-        val execution = execute(BATTERY_HEALTH_COMMAND, 8_000, 32 * 1024) { false }
+    internal fun runBatteryHealth(cancellationRequested: () -> Boolean = { false }): FixedRootResult {
+        val execution = execute(BATTERY_HEALTH_COMMAND, 8_000, 32 * 1024, cancellationRequested)
             ?: return FixedRootResult(DiagnosticSourceStatus.PERMISSION_DENIED, "", "无法启动 Root 命令")
+        checkCollectionCancellation(cancellationRequested)
         if (execution.timedOut) {
             return FixedRootResult(DiagnosticSourceStatus.TIMED_OUT, "", "Root 授权超时")
         }
@@ -107,7 +106,7 @@ object RootCommandRunner : DiagnosticCommandRunner {
     ): Pair<DiagnosticSourceStatus, String?> {
         if (exitCode == 0) {
             return if (truncated) {
-                DiagnosticSourceStatus.TRUNCATED to "输出过长，已截断"
+                DiagnosticSourceStatus.TRUNCATED to "输出过长或不完整，已截断"
             } else {
                 DiagnosticSourceStatus.AVAILABLE to null
             }
@@ -129,58 +128,18 @@ object RootCommandRunner : DiagnosticCommandRunner {
         timeoutMillis: Long,
         maxBytes: Int,
         cancellationRequested: () -> Boolean
-    ): Execution? {
+    ): ProcessOutput? {
+        checkCollectionCancellation(cancellationRequested)
         val process = runCatching {
             ProcessBuilder("su", "-c", shell)
                 .redirectErrorStream(true)
                 .start()
-        }.getOrNull() ?: return null
-
-        val capture = ByteArrayOutputStream(maxBytes.coerceAtMost(32 * 1024))
-        val truncated = AtomicBoolean(false)
-        val reader = thread(name = "root-output-reader", isDaemon = true) {
-            runCatching {
-                process.inputStream.use { input ->
-                    val buffer = ByteArray(8 * 1024)
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        val remaining = maxBytes - capture.size()
-                        if (remaining > 0) capture.write(buffer, 0, count.coerceAtMost(remaining))
-                        if (count > remaining) truncated.set(true)
-                    }
-                }
-            }
+        }.getOrNull() ?: run {
+            checkCollectionCancellation(cancellationRequested)
+            return null
         }
-
-        when (waitForRootProcess(process, timeoutMillis, cancellationRequested)) {
-            RootProcessWaitOutcome.CANCELLED -> {
-                runCatching { process.inputStream.close() }
-                reader.join(500)
-                throw CancellationException("Root command collection cancelled")
-            }
-            RootProcessWaitOutcome.TIMED_OUT -> {
-                runCatching { process.inputStream.close() }
-                reader.join(500)
-                return Execution(-1, "", truncated.get(), timedOut = true)
-            }
-            RootProcessWaitOutcome.FINISHED -> Unit
-        }
-        reader.join(1_000)
-        return Execution(
-            exitCode = process.exitValue(),
-            output = capture.toString(Charsets.UTF_8.name()),
-            truncated = truncated.get(),
-            timedOut = false
-        )
+        return collectProcessOutput(process, timeoutMillis, maxBytes, cancellationRequested)
     }
-
-    private data class Execution(
-        val exitCode: Int,
-        val output: String,
-        val truncated: Boolean,
-        val timedOut: Boolean
-    )
 
     internal data class FixedRootResult(
         val status: DiagnosticSourceStatus,
@@ -211,9 +170,10 @@ internal fun waitForRootProcess(
     timeoutMillis: Long,
     cancellationRequested: () -> Boolean
 ): RootProcessWaitOutcome {
+    val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis.coerceAtLeast(0))
     var remainingMillis = timeoutMillis.coerceAtLeast(0)
     while (remainingMillis > 0) {
-        if (cancellationRequested()) {
+        if (Thread.currentThread().isInterrupted || cancellationRequested()) {
             process.destroyForcibly()
             return RootProcessWaitOutcome.CANCELLED
         }
@@ -228,11 +188,15 @@ internal fun waitForRootProcess(
             }
         }
         if (finished) {
+            if (Thread.currentThread().isInterrupted || cancellationRequested()) {
+                process.destroyForcibly()
+                return RootProcessWaitOutcome.CANCELLED
+            }
             return RootProcessWaitOutcome.FINISHED
         }
-        remainingMillis -= sliceMillis
+        remainingMillis = TimeUnit.NANOSECONDS.toMillis((deadline - System.nanoTime()).coerceAtLeast(0))
     }
-    if (cancellationRequested()) {
+    if (Thread.currentThread().isInterrupted || cancellationRequested()) {
         process.destroyForcibly()
         return RootProcessWaitOutcome.CANCELLED
     }
