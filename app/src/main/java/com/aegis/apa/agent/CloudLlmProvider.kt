@@ -164,6 +164,10 @@ internal fun buildCloudAnalysisPrompt(
     powerDiagnosticReport: String?,
     language: com.aegis.apa.localization.AppLanguage = com.aegis.apa.localization.AppLanguage.ZH_CN
 ): String = buildString {
+    val powerIntent = PowerAnalysisPreflight.classify(userQuestion)
+    val deviceAdviceMode = context != null || selectedLevel != null || levelReport != null ||
+        appReport != null || powerDiagnosticReport != null
+    val advancedAdviceAllowed = allowsAdvancedAdvice(selectedLevel)
     if (language == com.aegis.apa.localization.AppLanguage.EN) {
         appendLine("[User question]")
         appendLine(userQuestion)
@@ -181,16 +185,19 @@ internal fun buildCloudAnalysisPrompt(
             appendLine("Launchable apps: ${device.launchableAppCount}")
         }
         levelReport?.let { appendLine("[Device report]\n$it") }
-        appReport?.let { appendLine("[App report]\n$it") }
-        powerDiagnosticReport?.let { appendLine("[System power diagnostic]\n$it") }
+        appReport?.takeIf { powerIntent != PowerQuestionIntent.BATTERY_HEALTH }?.let { appendLine("[App report]\n$it") }
+        powerDiagnosticReport?.takeIf { powerIntent != PowerQuestionIntent.BATTERY_HEALTH }?.let {
+            val safeReport = if (advancedAdviceAllowed) it else it.lineSequence()
+                .filterNot { line -> line.contains("Scene", ignoreCase = true) }.joinToString("\n")
+            appendLine("[System power diagnostic]\n$safeReport")
+        }
+        if (deviceAdviceMode) {
+            appendLine(AgentResponseFocusPolicy.task(powerIntent, powerDiagnosticReport != null, language))
+        }
         appendLine()
         append("Answer in English. Preserve all raw evidence exactly. Do not infer missing data or exceed the selected capability level.")
         return@buildString
     }
-    val powerIntent = PowerAnalysisPreflight.classify(userQuestion)
-    val deviceAdviceMode = context != null || selectedLevel != null || levelReport != null ||
-        appReport != null || powerDiagnosticReport != null
-    val advancedAdviceAllowed = allowsAdvancedAdvice(selectedLevel)
     val hasValidatedDrainWindow = powerDiagnosticReport?.let { report ->
         report.contains("统计周期：自上次充满后") && report.contains("平均耗电：")
     } == true
@@ -203,6 +210,7 @@ internal fun buildCloudAnalysisPrompt(
         appendLine("普通对话；本次未附带设备报告或设备快照。")
         return@buildString
     }
+    appendLine(AgentResponseFocusPolicy.task(powerIntent, powerDiagnosticReport != null, language))
     if (powerIntent == PowerQuestionIntent.BATTERY_HEALTH) {
         appendLine("【回答任务：电池健康与更换判断】")
         if (powerDiagnosticReport != null) {
@@ -235,31 +243,33 @@ internal fun buildCloudAnalysisPrompt(
                 } else {
                     appendLine("诊断没有提供经过验证的统计周期平均耗电；没有统计周期平均耗电时不得编造速度，只建议在 APA 内完成一次未充电的应用内续航观察。")
                 }
-                appendLine("即使无法判断速度，仍可解释高耗电应用和后台耗电排行。")
+                appendLine("如果无法判断速度，围绕速率缺口给出一个测量步骤，不转去解释无关的应用排行。")
             }
             PowerQuestionIntent.ATTRIBUTION -> appendLine("先回答后台耗电排行中哪个应用最值得优先核对；高耗电或后台耗电较高不等同于异常。")
             PowerQuestionIntent.BATTERY_HEALTH,
             PowerQuestionIntent.OTHER -> Unit
         }
-        appendLine("最多解释 3 个主要耗电对象，必须写出应用名或包名、报告中的原始数值和耗电更偏前台还是后台。")
-        appendLine("后台耗电排行优先指出后台耗电量和占比；单一耗电估算只能作为优先核对线索。")
-        appendLine("系统调度观察必须分别说明真实唤醒与普通定时任务；这些是独立累计计数，系统调度观察不得用于耗电归因，也不得据此生成限制或冻结建议。")
-        appendLine("不得修改报告中的数值，不得把高耗电或后台耗电排行改写成已确认异常。")
-        appendLine("不得超过报告给出的最高建议级别；尤其不得把观察或限制升级为冻结候选。")
-        if (advancedAdviceAllowed) {
-            val capability = if (selectedLevel?.startsWith("Level 1") == true) {
-                "ADB / Shizuku"
+        if (powerIntent == PowerQuestionIntent.ATTRIBUTION) {
+            appendLine("最多解释 3 个主要耗电对象，但首先只指出一个有证据支持的优先对象；只有解释并列或限制确有必要时才补充其他对象。必须写出应用名或包名、报告中的原始数值和耗电更偏前台还是后台。")
+            appendLine("后台耗电排行优先指出后台耗电量和占比；单一耗电估算只能作为优先核对线索。")
+            appendLine("系统调度观察必须分别说明真实唤醒与普通定时任务；这些是独立累计计数，系统调度观察不得用于耗电归因，也不得据此生成限制或冻结建议。")
+            appendLine("不得修改报告中的数值，不得把高耗电或后台耗电排行改写成已确认异常。")
+            appendLine("不得超过报告给出的最高建议级别；尤其不得把观察或限制升级为冻结候选。")
+            if (advancedAdviceAllowed) {
+                val capability = if (selectedLevel?.startsWith("Level 1") == true) {
+                    "ADB / Shizuku"
+                } else {
+                    "Root / KernelSU"
+                }
+                appendLine("本次为 $capability 能力层，可解释报告给出的一项 Scene 手动操作，并说明预期作用、副作用和回退方法；不得声称已经执行。")
             } else {
-                "Root / KernelSU"
+                appendLine("本次为普通用户能力层，只提供普通 Android 用户可执行的系统设置或观察建议；不要输出任何高级权限工具、命令、冻结或限频建议。")
             }
-            appendLine("本次为 $capability 能力层，可解释报告给出的一项 Scene 手动操作，并说明预期作用、副作用和回退方法；不得声称已经执行。")
-        } else {
-            appendLine("本次为普通用户能力层，只提供普通 Android 用户可执行的系统设置或观察建议；不要输出任何高级权限工具、命令、冻结或限频建议。")
+            appendLine("系统调度数据只有在直接改变结论时才简短写进证据限制，不要单列调度栏目，也不要用累计计数凑篇幅。")
         }
-        appendLine("系统调度数据只有在直接改变结论时才简短写进证据限制，不要单列调度栏目，也不要用累计计数凑篇幅。")
         appendLine("如果证据仍不足，不要复述所有缺失栏目，只给出一个最有价值的下一步；没有内容的字段可以省略。")
         val outputFields = when (powerIntent) {
-            PowerQuestionIntent.DRAIN_RATE -> "结论：、耗电窗口：、主要耗电：、建议：、证据限制："
+            PowerQuestionIntent.DRAIN_RATE -> "结论：、耗电窗口：、实测速率：、建议：、证据限制："
             PowerQuestionIntent.ATTRIBUTION -> "结论：、主要耗电：、后台判断：、建议：、证据限制："
             PowerQuestionIntent.BATTERY_HEALTH,
             PowerQuestionIntent.OTHER -> "结论：、依据：、建议："

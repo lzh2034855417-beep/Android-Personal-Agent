@@ -5,7 +5,8 @@ import com.aegis.apa.localization.AppLanguage
 /** Shared device-analysis policy sent to every cloud provider by APA. */
 object AgentPromptPolicy {
     fun systemPrompt(deviceAdviceMode: Boolean = true, language: AppLanguage = AppLanguage.ZH_CN): String {
-        if (language == AppLanguage.EN) return englishPrompt(deviceAdviceMode)
+        if (language == AppLanguage.EN) return englishPrompt(deviceAdviceMode) +
+            if (deviceAdviceMode) "\n\n" + AgentResponseFocusPolicy.system(language) else ""
         if (!deviceAdviceMode) return """
             你是 APA（Android Personal Agent）的通用对话助手。
             当前请求未附带任何设备报告或设备快照，请进行普通对话并直接回答用户问题。
@@ -34,7 +35,7 @@ object AgentPromptPolicy {
         11. 使用简洁、自然的中文。诊断类问题按“结论、依据、建议”组织；嫌疑对象必须点名应用名或包名并引用报告中的数值，不得只说“可能有后台活动”。
         12. 建议必须可执行：高级能力层说明手动调整什么、可能影响什么、如何回退以及何时复测；Level 0 则给出对应的普通系统设置或观察步骤。证据不足时只说最关键的缺口和一个下一步，不要反复免责。
         13. 只输出纯文本，不要使用 Markdown 标题、星号加粗、下划线加粗或代码围栏；客户端按纯文本显示。
-    """.trimIndent()
+    """.trimIndent() + "\n\n" + AgentResponseFocusPolicy.system(language)
     }
 
     private fun englishPrompt(deviceAdviceMode: Boolean): String = if (!deviceAdviceMode) """

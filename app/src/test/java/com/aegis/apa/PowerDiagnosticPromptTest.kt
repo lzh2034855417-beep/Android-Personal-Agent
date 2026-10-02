@@ -238,7 +238,7 @@ class PowerDiagnosticPromptTest {
         assertTrue(prompt.contains("不得要求用户重新导入当前报告"))
         assertFalse(prompt.contains("只有报告同时提供观察时长和电量变化时才可计算"))
         assertTrue(prompt.contains("耗电窗口："))
-        assertTrue(prompt.contains("主要耗电："))
+        assertTrue(prompt.contains("实测速率："))
         assertTrue(prompt.contains("建议："))
         assertTrue(prompt.contains("证据限制："))
         assertFalse(prompt.contains("系统调度观察："))
