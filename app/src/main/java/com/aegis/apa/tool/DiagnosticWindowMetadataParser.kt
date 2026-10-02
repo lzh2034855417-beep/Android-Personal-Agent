@@ -18,6 +18,8 @@ object DiagnosticWindowMetadataParser {
             // This existing cumulative section supplies scope/duration, never wall-clock bounds.
             if (section.output.lineSequence().count { it.trim() == SINCE_LAST_CHARGE } != 1) return@mapValues unknown
             val statistics = section.output.lineSequence().dropWhile { it.trim() != SINCE_LAST_CHARGE }.drop(1)
+                // Even unrecognized later statistics headings end this scope's provenance.
+                .takeWhile { !it.trimStart().startsWith("Statistics", ignoreCase = true) }
             val durationLines = statistics.filter { it.trimStart().startsWith("Time on battery:") }.take(2).toList()
             val durationText = durationLines.singleOrNull()?.let { batteryDuration.matchEntire(it)?.groupValues?.get(1)?.trim() }
             val duration = durationText?.takeIf { durationTokens.matches(it) }

@@ -106,6 +106,38 @@ class DiagnosticWindowMetadataParserTest {
     }
 
     @Test
+    fun laterStatisticsBlockCannotSupplyMissingLastChargeDuration() {
+        // Catches assigning a last-unplugged duration to the preceding last-charge block.
+        val section = battery.copy(output = "Statistics since last charge:\nStatistics since last unplugged:\nTime on battery: 40m (100%) realtime")
+        val window = DiagnosticWindowMetadataParser.parse(listOf(section), emptyMap()).windowsBySource.getValue("batterystats")
+        assertEquals(VerificationMetricScope.SINCE_LAST_CHARGE, window.scope)
+        assertNull(window.batteryDurationMillis)
+    }
+
+    @Test
+    fun ownLastChargeDurationSurvivesUnrelatedLaterDuration() {
+        // Catches allowing an unrelated block's duration to make the selected block ambiguous.
+        val section = battery.copy(output = battery.output + "\nStatistics since last unplugged:\nTime on battery: 40m (100%) realtime")
+        assertEquals(5_400_000L, DiagnosticWindowMetadataParser.parse(listOf(section), emptyMap()).windowsBySource.getValue("batterystats").batteryDurationMillis)
+    }
+
+    @Test
+    fun unknownStatisticsBlockAlsoEndsSelectedDurationScan() {
+        // Catches stopping only at familiar statistics headers and borrowing from unknown sections.
+        val section = battery.copy(output = "Statistics since last charge:\nStatistics for unrecognized scope:\nTime on battery: 40m (100%) realtime")
+        assertNull(DiagnosticWindowMetadataParser.parse(listOf(section), emptyMap()).windowsBySource.getValue("batterystats").batteryDurationMillis)
+    }
+
+    @Test
+    fun duplicateLastChargeBlocksRemainUnknown() {
+        // Catches selecting one of multiple same-scope blocks instead of preserving ambiguity.
+        val section = battery.copy(output = battery.output + "\n" + battery.output)
+        val window = DiagnosticWindowMetadataParser.parse(listOf(section), emptyMap()).windowsBySource.getValue("batterystats")
+        assertEquals(VerificationMetricScope.UNKNOWN, window.scope)
+        assertNull(window.batteryDurationMillis)
+    }
+
+    @Test
     fun invalidConflictingAndOversizeBatteryDurationsStayUnknown() {
         // Catches silently choosing the first duration or accepting invalid/overflow values.
         listOf("0ms", "oops", "999999999999999999999h", "30m (100%) realtime\nTime on battery: 40m").forEach { duration ->
