@@ -19,6 +19,7 @@ object VerificationArchive {
     const val MAX_RECORD_BYTES = 48 * 1024
     private const val MAX_FIELD_BYTES = 4096
     private const val MAX_RECORDS = 20
+    private const val COMPACT_METRICS = -1
     private val retention = Duration.ofDays(30)
 
     fun encode(scopeId: String, records: List<VerificationRecord>): ByteArray = guarded {
@@ -129,15 +130,20 @@ object VerificationArchive {
         text(s.context.scenario.wireId); text(s.context.scenarioNote, 500); text(s.context.noCharging.wireId)
         writeInt(s.sources.size)
         s.sources.toSortedMap().forEach { (source, status) -> text(source); text(sourceId(status)) }
+        // v1 preview used a nonnegative metric count here. A reserved marker permits
+        // lossless dictionaries while retaining a bounded reader for that preview format.
+        writeInt(COMPACT_METRICS)
+        val groups = s.metrics.map { it.key.packageNames }.distinct()
+        val windows = s.metrics.map { it.window }.distinct()
+        limit(groups.size <= 21 && windows.size <= 200)
+        writeInt(groups.size); groups.forEach { packages(it) }
+        writeInt(windows.size); windows.forEach { window(it) }
         writeInt(s.metrics.size)
         s.metrics.forEach { metric ->
-            text(metric.key.kind.wireId); packages(metric.key.packageNames)
+            text(metric.key.kind.wireId); writeInt(groups.indexOf(metric.key.packageNames))
             writeBoolean(metric.value != null); metric.value?.let(::writeDouble)
             text(metric.unit.wireId); text(metric.estimate.wireId)
-            val w = metric.window
-            text(w.source); text(w.scope.wireId); nullableInstant(w.startedAt); nullableInstant(w.endedAt)
-            writeBoolean(w.batteryDurationMillis != null); w.batteryDurationMillis?.let(::writeLong)
-            nullableText(w.resetId); text(w.charging.wireId); text(fieldId(metric.status))
+            writeInt(windows.indexOf(metric.window)); text(fieldId(metric.status))
         }
         text(s.fingerprint)
     }
@@ -155,20 +161,45 @@ object VerificationArchive {
             checkData(!sources.containsKey(name))
             sources[name] = wire(DiagnosticSourceStatus.entries, ::sourceId)
         }
-        val metrics = List(count(200)) {
+        val format = readInt()
+        supported(format == COMPACT_METRICS || format >= 0)
+        val compact = format == COMPACT_METRICS
+        val groups = if (compact) List(count(21)) { packages() }.also {
+            checkData(it.distinct().size == it.size)
+        } else emptyList()
+        val windows = if (compact) List(count(200)) { window() }.also {
+            checkData(it.distinct().size == it.size)
+        } else emptyList()
+        val metricCount = if (compact) count(200) else format.also { limit(it <= 200) }
+        val metrics = List(metricCount) {
             val kind = wire(VerificationMetricKind.entries) { it.wireId }
-            val packages = packages()
+            val packages = if (compact) reference(groups) else packages()
             checkData(kind != VerificationMetricKind.OVERALL_POWER || packages.isEmpty())
             val value = if (flag()) readDouble() else null
             val unit = wire(VerificationUnit.entries) { it.wireId }
             val estimate = wire(VerificationEstimate.entries) { it.wireId }
-            val windowSource = text(); val scope = wire(VerificationMetricScope.entries) { it.wireId }
-            val start = nullableInstant(); val end = nullableInstant(); val duration = if (flag()) readLong() else null
-            val reset = nullableText(); val charging = wire(VerificationConfirmation.entries) { it.wireId }
+            val window = if (compact) reference(windows) else window()
             VerificationMetric(VerificationMetricKey(kind, packages), value, unit, estimate,
-                MetricWindow(windowSource, scope, start, end, duration, reset, charging), wire(EvidenceFieldStatus.entries, ::fieldId))
+                window, wire(EvidenceFieldStatus.entries, ::fieldId))
         }
         return DiagnosticVerificationSummary(source, generated, reported, context, sources, metrics, text())
+    }
+
+    private fun DataOutputStream.window(w: MetricWindow) {
+        text(w.source); text(w.scope.wireId); nullableInstant(w.startedAt); nullableInstant(w.endedAt)
+        writeBoolean(w.batteryDurationMillis != null); w.batteryDurationMillis?.let(::writeLong)
+        nullableText(w.resetId); text(w.charging.wireId)
+    }
+    private fun DataInputStream.window(): MetricWindow {
+        val source = text(); val scope = wire(VerificationMetricScope.entries) { it.wireId }
+        val start = nullableInstant(); val end = nullableInstant(); val duration = if (flag()) readLong() else null
+        val reset = nullableText(); val charging = wire(VerificationConfirmation.entries) { it.wireId }
+        return MetricWindow(source, scope, start, end, duration, reset, charging)
+    }
+    private fun <T> DataInputStream.reference(values: List<T>): T {
+        val index = readInt()
+        checkData(index >= 0 && index < values.size)
+        return values[index]
     }
 
     private fun DataOutputStream.packages(values: List<String>) {

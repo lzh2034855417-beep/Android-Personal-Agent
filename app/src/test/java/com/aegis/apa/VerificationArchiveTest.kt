@@ -7,6 +7,39 @@ import org.junit.Test
 import java.nio.ByteBuffer
 
 class VerificationArchiveTest {
+    @Test fun legacyPreviewV1RemainsReadableAndCanBeReencoded() {
+        // Golden captured from the intermediate uncompressed v1 encoder, before compact encoding.
+        val legacy = VerificationFixtures.legacyPreviewBytes()
+        val loaded = VerificationArchive.decode(legacy, now)
+        assertEquals(listOf(record), loaded.records)
+        assertEquals(loaded, VerificationArchive.decode(VerificationArchive.encode(loaded.scopeId, loaded.records), now))
+    }
+
+    @Test fun `compact dictionaries reject hostile counts refs markers and utf8`() {
+        // Mutate bytes at real dictionary/ref boundaries; no decompression or unbounded reads.
+        val bytes = encode()
+        val marker = indexOf(bytes, byteArrayOf(-1, -1, -1, -1))
+        val kind = indexOf(bytes, "app_total_power".toByteArray())
+        val packageName = indexOf(bytes, "com.example.app".toByteArray(), marker)
+        val groupReference = kind + "app_total_power".length
+        val estimate = indexOf(bytes, "estimated".toByteArray(), kind)
+        val windowReference = estimate + "estimated".length
+        val windowCount = packageName + "com.example.app".length
+        fun altered(position: Int, value: Int) = bytes.copyOf().also { ByteBuffer.wrap(it).putInt(position, value) }
+        failure(altered(marker, -2), VerificationStorageFailure.UNSUPPORTED)
+        failure(altered(marker + 4, -1), VerificationStorageFailure.DAMAGED)
+        failure(altered(marker + 4, 22), VerificationStorageFailure.LIMIT)
+        failure(altered(windowCount, -1), VerificationStorageFailure.DAMAGED)
+        failure(altered(windowCount, 201), VerificationStorageFailure.LIMIT)
+        failure(altered(kind - 8, 201), VerificationStorageFailure.LIMIT)
+        for (ref in listOf(groupReference, windowReference)) {
+            failure(altered(ref, -1), VerificationStorageFailure.DAMAGED)
+            failure(altered(ref, 1), VerificationStorageFailure.DAMAGED)
+            failure(altered(ref, Int.MAX_VALUE), VerificationStorageFailure.DAMAGED)
+        }
+        failure(bytes.copyOf().also { it[packageName] = 0xc0.toByte() }, VerificationStorageFailure.DAMAGED)
+        failure(bytes + byteArrayOf(0), VerificationStorageFailure.DAMAGED)
+    }
     private val now = VerificationFixtures.end.plusSeconds(7200)
     private val record = VerificationFixtures.record()
     private fun encode(records: List<VerificationRecord> = listOf(record)) = VerificationArchive.encode("local-scope", records)

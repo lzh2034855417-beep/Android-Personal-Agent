@@ -62,12 +62,22 @@ fun VerificationPanel(
                 "Import a report or run a Root read-only diagnostic first; existing records remain available."))
             LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("verification-record-list"),
                 verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(state.records, key = { it.id }) { record ->
+                state.unsavedRecord?.let { unsaved -> item(key = "unsaved-${unsaved.id}") {
+                    OutlinedButton(onClick = { onSelect(unsaved.id) }, enabled = !state.loading && !state.saving,
+                        modifier = Modifier.fillMaxWidth().testTag("verification-unsaved-record")) {
+                        Column {
+                            Text(verificationText("未保存：", "Not saved: ") + unsaved.title,
+                                color = MaterialTheme.colorScheme.error)
+                            Text(verificationText("重新打开未保存的修改", "Reopen unsaved changes"))
+                        }
+                    }
+                } }
+                items(state.records.filter { it.id != state.unsavedRecord?.id }, key = { it.id }) { record ->
                     OutlinedButton(onClick = { onSelect(record.id) }, modifier = Modifier.fillMaxWidth()) {
                         Column { Text(record.title); Text(verificationStateLabel(record.state)) }
                     }
                 }
-                if (state.records.isEmpty() && !state.loading && !unreadable) item {
+                if (state.records.isEmpty() && state.unsavedRecord == null && !state.loading && !unreadable) item {
                     Text(verificationText("尚无已保存记录。", "No saved records yet."))
                 }
             }

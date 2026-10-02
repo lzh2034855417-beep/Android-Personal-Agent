@@ -8,6 +8,24 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class VerificationResultFormatterTest {
+    @Test fun tinyNonzeroValuesAndChangesStayVisibleInBothLanguages() {
+        val initial = VerificationFixtures.record()
+        val tiny = initial.copy(baseline = initial.baseline.copy(metrics = initial.baseline.metrics.map { it.copy(value = 0.0000001) }),
+            retest = initial.retest!!.copy(metrics = initial.retest!!.metrics.map { it.copy(value = 0.0000002) }))
+        val close = initial.copy(retest = initial.retest!!.copy(metrics = initial.retest!!.metrics.map { it.copy(value = 100.00000001) }))
+        for (language in AppLanguage.entries) {
+            val text = VerificationResultFormatter.format(tiny, VerificationComparisonEngine.compare(tiny), language)
+            assertTrue(text.contains("1E-7 mAh"))
+            assertTrue(text.contains("2E-7 mAh"))
+            assertTrue(text.contains("1E-7 → 2E-7"))
+            assertFalse(text.contains("increased: 0 "))
+            assertFalse(text.contains("增加: 0 "))
+            val precise = VerificationResultFormatter.format(close, VerificationComparisonEngine.compare(close), language)
+            assertTrue(precise.contains("100.00000001 mAh"))
+            val percentage = precise.lines().single { it.endsWith("%") }.substringAfter(": ").dropLast(1)
+            assertTrue(java.math.BigDecimal(percentage).signum() > 0)
+        }
+    }
     // Catch lost evidence, language-dependent arithmetic, causal claims and hidden side effects.
     @Test fun bothLanguagesShowTheSameValuesWindowsSourcesAndSideEffects() {
         val record = VerificationFixtures.record().let { it.copy(change = it.change!!.copy(sideEffects = "Notifications delayed", rollback = "Restore sync")) }

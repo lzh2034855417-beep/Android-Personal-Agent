@@ -95,6 +95,20 @@ class VerificationSummaryProjectorTest {
         assertNull(summary.reportedAt)
     }
 
+    @Test fun mismatchedWindowSourceCannotSupplyAnotherSourcesWindow() {
+        // Catches accepting a map key while ignoring the window's actual source.
+        val summary = project(metadata = VerificationFixtures.metadata().copy(windowsBySource = mapOf(
+            "batterystats" to VerificationFixtures.window("alarm"))))
+        summary.metrics.filter { it.window.source == "batterystats" }.forEach {
+            assertEquals(VerificationMetricScope.UNKNOWN, it.window.scope)
+            assertNull(it.window.startedAt)
+            assertNull(it.window.endedAt)
+            assertNull(it.window.batteryDurationMillis)
+            assertNull(it.window.resetId)
+            assertEquals(VerificationConfirmation.UNKNOWN, it.window.charging)
+        }
+    }
+
     @Test
     fun importedDeviceMetadataNeverFallsBackToCurrentDevice() {
         // Catches incorrectly assigning an imported report to the current handset.

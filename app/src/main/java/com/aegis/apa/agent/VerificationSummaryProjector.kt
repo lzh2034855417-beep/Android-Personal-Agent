@@ -56,7 +56,8 @@ object VerificationSummaryProjector {
         )
         val targetPackages = (target as? VerificationTarget.AppGroup)?.packageNames
         val selectedTarget = ranked.firstOrNull { VerificationTarget.AppGroup(it.packageNames).packageNames == targetPackages }
-        val selected = if (selectedTarget == null) ranked.take(20) else listOf(selectedTarget) + ranked.filter { it !== selectedTarget }.take(19)
+        val selected = if (selectedTarget == null) ranked.take(if (targetPackages == null) 20 else 19)
+            else listOf(selectedTarget) + ranked.filter { it !== selectedTarget }.take(19)
         selected.forEach { app ->
             val packages = app.packageNames
             metric(VerificationMetricKind.APP_TOTAL_POWER, packages, app.estimatedPowerMah, VerificationUnit.MAH,

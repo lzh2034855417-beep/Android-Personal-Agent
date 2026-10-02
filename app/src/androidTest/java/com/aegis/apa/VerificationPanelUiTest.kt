@@ -168,6 +168,30 @@ class VerificationPanelUiTest {
         rule.onNodeWithTag("verification-clear").assertIsNotEnabled()
     }
 
+    // Catches losing a failed new baseline after Back, or labeling it as a durable saved row.
+    @Test fun unsavedBaselineRemainsMarkedAndCanReopenAfterBack() {
+        val candidate = record().copy(state = VerificationState.BASELINE_SAVED, change = null, retest = null,
+            title = "Unsaved baseline")
+        rule.setContent {
+            var state by remember { mutableStateOf(VerificationUiState(loading = false, selectedId = candidate.id,
+                storageFailure = VerificationStorageFailure.WRITE_FAILED, unsavedRecord = candidate)) }
+            CompositionLocalProvider(LocalAppLanguage provides AppLanguage.EN) {
+                AndroidPersonalAgentTheme {
+                    VerificationPanel(state, diagnostic(), { _, _, _ -> },
+                        { state = state.copy(selectedId = it) }, { _, _, _ -> }, { _, _, _ -> },
+                        { _, _, _ -> }, {}, {})
+                }
+            }
+        }
+        rule.onNodeWithText("Back to records").performClick()
+        rule.onNodeWithTag("verification-unsaved-record").assertExists()
+        rule.onNodeWithTag("verification-unsaved-record").assertTextContains("Not saved: Unsaved baseline")
+        rule.onNodeWithText("Baseline saved").assertDoesNotExist()
+        rule.onNodeWithTag("verification-unsaved-record").performClick()
+        rule.onNodeWithText("Back to records").assertExists()
+        rule.onNodeWithText("Not saved: current changes", substring = true).assertExists()
+    }
+
     // Catches fixed-height/non-scrolling form/results hiding actions with large text and the IME.
     @Test fun smallScreenLargeFontLongResultsAndImeKeepActionsReachable() {
         show(record = record(), compact = true)

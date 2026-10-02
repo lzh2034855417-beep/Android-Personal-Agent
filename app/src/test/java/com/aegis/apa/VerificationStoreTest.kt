@@ -25,6 +25,69 @@ class VerificationStoreTest {
     private fun record(store: VerificationStore, id: String = "record-1") = VerificationFixtures.record().copy(
         id = id, scopeId = requireNotNull(store.load().scopeId))
 
+    @Test fun `intermediate preview v1 encrypted archive loads and remains editable`() {
+        file().writeBytes(encrypt(VerificationFixtures.legacyPreviewBytes()))
+        val store = store()
+        assertEquals(listOf(VerificationFixtures.record()), store.load().records)
+        val edited = VerificationFixtures.record().copy(revision = 3, title = "Edited preview")
+        assertNull(store.upsert(edited).failure)
+        assertEquals(listOf(edited), store().load().records)
+    }
+
+    @Test fun `absent target reserves a slot and projected retest persists without fake metrics`() {
+        val target = VerificationTarget.AppGroup(listOf("com.example.target"))
+        val baseline = VerificationFixtures.fullSnapshot().let { it.copy(apps = it.apps.take(19) +
+            it.apps.first().copy(packageNames = target.packageNames)) }
+        val retest = VerificationFixtures.fullSnapshot()
+        persistProjectedRetest(baseline, retest, target, 172)
+    }
+
+    @Test fun `complete twenty group projected baseline change and retest persist losslessly`() {
+        val baseline = VerificationFixtures.fullSnapshot()
+        val retest = baseline.copy(apps = baseline.apps.map { it.copy(estimatedPowerMah = 80.0) })
+        persistProjectedRetest(baseline, retest, VerificationTarget.AppGroup(listOf("com.example.app01")), 181)
+    }
+
+    private fun persistProjectedRetest(before: PowerDiagnosticSnapshot, after: PowerDiagnosticSnapshot,
+        target: VerificationTarget.AppGroup, expectedRetestMetrics: Int) {
+        val context = VerificationFixtures.context().copy(scenarioNote = "")
+        fun project(snapshot: PowerDiagnosticSnapshot) = VerificationSummaryProjector.project(snapshot,
+            VerificationFixtures.productionMetadata(), context, target)!!
+        val baseline = project(before)
+        val retest = project(after)
+        val store = store()
+        val controller = VerificationController(store, { now }, java.util.concurrent.Executor { it.run() }, {})
+        controller.createBaseline("", target, baseline)
+        assertNull("baseline save", controller.state.storageFailure)
+        val saved = controller.state.records.single()
+        println("Baseline metrics=" + baseline.metrics.size + " record bytes=" +
+            ByteBuffer.wrap(VerificationArchive.encode(saved.scopeId, listOf(saved)))
+                .getInt(8 + saved.scopeId.toByteArray(Charsets.UTF_8).size + 4) +
+            " retest groups=" + retest.metrics.map { it.key.packageNames }.filter { it.isNotEmpty() }.distinct().size)
+        now = now.plusSeconds(1)
+        controller.recordChange(saved.id, saved.revision, VerificationFixtures.change().copy(
+            description = "", rollback = "", sideEffects = ""))
+        assertNull("manual change save", controller.state.storageFailure)
+        now = now.plusSeconds(1)
+        controller.recordRetest(saved.id, controller.state.records.single().revision, retest)
+        assertNull("retest save", controller.state.storageFailure)
+        assertNull(controller.state.unsavedRecord)
+        val restored = store().load().records.single()
+        assertEquals(VerificationState.RETEST_SAVED, restored.state)
+        assertEquals(baseline, restored.baseline)
+        assertEquals(retest, restored.retest)
+        assertEquals(expectedRetestMetrics, restored.retest!!.metrics.size)
+        assertTrue(restored.retest!!.metrics.all { it.value != null && it.status == EvidenceFieldStatus.PARSED })
+        if (expectedRetestMetrics == 172) {
+            assertFalse(restored.retest!!.metrics.any { it.key.packageNames == target.packageNames })
+            assertEquals(19, restored.retest!!.metrics.map { it.key.packageNames }.filter { it.isNotEmpty() }.distinct().size)
+        }
+        println("Projected retest metrics=$expectedRetestMetrics record bytes=" +
+            ByteBuffer.wrap(VerificationArchive.encode(restored.scopeId, listOf(restored)))
+                .getInt(8 + restored.scopeId.toByteArray(Charsets.UTF_8).size + 4))
+        controller.dispose()
+    }
+
     @Test fun `encrypted round trip has no package or note and empty scope survives reopening`() {
         val store = store()
         val scope = store.load().scopeId

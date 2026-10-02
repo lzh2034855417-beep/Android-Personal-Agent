@@ -83,7 +83,12 @@ object VerificationResultFormatter {
     }
 
     private fun number(value: Double) = decimal(BigDecimal.valueOf(value))
-    private fun decimal(value: BigDecimal) = value.setScale(6, RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()
+    private fun decimal(value: BigDecimal): String {
+        val rounded = value.setScale(6, RoundingMode.HALF_UP)
+        // Keep sub-display-precision evidence visible, including unequal raw values and tiny deltas.
+        return if (rounded.compareTo(value) == 0) rounded.stripTrailingZeros().toPlainString()
+            else value.stripTrailingZeros().toString()
+    }
 
     private fun metricName(kind: VerificationMetricKind, zh: Boolean): String {
         val names = when (kind) {

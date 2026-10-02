@@ -4,6 +4,8 @@ import com.aegis.apa.model.*
 import java.time.Instant
 
 object VerificationFixtures {
+    fun legacyPreviewBytes(): ByteArray = java.util.Base64.getDecoder().decode(
+        requireNotNull(javaClass.getResource("/verification-preview-v1.base64")).readText().trim())
     val start: Instant = Instant.parse("2026-10-01T00:00:00Z")
     val end: Instant = start.plusSeconds(3600)
 
@@ -42,6 +44,16 @@ object VerificationFixtures {
         evidenceCoverage = EvidenceCoverage(EvidenceField.entries.associateWith { EvidenceFieldStatus.PARSED }),
         inputSource = DiagnosticInputSource.BUGREPORT
     )
+
+    // Complete production-shaped whitelist: 20 groups, all nine app fields, no user notes.
+    fun fullSnapshot() = snapshot().copy(apps = (1..20).map { index ->
+        snapshot().apps.single().copy(uid = 10000 + index,
+            packageNames = listOf("com.example.app%02d".format(java.util.Locale.ROOT, index)))
+    })
+
+    fun productionMetadata() = metadata().copy(reportedAt = null, windowsBySource = mapOf(
+        "batterystats" to MetricWindow("batterystats", VerificationMetricScope.SINCE_LAST_CHARGE,
+            null, null, 3_600_000, null, VerificationConfirmation.UNKNOWN)))
 
     fun summary(power: Double = 100.0, startedAt: Instant = start) = DiagnosticVerificationSummary(
         inputSource = DiagnosticInputSource.BUGREPORT,
