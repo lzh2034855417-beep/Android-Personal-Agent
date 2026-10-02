@@ -15,6 +15,20 @@ import java.time.Instant
 
 class PowerDiagnosticPipelineTest {
     @Test
+    fun extractedVerificationHeadersReachSnapshotWithoutChangingNumericEvidence() {
+        // Catches dropping the import headers at the analysis boundary.
+        val report = "------ SYSTEM PROPERTIES ------\n[ro.product.model]: [Report Model]\n" +
+            "DUMP OF SERVICE batterystats:\nEstimated power use (mAh):\n  UID u0a123: 42.5"
+        val read = BugReportSectionExtractor.extract(report.byteInputStream(), "bugreport.txt") as BugReportReadResult.Success
+        val snapshot = PowerDiagnosticPipeline.analyze(read.sections, DiagnosticInputSource.BUGREPORT, Instant.EPOCH,
+            verificationHeaderFields = read.verificationHeaderFields)
+        assertEquals("Report Model", snapshot.verificationMetadata?.device?.modelCode)
+        assertEquals(42.5, snapshot.apps.single().estimatedPowerMah!!, 0.0)
+        assertEquals(Instant.EPOCH, snapshot.sampledAtInstant)
+        assertEquals(null, snapshot.verificationMetadata?.reportedAt)
+    }
+
+    @Test
     fun importedSectionsReceiveALocalVerdictBeforeAi() {
         val snapshot = PowerDiagnosticPipeline.analyze(
             sections = listOf(

@@ -2,6 +2,8 @@ package com.aegis.apa
 
 import com.aegis.apa.model.DiagnosticInputSource
 import com.aegis.apa.model.DiagnosticSourceStatus
+import com.aegis.apa.model.VerificationDeviceContext
+import com.aegis.apa.model.VerificationOwnership
 import com.aegis.apa.tool.AllowedRootCommand
 import com.aegis.apa.tool.DiagnosticCommandRunner
 import com.aegis.apa.tool.RootCommandResult
@@ -15,6 +17,24 @@ import java.time.ZoneOffset
 import java.util.concurrent.CancellationException
 
 class SystemPowerDiagnosticsCollectorTest {
+    @Test
+    fun localDeviceContextIsAttachedWithoutUsingCollectionClockAsStatisticsTime() {
+        // Catches missing Root identity and clock-derived statistics timestamps.
+        val time = Instant.parse("2026-10-02T12:00:00Z")
+        val runner = DiagnosticCommandRunner { command ->
+            RootCommandResult(command, DiagnosticSourceStatus.AVAILABLE, if (command == AllowedRootCommand.BATTERYSTATS)
+                "Statistics since last charge:\nTime on battery: 45m (100%) realtime" else "")
+        }
+        val snapshot = SystemPowerDiagnosticsCollector(runner, Clock.fixed(time, ZoneOffset.UTC),
+            currentDeviceContext = VerificationDeviceContext("Maker", "Local Model", 35, "build", VerificationOwnership.UNKNOWN)).collect()
+        val metadata = requireNotNull(snapshot.verificationMetadata)
+        assertEquals(VerificationDeviceContext("Maker", "Local Model", 35, "build", VerificationOwnership.LOCAL_COLLECTION), metadata.device)
+        assertEquals(time, snapshot.sampledAtInstant)
+        assertEquals(null, metadata.reportedAt)
+        assertTrue(metadata.windowsBySource.values.all { it.startedAt == null && it.endedAt == null })
+        assertEquals(2_700_000L, metadata.windowsBySource.getValue("batterystats").batteryDurationMillis)
+    }
+
     @Test
     fun collectorKeepsSuccessfulSectionsWhenOneTimesOut() {
         val runner = DiagnosticCommandRunner { command ->

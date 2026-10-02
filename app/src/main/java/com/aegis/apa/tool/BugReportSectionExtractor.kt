@@ -21,7 +21,10 @@ data class BugReportReadLimits(
 )
 
 sealed interface BugReportReadResult {
-    data class Success(val sections: List<RawDiagnosticSection>) : BugReportReadResult
+    data class Success(
+        val sections: List<RawDiagnosticSection>,
+        val verificationHeaderFields: Map<String, String> = emptyMap()
+    ) : BugReportReadResult
     data class Rejected(val reason: BugReportRejectReason) : BugReportReadResult
     data object Cancelled : BugReportReadResult
 }
@@ -101,7 +104,7 @@ object BugReportSectionExtractor {
             CandidateRead.TotalTooLarge -> BugReportReadResult.Rejected(BugReportRejectReason.TOTAL_TOO_LARGE)
             CandidateRead.Unsupported -> BugReportReadResult.Rejected(BugReportRejectReason.UNSUPPORTED_FORMAT)
             is CandidateRead.Empty -> BugReportReadResult.Rejected(BugReportRejectReason.EMPTY)
-            is CandidateRead.Sections -> BugReportReadResult.Success(read.value)
+            is CandidateRead.Sections -> BugReportReadResult.Success(read.value, read.verificationHeaderFields)
         }
     }
 
@@ -117,11 +120,13 @@ object BugReportSectionExtractor {
         var skippedBytes = 0L
         var sawNestedArchive = false
         var reportSections: List<RawDiagnosticSection>? = null
+        var verificationHeaderFields: Map<String, String> = emptyMap()
         var hardwareSection: RawDiagnosticSection? = null
 
         fun completedReport(): BugReportReadResult.Success? = reportSections?.let { sections ->
             BugReportReadResult.Success(
-                if (hardwareSection == null) sections else sections + hardwareSection!!
+                if (hardwareSection == null) sections else sections + hardwareSection!!,
+                verificationHeaderFields
             )
         }
 
@@ -161,6 +166,7 @@ object BugReportSectionExtractor {
                                 is BugReportReadResult.Rejected -> return nested
                                 is BugReportReadResult.Success -> {
                                     reportSections = nested.sections.filterNot { it.source == "hardware" }
+                                    verificationHeaderFields = nested.verificationHeaderFields
                                     nested.sections.firstOrNull { it.source == "hardware" }?.let { nestedHardware ->
                                         hardwareSection = nestedHardware
                                     }
@@ -257,6 +263,7 @@ object BugReportSectionExtractor {
                         is CandidateRead.Sections -> {
                             reportBytes += read.bytesRead
                             reportSections = read.value
+                            verificationHeaderFields = read.verificationHeaderFields
                             zip.closeEntry()
                         }
                     }
@@ -289,10 +296,19 @@ object BugReportSectionExtractor {
         var currentSource: String? = null
         val line = StringBuilder()
         var lineTruncated = false
+        var lineHadNul = false
         var nulCharCount = 0
+        var inSystemProperties = false
+        val verificationHeaders = VerificationHeaderAccumulator()
 
         fun consumeLine() {
             val value = line.toString().removeSuffix("\r")
+            if (value.trim().startsWith("------")) {
+                inSystemProperties = !lineTruncated && !lineHadNul && value.trim() == "------ SYSTEM PROPERTIES ------"
+            } else if (inSystemProperties) {
+                verificationHeaders.consume(value, incomplete = lineTruncated || lineHadNul)
+            }
+            if (!lineTruncated && markerSource(value) != null) inSystemProperties = false
             val markerSource = if (lineTruncated) null else markerSource(value)
             if (markerSource != null) {
                 currentSource = markerSource.takeIf(allowedSources::contains)
@@ -318,6 +334,7 @@ object BugReportSectionExtractor {
             }
             line.clear()
             lineTruncated = false
+            lineHadNul = false
         }
 
         val bounded = CheckedInputStream(input, entryLimit, totalRemaining, isCancelled)
@@ -330,6 +347,7 @@ object BugReportSectionExtractor {
                 for (index in 0 until count) {
                     when (val char = chars[index]) {
                         '\u0000' -> {
+                            lineHadNul = true
                             nulCharCount += 1
                             if (nulCharCount > MAX_TOLERATED_NUL_CHARS) return CandidateRead.Unsupported
                         }
@@ -360,7 +378,8 @@ object BugReportSectionExtractor {
                             detail = if (wasTruncated) "导入段落超过大小限制" else null
                         )
                     },
-                    bounded.bytesRead
+                    bounded.bytesRead,
+                    verificationHeaders.snapshot()
                 )
             }
         } catch (_: CancelledReadException) {
@@ -540,7 +559,11 @@ object BugReportSectionExtractor {
     }
 
     private sealed interface CandidateRead {
-        data class Sections(val value: List<RawDiagnosticSection>, val bytesRead: Long) : CandidateRead
+        data class Sections(
+            val value: List<RawDiagnosticSection>,
+            val bytesRead: Long,
+            val verificationHeaderFields: Map<String, String>
+        ) : CandidateRead
         data class Empty(val bytesRead: Long) : CandidateRead
         data object Cancelled : CandidateRead
         data object Unsupported : CandidateRead

@@ -342,7 +342,8 @@ class MainActivity : ComponentActivity() {
                                             inputSource = DiagnosticInputSource.BUGREPORT,
                                             sampledAt = Instant.now(),
                                             collectionDurationMillis = (System.nanoTime() - startedNanos) / 1_000_000,
-                                            packageLabelResolver = ::resolveInstalledAppLabel
+                                            packageLabelResolver = ::resolveInstalledAppLabel,
+                                            verificationHeaderFields = imported.verificationHeaderFields
                                         )
                                         session.completePowerDiagnostic(analyzed)
                                     }
@@ -432,7 +433,11 @@ class MainActivity : ComponentActivity() {
                                 val result = withContext(Dispatchers.IO) {
                                     val collectionJob = currentCoroutineContext()[Job]
                                     SystemPowerDiagnosticsCollector(
-                                        packageLabelResolver = ::resolveInstalledAppLabel
+                                        packageLabelResolver = ::resolveInstalledAppLabel,
+                                        currentDeviceContext = com.aegis.apa.model.VerificationDeviceContext(
+                                            Build.MANUFACTURER, Build.MODEL, Build.VERSION.SDK_INT,
+                                            Build.VERSION.INCREMENTAL, com.aegis.apa.model.VerificationOwnership.LOCAL_COLLECTION
+                                        )
                                     ).collect(
                                         onProgress = { completed, total, source ->
                                             scope.launch {

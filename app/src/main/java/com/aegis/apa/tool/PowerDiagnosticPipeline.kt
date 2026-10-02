@@ -12,7 +12,8 @@ object PowerDiagnosticPipeline {
         inputSource: DiagnosticInputSource,
         sampledAt: Instant,
         collectionDurationMillis: Long = 0L,
-        packageLabelResolver: (String) -> String? = { null }
+        packageLabelResolver: (String) -> String? = { null },
+        verificationHeaderFields: Map<String, String> = emptyMap()
     ): PowerDiagnosticSnapshot {
         val parsed = PowerDiagnosticParser.parse(
             sections = sections,
@@ -21,6 +22,7 @@ object PowerDiagnosticPipeline {
         )
         val sourced = parsed.copy(
             inputSource = inputSource,
+            verificationMetadata = DiagnosticWindowMetadataParser.parse(sections, verificationHeaderFields),
             apps = parsed.apps.map { app ->
                 app.copy(
                     displayNames = app.packageNames.map { packageName ->

@@ -16,6 +16,92 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 class BugReportSectionExtractorTest {
+    @Test
+    fun keepsOnlyExactMainReportVerificationProperties() {
+        // Catches retaining unique/extra identifiers or dropping allowlisted main-report metadata.
+        val header = """
+            ------ SYSTEM PROPERTIES ------
+            [ro.product.manufacturer]: [Maker]
+            [ro.product.model]: [Report Model]
+            [ro.build.version.sdk]: [35]
+            [ro.build.version.incremental]: [release-build]
+            [ro.serialno]: [unique]
+            [ro.build.fingerprint]: [unique-fingerprint]
+            [ro.product.vendor.model]: [Vendor Model]
+            ------ OTHER SECTION ------
+            [ro.product.model]: [Forged Model]
+        """.trimIndent()
+        val result = BugReportSectionExtractor.extract((header + "\n" + reportText).byteInputStream(), "bugreport.txt") as BugReportReadResult.Success
+        assertEquals(mapOf("ro.product.manufacturer" to "Maker", "ro.product.model" to "Report Model", "ro.build.version.sdk" to "35", "ro.build.version.incremental" to "release-build"), result.verificationHeaderFields)
+        assertTrue(result.verificationHeaderFields.entries.sumOf { (key, value) -> (key + value).toByteArray().size } <= 4096)
+    }
+
+    @Test
+    fun duplicateConflictAndOversizeValueCannotRecoverFromLaterHeader() {
+        // Catches first/last-wins conflicts and accepting a later value after an invalid duplicate.
+        val header = "------ SYSTEM PROPERTIES ------\n" +
+            "[ro.product.manufacturer]: [Maker]\n[ro.product.manufacturer]: [Maker]\n" +
+            "[ro.product.model]: [First]\n[ro.product.model]: [Second]\n[ro.product.model]: [First]\n" +
+            "[ro.build.version.incremental]: [${"界".repeat(86)}]\n[ro.build.version.incremental]: [short]\n"
+        val result = BugReportSectionExtractor.extract((header + reportText).byteInputStream(), "bugreport.txt") as BugReportReadResult.Success
+        assertEquals(mapOf("ro.product.manufacturer" to "Maker"), result.verificationHeaderFields)
+    }
+
+    @Test
+    fun allowedPropertiesAfterLargeUnrelatedBlockStillReachMetadata() {
+        // Catches applying the retained 4KiB limit as a scan-prefix limit.
+        val header = "------ SYSTEM PROPERTIES ------\n" +
+            (1..100).joinToString("\n") { "[unrelated.property.$it]: [${"x".repeat(100)}]" } +
+            "\n[ro.product.model]: [Late Model]\n"
+        val result = BugReportSectionExtractor.extract((header + reportText).byteInputStream(), "bugreport.txt") as BugReportReadResult.Success
+        assertEquals(mapOf("ro.product.model" to "Late Model"), result.verificationHeaderFields)
+    }
+
+    @Test
+    fun selectedNestedReportProvidesHeadersAndOtherArchiveEntriesDoNot() {
+        // Catches attaching identity from hardware logs or a second report.
+        val selected = "------ SYSTEM PROPERTIES ------\n[ro.product.model]: [Nested Model]\n" + reportText
+        val other = "------ SYSTEM PROPERTIES ------\n[ro.product.model]: [Other Model]\n" + reportText
+        val result = BugReportSectionExtractor.extract(zipBytesOf(
+            "FS/data/vendor/bootlog.txt" to other.toByteArray(),
+            "bugreport-inner.zip" to zipOf("bugreport-inner.txt" to selected, "bugreport-other.txt" to other)
+        ).inputStream(), "bugreport.zip") as BugReportReadResult.Success
+        assertEquals(mapOf("ro.product.model" to "Nested Model"), result.verificationHeaderFields)
+    }
+
+    @Test
+    fun truncatedPropertyLineCannotBecomePartialIdentifier() {
+        // Catches parsing a bounded/truncated line as a complete property.
+        val header = "------ SYSTEM PROPERTIES ------\n[ro.product.model]: [${"x".repeat(70_000)}]\n[ro.product.model]: [later]\n"
+        val result = BugReportSectionExtractor.extract((header + reportText).byteInputStream(), "bugreport.txt") as BugReportReadResult.Success
+        assertTrue(result.verificationHeaderFields.isEmpty())
+    }
+
+    @Test
+    fun truncatedSectionBoundaryEndsPropertyProvenance() {
+        // Catches attributing later unrelated section properties to the system property block.
+        val header = "------ SYSTEM PROPERTIES ------\n------ OTHER ${"x".repeat(70_000)} ------\n[ro.product.model]: [Other Section Model]\n"
+        val result = BugReportSectionExtractor.extract((header + reportText).byteInputStream(), "bugreport.txt") as BugReportReadResult.Success
+        assertTrue(result.verificationHeaderFields.isEmpty())
+    }
+
+    @Test
+    fun full256BytePropertyValueIsPreserved() {
+        // Catches character-count bounds replacing the UTF-8 byte boundary.
+        val value = "界".repeat(85) + "x"
+        val header = "------ SYSTEM PROPERTIES ------\n[ro.product.model]: [$value]\n"
+        val result = BugReportSectionExtractor.extract((header + reportText).byteInputStream(), "bugreport.txt") as BugReportReadResult.Success
+        assertEquals(value, result.verificationHeaderFields["ro.product.model"])
+    }
+
+    @Test
+    fun cancelledOrOversizeReadCannotProduceMetadataSuccess() {
+        // Catches exposing captured identity from a failed/partial import.
+        val report = "------ SYSTEM PROPERTIES ------\n[ro.product.model]: [Model]\n" + reportText
+        assertEquals(BugReportReadResult.Cancelled, BugReportSectionExtractor.extract(report.byteInputStream(), "bugreport.txt", isCancelled = { true }))
+        assertEquals(rejected(BugReportRejectReason.ENTRY_TOO_LARGE), BugReportSectionExtractor.extract(report.byteInputStream(), "bugreport.txt", limits = BugReportReadLimits(maxEntryBytes = 50)))
+    }
+
     private val reportText = """
         ------ DUMPSYS batterystats (dumpsys batterystats --checkin) ------
         Estimated power use (mAh):

@@ -146,5 +146,6 @@ data class PowerDiagnosticSnapshot(
     val findings: List<PowerFinding>,
     val evidenceCoverage: EvidenceCoverage = EvidenceCoverage(),
     val inputSource: DiagnosticInputSource? = null,
-    val localVerdict: LocalPowerVerdict? = null
+    val localVerdict: LocalPowerVerdict? = null,
+    val verificationMetadata: DiagnosticVerificationMetadata? = null
 )
