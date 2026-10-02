@@ -24,6 +24,13 @@ import org.junit.Test
 class PowerDiagnosticPanelUiTest {
     @get:Rule val rule = createComposeRule()
 
+    @Test fun localVerificationEntryDoesNotRequireRootOrKey() {
+        var opened = false
+        showPanel(AppLanguage.EN, onOpenVerification = { opened = true }) {}
+        rule.onNodeWithText("Local verification records").performScrollTo().performClick()
+        assertTrue(opened)
+    }
+
     @Test fun englishShowsStructuredConclusionAndKeepsPackageCopyComplete() {
         var copied: String? = null
         showPanel(AppLanguage.EN) { copied = it }
@@ -56,7 +63,7 @@ class PowerDiagnosticPanelUiTest {
         rule.onNodeWithText("Drain is a system estimate.").assertExists()
     }
 
-    private fun showPanel(language: AppLanguage, onCopy: (String) -> Unit) {
+    private fun showPanel(language: AppLanguage, onOpenVerification: () -> Unit = {}, onCopy: (String) -> Unit) {
         val candidate = RankedPowerCandidate(
             uid = 10123, packageNames = listOf("com.example.one", "com.example.two"),
             facts = listOf("原始设备证据不可替换"), confidence = DiagnosticConfidence.LOW,
@@ -79,7 +86,8 @@ class PowerDiagnosticPanelUiTest {
                             observationStart = null, observationResult = null, observationNotice = null,
                             selected = false, rootAvailable = false, onCollect = {}, onImportBugReport = {},
                             onStartObservation = {}, onFinishObservation = {}, onClearObservation = {},
-                            onToggleSelected = {}, onRemove = {}, onCopyPackage = onCopy
+                            onToggleSelected = {}, onRemove = {}, onCopyPackage = onCopy,
+                            onOpenVerification = onOpenVerification
                         )
                     }
                 }

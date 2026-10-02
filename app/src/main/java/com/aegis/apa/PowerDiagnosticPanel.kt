@@ -55,7 +55,8 @@ fun PowerDiagnosticPanel(
     onRemove: () -> Unit,
     onCopyPackage: (String) -> Unit,
     showDiagnosticDetails: Boolean = true,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onOpenVerification: () -> Unit = {}
 ) {
     val language = LocalAppLanguage.current
     val english = language == AppLanguage.EN
@@ -112,6 +113,9 @@ fun PowerDiagnosticPanel(
                 PowerDiagnosticUiState.Interrupted -> Text(if (english) "The previous read was interrupted. Retry manually." else "上次读取已中断，请手动重试。")
             }
             val busy = state is PowerDiagnosticUiState.Collecting || state == PowerDiagnosticUiState.Importing
+            TextButton(onClick = onOpenVerification, modifier = Modifier.fillMaxWidth()) {
+                Text(if (english) "Local verification records" else "本地验证记录")
+            }
             PowerDiagnosticEntryPoints.forRootAvailability(rootAvailable).forEach { entryPoint ->
                 when (entryPoint) {
                     PowerDiagnosticEntryPoint.IMPORT_BUGREPORT -> Button(

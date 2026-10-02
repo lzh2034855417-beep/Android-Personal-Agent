@@ -52,7 +52,8 @@ fun AgentChatScreen(
     conversationSaving: Boolean = false,
     conversationExpired: Boolean = false,
     onStopAnalysis: () -> Unit = {},
-    onPrepareRetry: () -> Unit = {}
+    onPrepareRetry: () -> Unit = {},
+    onOpenVerification: () -> Unit = {}
 ) {
     val appLanguage = LocalAppLanguage.current
     var selectedLevel by state.selectedLevel
@@ -179,6 +180,10 @@ fun AgentChatScreen(
             style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
             color = if (conversationStorageError) colors.error else colors.onSurfaceVariant
         )
+        TextButton(onClick = onOpenVerification) {
+            Text(if (appLanguage == AppLanguage.EN) "Local verification records · clearing chat keeps records"
+                else "本地验证记录 · 清空聊天会保留记录")
+        }
         val retryQuestion = com.aegis.apa.agent.AgentRetryPolicy.question(messages)
         if (isOnlineAnalyzing || retryQuestion != null) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -392,7 +397,8 @@ fun AgentChatScreen(
                     onToggleSelected = { includePowerDiagnosticReport = !includePowerDiagnosticReport },
                     onRemove = onRemovePowerDiagnostic,
                     showDiagnosticDetails = false,
-                    onCopyPackage = onCopyPackage
+                    onCopyPackage = onCopyPackage,
+                    onOpenVerification = onOpenVerification
                 )
             }
         }

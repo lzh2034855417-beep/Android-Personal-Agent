@@ -163,6 +163,13 @@ import rikka.shizuku.Shizuku
 class MainActivity : ComponentActivity() {
     private val session by lazy { androidx.lifecycle.ViewModelProvider(this)[MainSessionViewModel::class.java] }
     private val batteryObservationStore by lazy { BatteryObservationStore(this) }
+    private val verification by lazy {
+        androidx.lifecycle.ViewModelProvider(this, object : androidx.lifecycle.ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
+                VerificationViewModel(com.aegis.apa.agent.androidVerificationStore(applicationContext)) as T
+        })[VerificationViewModel::class.java]
+    }
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(newBase.withAppLanguage(AppLanguageStore.load(newBase)))
@@ -190,6 +197,7 @@ class MainActivity : ComponentActivity() {
             CompositionLocalProvider(LocalAppLanguage provides appLanguage) {
                 AndroidPersonalAgentTheme {
                 var selectedPage by rememberSaveable { mutableIntStateOf(0) }
+                var showVerification by rememberSaveable { mutableStateOf(false) }
                 var snapshot by session.snapshot
                 val pageStates = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
                 var isSnapshotRefreshing by remember { mutableStateOf(false) }
@@ -556,6 +564,31 @@ class MainActivity : ComponentActivity() {
                         deviceProfileReadJob?.start()
                     }
                 }
+                if (showVerification) {
+                    androidx.compose.ui.window.Dialog(onDismissRequest = { showVerification = false },
+                        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+                        androidx.compose.material3.Surface(Modifier.fillMaxSize()) {
+                            Column(Modifier.fillMaxSize().statusBarsPadding().padding(bottom = 12.dp)) {
+                                TextButton(onClick = { showVerification = false }) {
+                                    Text(if (appLanguage == AppLanguage.EN) "Return to chat / diagnostics" else "返回聊天 / 诊断")
+                                }
+                                VerificationPanel(verification.state.value, powerDiagnostic,
+                                    onCreateBaseline = { target, context, title ->
+                                        powerDiagnostic?.let { verificationSummary(it, target, context) }?.let {
+                                            verification.createBaseline(title, target, it)
+                                        }
+                                    }, onSelect = verification::select, onChange = verification::recordChange,
+                                    onRetest = { id, revision, context ->
+                                        val record = verification.state.value.records.firstOrNull { it.id == id }
+                                            ?: verification.state.value.unsavedRecord?.takeIf { it.id == id }
+                                        if (record != null) powerDiagnostic?.let { verificationSummary(it, record.target, context) }?.let {
+                                            verification.recordRetest(id, revision, it)
+                                        }
+                                    }, onClose = verification::close, onDelete = verification::delete, onClear = verification::clear)
+                            }
+                        }
+                    }
+                }
                 Scaffold(
                     modifier = Modifier.fillMaxSize().imePadding(),
                     topBar = {
@@ -886,6 +919,7 @@ class MainActivity : ComponentActivity() {
                                     )
                                 },
                                 onClearConversation = { session.clearConversation() },
+                                onOpenVerification = { showVerification = true },
                                 onOpenSettings = { selectedPage = 4 },
                                 powerDiagnosticState = powerDiagnosticState,
                                 powerDiagnostic = powerDiagnostic,

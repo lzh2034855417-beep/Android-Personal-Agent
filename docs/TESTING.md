@@ -185,3 +185,17 @@ Validated with Android Studio JBR, installed SDK 36.1 and cached Gradle dependen
 Limitations: `adb devices -l` reported no devices. Android Keystore, OEM atomic replacement, process termination/rotation, keyboard/layout and real network cancellation remain device checks. Saves run asynchronously; the UI shows saving/errors, and killing the process before completion can lose the latest change. Retention is enforced when reopening history; no background service deletes an unused archive at an exact seven-day wall-clock instant. A stopped request may already have reached the provider; retry can incur another request. Drafts and report objects are not restored, so retry uses current report choices.
 
 ## Earlier validation
+
+## Diagnostic verification — local phase A (2026-10-02)
+
+Task 6 connects the local Compose flow without a model Key: retained-summary preview → baseline → one manually confirmed adjustment/rollback note → current-diagnostic retest preview → original values/refusal reasons → close/delete. Synthetic instrumentation fixtures cover UNKNOWN declarations, affirmative declarations unable to supply missing windows, explicit old-retest removal, damaged-archive clear authorization, saving/failed-save indicators, and bounded lazy scrolling at 320dp / 1.5x font with a focused text field/IME. They use a temporary test archive and synthetic AES key, never a personal archive.
+
+Required offline validation (Android Studio JBR, cached Gradle):
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug :app:lintRelease --offline --console=plain
+```
+
+Preimplementation test compilation failed at the expected missing `VerificationPanel` / `onOpenVerification` APIs. Compilation after implementation succeeds. This is test-first compile evidence, **not instrumentation runtime RED/GREEN**. No device/emulator install or connected test is authorized or performed; layout, IME, Keystore lifecycle, and real OEM report handling remain pending device checks. Production statistics bounds are unknown, so no real adjustment-effect measurement is claimed. AI explanation/model evaluation is deferred.
+
+Both full offline runs succeeded: 484 JVM tests, 0 failures/errors/skips, and debug preview / Android test APKs built. Final targeted build and lint after switching dialog sizing to `LocalWindowInfo` succeeded; debug and release lint each report 0 errors / 35 existing warnings. Unit XML and lint HTML/XML remain under the report paths documented above.
