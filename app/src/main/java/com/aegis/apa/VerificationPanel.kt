@@ -23,7 +23,9 @@ fun VerificationPanel(
     onRetest: (String, Long, VerificationSampleContext) -> Unit,
     onClose: (String, Long, VerificationCloseReason) -> Unit,
     onDelete: (String) -> Unit,
-    onClear: () -> Unit
+    onClear: () -> Unit,
+    explanationCredentials: () -> StoredApiKey? = { null },
+    capabilityAccess: AgentCapabilityAccess = AgentCapabilityAccess(false, false)
 ) {
     var create by remember { mutableStateOf(false) }
     var clear by remember { mutableStateOf(false) }
@@ -77,7 +79,10 @@ fun VerificationPanel(
         } else {
             TextButton(onClick = { onSelect(null) }) { Text(verificationText("返回记录列表", "Back to records")) }
             VerificationRecordDetail(selected, currentDiagnostic, enabled,
-                onChange, onRetest, onClose, onDelete, Modifier.weight(1f))
+                onChange, onRetest, onClose, onDelete, Modifier.weight(1f), explanationCredentials,
+                AdviceCapabilityPolicy.effectiveLevel(
+                    if (capabilityAccess.rootAuthorized) "Level 2" else if (capabilityAccess.shizukuAuthorized) "Level 1" else "Level 0",
+                    capabilityAccess.shizukuAuthorized, capabilityAccess.rootAuthorized))
         }
     }
     if (create && currentDiagnostic != null) VerificationSampleForm(currentDiagnostic, null, enabled,

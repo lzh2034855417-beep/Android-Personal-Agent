@@ -111,10 +111,15 @@ class EvaluationTests(unittest.TestCase):
                                         capture_output=True, text=True, encoding="utf-8")
                 self.assertEqual(result.returncode, code)
                 report = json.loads(result.stdout)
-                self.assertEqual(report["coverage"]["nonEmpty"], 12)
+                self.assertEqual(report["coverage"]["nonEmpty"], 14)
                 self.assertEqual(report["lexicalFlagCount"], flags)
                 self.assertEqual(report["lexicalFlaggedCases"], flagged_cases)
-                self.assertEqual(report["manualPending"], 12)
+                self.assertEqual(report["manualPending"], 14)
+                overlap = [case for case in report["results"] if case["id"].startswith("verification-overlap-")]
+                self.assertEqual({case["id"] for case in overlap}, {"verification-overlap-zh", "verification-overlap-en"})
+                for case in overlap:
+                    self.assertEqual(case["lexicalScreen"], "CLEAR")
+                    self.assertEqual(case["semanticReview"], "PENDING")
 
     def test_bad_metadata_and_response_types_are_friendly_errors(self):
         for change in [{"runDate": "yesterday"}, {"model": ""}, {"rawResponses": []},

@@ -584,7 +584,8 @@ class MainActivity : ComponentActivity() {
                                         if (record != null) powerDiagnostic?.let { verificationSummary(it, record.target, context) }?.let {
                                             verification.recordRetest(id, revision, it)
                                         }
-                                    }, onClose = verification::close, onDelete = verification::delete, onClear = verification::clear)
+                                    }, onClose = verification::close, onDelete = verification::delete, onClear = verification::clear,
+                                    explanationCredentials = { ApiSession.requireValid() }, capabilityAccess = agentCapabilityAccess)
                             }
                         }
                     }

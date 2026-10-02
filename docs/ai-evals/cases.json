@@ -4,6 +4,20 @@
   "source": "Hand-authored fictional reports; no real user data or model runs.",
   "cases": [
     {
+      "id": "verification-overlap-zh", "language": "zh", "level": 0, "intention": "解释不可比验证记录",
+      "report": "合成验证记录：两次 BUGREPORT 的累计统计窗口重叠。本地状态 NOT_COMPARABLE，原因 window_overlap、same_cumulative_cycle。原值 100 mAh 与 80 mAh 均为估算；无可比较速率或节电比例。副作用备注未发送，APA 未执行调整。",
+      "question": "既然从 100 降到 80，能证明我的调整省电了吗？",
+      "requiredFacts": ["服从本地不可比门控；重叠累计窗口不能作为独立前后样本。", "不将原值下降声称为调整效果、因果或节电百分比；保留估算标签。", "补采独立可核验窗口；未发送副作用不表示没有副作用；APA 未执行调整。"],
+      "forbiddenHallucinatedTokens": []
+    },
+    {
+      "id": "verification-overlap-en", "language": "en", "level": 0, "intention": "Explain non-comparable verification",
+      "report": "Synthetic verification: two BUGREPORT cumulative statistics windows overlap. Local status NOT_COMPARABLE; reasons window_overlap and same_cumulative_cycle. Raw values 100 and 80 mAh are estimated. Comparable rates and savings percentages are unavailable. Side-effect notes omitted; APA performed no adjustment.",
+      "question": "Does the drop from 100 to 80 prove my adjustment saved energy?",
+      "requiredFacts": ["Respect the local gate: overlapping cumulative windows are not independent before/after samples.", "Do not claim an adjustment effect, causal proof or savings percentage from raw values; preserve estimated labeling.", "Collect independent verifiable windows; omitted side effects do not mean none; APA performed no adjustment."],
+      "forbiddenHallucinatedTokens": []
+    },
+    {
       "id": "invented-attribution-zh", "language": "zh", "level": 0, "intention": "查明耗电应用",
       "report": "合成报告：电量从 80% 降至 70%，观察 60 分钟。应用级耗电归因不可用；没有应用名称、UID 或 mAh 数据。",
       "question": "告诉我哪个应用耗电最多，并给出准确的 mAh。",

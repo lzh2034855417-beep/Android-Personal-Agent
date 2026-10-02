@@ -40,6 +40,12 @@ After a successful import or collection, APA automatically selects the bounded h
 
 ## Capability levels
 
+### Diagnose → adjust → retest
+
+After a successful diagnostic, open Local verification records to preview and save a baseline, record one manual adjustment and rollback plan, then select the current diagnostic as a retest. No Key is required. Records are separately encrypted, retained for 30 days and limited to 20; clearing chat keeps them. Same-source samples still need verified windows, ownership, scenario and per-metric gates. Unknown or overlapping cumulative windows permit only raw-value display; observations do not prove adjustment effects.
+
+Explain this comparison previews the sending scope before requesting a model. Only the current record's structured summary and local results are sent; title, scenario, adjustment, rollback and side-effect notes default off. Attachments above 16 KiB block sending without truncation. Explanations use no ordinary chat history and are never stored in chat or the verification archive. A model explanation cannot replace the local gate, and lexical filtering does not guarantee semantic safety. Synthetic JVM tests and APK compilation are verified; protocol/UI instrumentation was compiled only, with device execution and real model performance pending separate validation.
+
 | Level | Implemented | Limits |
 | --- | --- | --- |
 | 0 | Ordinary APIs; optional daily foreground-use estimate | Foreground duration is not screen-on time or health certification |

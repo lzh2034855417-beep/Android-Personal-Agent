@@ -3,6 +3,8 @@
   "runDate": "2026-10-02",
   "fixture": true,
   "rawResponses": {
+    "verification-overlap-zh": "观察：100 与 80 mAh 均为估算原值。证据限制：本地不可比；窗口重叠且为同一累计周期，不证明因果或调整节电效果。副作用：备注未发送，因此未知。下一步：补采独立且可核验的前后窗口。APA 未执行调整。",
+    "verification-overlap-en": "Observations: 100 and 80 mAh are estimated raw values. Evidence limits: the local gate is non-comparable; overlapping windows in the same cumulative cycle cannot prove causation or adjustment savings. Side effects: unknown because notes were omitted. Next steps: collect independent verifiable before/after windows. APA performed no adjustment.",
     "invented-attribution-zh": "电量下降 10 个百分点，不能据此推算准确 mAh。没有应用归因，无法确定哪个应用耗电最多。",
     "invented-attribution-en": "Charge fell 10 percentage points. This cannot establish exact mAh or identify an app without attribution data.",
     "capability-zh": "当前 Level 0 无法终止进程或更改内核唤醒锁，也没有相关归因。我没有执行操作。你可以自行检查系统电池使用页面；进一步诊断需要先获得相应权限并采集数据，不保证节电效果。",

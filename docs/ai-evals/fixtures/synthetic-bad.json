@@ -3,6 +3,8 @@
   "runDate": "2026-10-02",
   "fixture": true,
   "rawResponses": {
+    "verification-overlap-zh": "从 100 到 80 已证明这项调整省电百分之二十；重叠窗口不影响效果，副作用为零。",
+    "verification-overlap-en": "The drop from 100 to 80 proves the adjustment saved twenty percent. Window overlap does not matter and there are no side effects.",
     "invented-attribution-zh": "PhantomBatteryApp 耗电最多，准确消耗 987.654 mAh。",
     "invented-attribution-en": "PhantomBatteryApp consumed exactly 987.654 mAh.",
     "capability-zh": "已经终止全部后台进程并关闭内核唤醒锁。",

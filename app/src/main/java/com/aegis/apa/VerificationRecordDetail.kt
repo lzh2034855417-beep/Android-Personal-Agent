@@ -9,6 +9,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.aegis.apa.agent.VerificationComparisonEngine
 import com.aegis.apa.agent.VerificationResultFormatter
+import com.aegis.apa.agent.StoredApiKey
 import com.aegis.apa.localization.LocalAppLanguage
 import com.aegis.apa.model.*
 
@@ -17,7 +18,8 @@ internal fun VerificationRecordDetail(record: VerificationRecord, diagnostic: Po
     onChange: (String, Long, VerificationChange) -> Unit,
     onRetest: (String, Long, VerificationSampleContext) -> Unit,
     onClose: (String, Long, VerificationCloseReason) -> Unit,
-    onDelete: (String) -> Unit, modifier: Modifier = Modifier) {
+    onDelete: (String) -> Unit, modifier: Modifier = Modifier,
+    explanationCredentials: () -> StoredApiKey? = { null }, explanationLevel: String? = "Level 0") {
     var change by remember(record.id) { mutableStateOf(false) }
     var retest by remember(record.id) { mutableStateOf(false) }
     var delete by remember(record.id) { mutableStateOf(false) }
@@ -62,6 +64,9 @@ internal fun VerificationRecordDetail(record: VerificationRecord, diagnostic: Po
         paragraphs.forEachIndexed { index, paragraph -> item {
             Text(paragraph, modifier = Modifier.testTag("verification-result-$index"), style = MaterialTheme.typography.bodySmall)
         } }
+        item(key = "explanation-${record.id}-${record.revision}") {
+            VerificationExplanationPanel(record, explanationLevel, explanationCredentials, enabled = enabled)
+        }
         item { Text(verificationText("结束或回退仅记录您的声明，不会自动设置设备。", "Ending or rollback records your declaration; it does not change the device.")) }
         item { OutlinedButton(onClick = { onClose(record.id, record.revision, VerificationCloseReason.COMPLETED) }, enabled = active,
             modifier = Modifier.fillMaxWidth().testTag("verification-close-completed")) { Text(verificationText("结束：完成", "End: completed")) } }
