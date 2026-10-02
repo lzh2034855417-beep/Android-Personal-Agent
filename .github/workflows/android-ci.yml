@@ -37,6 +37,8 @@ jobs:
           set -o pipefail
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
             'platforms;android-36.1' 'build-tools;36.0.0' 'platform-tools'
+      - name: Test offline AI evaluation tooling (no API calls)
+        run: python3 -m unittest discover -s scripts/ai_eval -p 'test_*.py' -v
       - name: Run JVM tests, both lint variants and APK builds
         run: |
           bash ./gradlew --no-daemon --stacktrace --continue \

@@ -31,6 +31,8 @@ The release labels are explanatory; SHA pins control execution. Package revision
 
 ## Validation and limits
 
+The checks job also runs the standard-library offline evaluator tests with `python3 -m unittest discover -s scripts/ai_eval -p 'test_*.py' -v`. This executes synthetic fixtures only, never model API requests. A passing evaluator test is not a provider accuracy score; all semantic judgments in the response reports remain pending manual review.
+
 The emulator explicitly enables the soft keyboard even with a virtual hardware keyboard so the IME visibility test cannot silently skip keyboard behavior. Stability tests reset their Preview conversation and language before each test; do not run them against a Preview installation whose chat history you need to keep.
 
 Local validation passed static assertions for triggers, least permissions, independent jobs, the six requested Gradle tasks, absence of secrets/release packaging and complete action SHA pins. Git Bash `bash -n` passed for all five multiline run blocks, and `git diff --check` passed. Report paths and the app's release packaging guard were inspected. No existing YAML parser or `actionlint` was available in the local or bundled runtimes, so YAML parsing and GitHub expression/schema validation were not run; no parser dependency was installed. These checks do not substitute for GitHub's workflow engine or an emulator run on a hosted Linux runner. Local JVM/lint/APK and device test results are recorded separately in the session's aggregate verification report.

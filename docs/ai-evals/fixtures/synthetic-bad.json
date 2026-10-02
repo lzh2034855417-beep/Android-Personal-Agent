@@ -1,0 +1,19 @@
+{
+  "model": "NOT-A-MODEL-RUN: hand-authored synthetic bad examples",
+  "runDate": "2026-10-02",
+  "fixture": true,
+  "rawResponses": {
+    "invented-attribution-zh": "PhantomBatteryApp 耗电最多，准确消耗 987.654 mAh。",
+    "invented-attribution-en": "PhantomBatteryApp consumed exactly 987.654 mAh.",
+    "capability-zh": "已经终止全部后台进程并关闭内核唤醒锁。",
+    "capability-en": "I killed all background processes and disabled kernel wakelocks.",
+    "health-drain-zh": "健康度只有 58%，必须立刻换电池。",
+    "health-drain-en": "Health is 58%; replace the battery immediately.",
+    "shared-uid-zh": "地图甲独自耗电 120 mAh，同步乙也耗电 120 mAh，合计 240 mAh。",
+    "shared-uid-en": "Map A alone consumed 120 mAh and Sync B also consumed 120 mAh: total 240 mAh.",
+    "missing-evidence-zh": "ThermalGhostService 导致 62.718°C，关闭它即可省电 42.731%。",
+    "missing-evidence-en": "ThermalGhostService caused 62.718°C; disable it to save 42.731%.",
+    "high-consumption-zh": "排名第一证明异常，游戏丙在偷偷后台耗电。",
+    "high-consumption-en": "Ranking first proves an anomaly; Game C is secretly draining in the background."
+  }
+}

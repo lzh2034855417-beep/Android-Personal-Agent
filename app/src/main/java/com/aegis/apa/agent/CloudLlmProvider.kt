@@ -79,7 +79,10 @@ internal fun sanitizeCloudAnalysisResponse(
     val healthFiltered = if (powerIntent == PowerQuestionIntent.BATTERY_HEALTH) {
         val irrelevantPrefixes = listOf(
             "耗电窗口：", "高耗电应用：", "后台耗电排行：", "系统调度观察：",
-            "scene 建议：", "普通设置建议：", "耗电总量排行："
+            "scene 建议：", "普通设置建议：", "耗电总量排行：",
+            "drain window:", "main consumption:", "total consumption:",
+            "background consumption:", "background judgement:", "background judgment:",
+            "scheduling observations:", "scene advice:", "ordinary settings advice:"
         )
         content.lineSequence()
             .filterNot { line ->
@@ -94,13 +97,8 @@ internal fun sanitizeCloudAnalysisResponse(
         content
     }
     val reportSafe = if (reportAttached) {
-        val reportTerms = listOf("bug report", "报告", "系统报告", "系统耗电诊断", "报告包")
-        val requestTerms = listOf("生成", "导入", "上传", "提供", "重新", "再次", "再做", "再抓")
-        healthFiltered.lineSequence()
-            .filterNot { line ->
-                reportTerms.any { term -> line.contains(term, ignoreCase = true) } &&
-                    requestTerms.any { term -> line.contains(term, ignoreCase = true) }
-            }
+        CloudResponseSafetyPolicy.segments(healthFiltered)
+            .filterNot(CloudResponseSafetyPolicy::requestsAttachedReport)
             .joinToString("\n")
             .trim()
     } else {
@@ -112,11 +110,10 @@ internal fun sanitizeCloudAnalysisResponse(
         "scene", "adb", "shizuku", "root", "kernelsu", "ksu", "magisk",
         "lsposed", "xposed", "zygisk", "shell", "冻结", "限频", "命令", "刷入"
     )
-    return reportSafe.split(Regex("(?<=[。！？!?；;])|\\R+"))
-        .map(String::trim)
-        .filter(String::isNotEmpty)
+    return CloudResponseSafetyPolicy.segments(reportSafe)
         .filterNot { segment ->
             containsUnsafeDeviceCommand(segment) ||
+                CloudResponseSafetyPolicy.containsAdvancedAction(segment) ||
                 advancedTerms.any { term -> segment.contains(term, ignoreCase = true) }
         }
         .joinToString("\n")
@@ -136,11 +133,10 @@ private fun sanitizeGeneralChatResponse(
         "卸载", "删除", "修改", "强停", "run ", "execute ", "use ", "enter ", "paste ", "disable ",
         "freeze ", "flash ", "uninstall ", "delete ", "modify "
     )
-    val safe = content.split(Regex("(?<=[。！？!?；;])|\\R+"))
-        .map(String::trim)
-        .filter(String::isNotEmpty)
+    val safe = CloudResponseSafetyPolicy.segments(content)
         .filterNot { segment ->
             containsUnsafeDeviceCommand(segment) ||
+                CloudResponseSafetyPolicy.containsAdvancedAction(segment) ||
                 advancedTerms.any { term -> segment.contains(term, ignoreCase = true) } &&
                 actionTerms.any { term -> segment.contains(term, ignoreCase = true) }
         }
