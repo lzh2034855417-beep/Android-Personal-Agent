@@ -203,6 +203,44 @@ class VerificationStoreTest {
         assertEquals(listOf(edited), store.load().records)
     }
 
+    @Test fun `clear preserves healthy ciphertext when key is temporarily unavailable`() {
+        val initial = store()
+        val first = record(initial)
+        assertNull(initial.upsert(first).failure)
+        val original = file().readBytes()
+        var requests = 0
+        val unavailable = VerificationStore(file(), {
+            requests++
+            if (requests == 1) throw IllegalStateException("temporarily unavailable")
+            key
+        }, { now })
+        assertEquals(VerificationStorageFailure.KEY_UNAVAILABLE, unavailable.clear().failure)
+        assertArrayEquals(original, file().readBytes())
+        assertEquals(1, requests)
+        assertEquals(listOf(first), initial.load().records)
+    }
+
+    @Test fun `clear preserves oversized ciphertext and limit error`() {
+        val oversized = ByteArray(1024 * 1024 + 29) { 7 }
+        file().writeBytes(oversized)
+        assertEquals(VerificationStorageFailure.LIMIT, store().clear().failure)
+        assertArrayEquals(oversized, file().readBytes())
+    }
+
+    @Test fun `explicit clear rebuilds unsupported archive with new scope`() {
+        val store = store()
+        val scope = requireNotNull(store.load().scopeId)
+        val unsupported = VerificationArchive.encode(scope, emptyList()).also { ByteBuffer.wrap(it).putInt(2) }
+        file().writeBytes(encrypt(unsupported))
+        assertEquals(VerificationStorageFailure.UNSUPPORTED, store.load().failure)
+        val cleared = store.clear()
+        assertNull(cleared.failure)
+        assertFalse(cleared.scopeId.isNullOrBlank())
+        assertNotEquals(scope, cleared.scopeId)
+        assertEquals(cleared.scopeId, store.load().scopeId)
+        assertTrue(store.load().records.isEmpty())
+    }
+
     private fun encrypt(plain: ByteArray): ByteArray {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, ByteArray(12) { it.toByte() }))

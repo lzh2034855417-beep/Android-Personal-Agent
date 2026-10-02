@@ -60,6 +60,8 @@ class VerificationStore(private val file: File, private val key: () -> SecretKey
     /** Explicit recovery authorization: a healthy archive keeps its existing local scope. */
     fun clear(): VerificationLoadResult = synchronized(coordinator) {
         val latest = readLatest()
+        if (latest.failure != null && latest.failure != VerificationStorageFailure.DAMAGED &&
+            latest.failure != VerificationStorageFailure.UNSUPPORTED) return@synchronized latest
         val scope = latest.scopeId ?: UUID.randomUUID().toString()
         val failure = persist(scope, emptyList())
         if (failure != null) latest.copy(failure = failure) else {
