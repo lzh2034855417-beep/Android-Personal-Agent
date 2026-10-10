@@ -17,6 +17,24 @@ import java.util.zip.ZipOutputStream
 
 class BugReportSectionExtractorTest {
     @Test
+    fun ramFieldsAreReadFromMainReportAndBoardAttachment() {
+        for ((name, body) in listOf(
+            "bugreport-device.txt" to "DDR Manufacturer ID: 0x01CE\nDDR Device Type: 0x9\n$reportText",
+            "dumpstate_board.txt" to "DDR Manufacturer ID: 0x01CE\nDDR Device Type: 0x9"
+        )) {
+            val entries = if (name.startsWith("bugreport")) arrayOf(name to body)
+                else arrayOf("bugreport-device.txt" to reportText, name to body)
+            val result = BugReportSectionExtractor.extract(zipOf(*entries).inputStream(), "bugreport.zip")
+                as BugReportReadResult.Success
+            val hardware = result.sections.single { it.source == "hardware" }.output
+            val parsed = com.aegis.apa.tool.DeviceProfileParser.parse(hardware,
+                com.aegis.apa.tool.DeviceProfileAccess.STANDARD).hardwareSupplyInfo
+            assertEquals("三星 (Samsung)", parsed?.ramVendor)
+            assertEquals("LPDDR5X", parsed?.ramType)
+        }
+    }
+
+    @Test
     fun standardGetpropHeadingLetsK60HardwareMatchTheCurrentDevice() {
         val header = """
             ------ SYSTEM PROPERTIES (getprop) ------

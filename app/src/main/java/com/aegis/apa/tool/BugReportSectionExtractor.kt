@@ -320,7 +320,8 @@ object BugReportSectionExtractor {
                         }
                         is CandidateRead.Sections -> {
                             reportBytes += read.bytesRead
-                            reportSections = read.value
+                            reportSections = read.value.filterNot { it.source == "hardware" }
+                            read.value.firstOrNull { it.source == "hardware" }?.let { retainHardware(it.output) }
                             verificationHeaderFields = read.verificationHeaderFields
                             zip.closeEntry()
                         }
@@ -359,10 +360,19 @@ object BugReportSectionExtractor {
         var decodedCharCount = 0L
         var inSystemProperties = false
         val verificationHeaders = VerificationHeaderAccumulator()
+        val hardwareFields = linkedMapOf<String, String>()
 
         fun consumeLine() {
             val value = line.toString().removeSuffix("\r")
             val trimmed = value.trim()
+            if (!lineTruncated && !lineHadNul &&
+                (value.contains("DDR", ignoreCase = true) || value.contains("UFS", ignoreCase = true))) {
+                hardwareFieldPatterns.forEach { (label, pattern) ->
+                    if (label !in hardwareFields) {
+                        pattern.find(value)?.groupValues?.get(1)?.let { hardwareFields[label] = it }
+                    }
+                }
+            }
             if (trimmed.startsWith("------")) {
                 inSystemProperties = !lineTruncated && !lineHadNul &&
                     (trimmed == "------ SYSTEM PROPERTIES ------" ||
@@ -441,6 +451,11 @@ object BugReportSectionExtractor {
             if (bounded.bytesRead == 0L || outputs.isEmpty()) {
                 CandidateRead.Empty(bounded.bytesRead)
             } else {
+                if (hardwareFields.isNotEmpty()) {
+                    outputs["hardware"] = StringBuilder(hardwareFields.entries.joinToString("\n") {
+                        (label, field) -> "$label = $field"
+                    })
+                }
                 CandidateRead.Sections(
                     outputs.map { (source, output) ->
                         val wasTruncated = source in truncated
@@ -531,11 +546,11 @@ object BugReportSectionExtractor {
 
     private val hardwareFieldPatterns = listOf(
         "DDR Device Type" to Regex(
-            "DDR\\s+Device\\s+Type\\s*=\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)",
+            "\\bDDR[\\s_]+Device[\\s_]+Type\\s*[:=]\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)\\b",
             RegexOption.IGNORE_CASE
         ),
         "DDR Manufacturer ID" to Regex(
-            "DDR\\s+Manufacturer\\s+ID\\s*=\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)",
+            "\\bDDR[\\s_]+Manufacturer[\\s_]+ID\\s*[:=]\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)\\b",
             RegexOption.IGNORE_CASE
         ),
         "UFS INQUIRY ID" to Regex(
@@ -582,7 +597,7 @@ object BugReportSectionExtractor {
 
     private fun isHardwareLogEntry(name: String): Boolean {
         val basename = name.substringAfterLast('/').lowercase(Locale.ROOT)
-        return basename == "bootlog.txt" || basename == "bootlog_copy.txt"
+        return basename == "bootlog.txt" || basename == "bootlog_copy.txt" || basename == "dumpstate_board.txt"
     }
 
     private fun isZipEntry(name: String): Boolean =

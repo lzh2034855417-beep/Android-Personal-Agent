@@ -372,11 +372,11 @@ object DeviceProfileParser {
     }
 
     private val DDR_DEVICE_TYPE = Regex(
-        "DDR\\s+Device\\s+Type\\s*=\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)",
+        "\\bDDR[\\s_]+Device[\\s_]+Type\\s*[:=]\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)\\b",
         RegexOption.IGNORE_CASE
     )
     private val DDR_MANUFACTURER_ID = Regex(
-        "DDR\\s+Manufacturer\\s+ID\\s*=\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)",
+        "\\bDDR[\\s_]+Manufacturer[\\s_]+ID\\s*[:=]\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)\\b",
         RegexOption.IGNORE_CASE
     )
     private val UFS_INQUIRY_ID = Regex(

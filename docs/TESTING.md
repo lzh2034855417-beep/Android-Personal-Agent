@@ -297,3 +297,9 @@ After the approved branch was locally synchronized to `D:/AndroidPersonalAgent`,
 - 用户截图确认三星 UFS 4.0、SM8550 和 walt 已显示。缺失的 RAM 厂商／类型提示改为“未知（当前读取结果未提供）”，未获得硬件读取结果时显示“未读取”；中英文设备页与分享卡片共用逻辑，适用于所有机型。
 - `testDebugUnitTest assembleRelease --offline --console=plain` 通过，759 项测试、0 failures。正式签名验证通过，K60 Pro 覆盖安装成功并冷启动 `Status: ok`，保留数据。
 - 最新 APK SHA-256：`349BF193CBB9D7C78CC1CDB9A79205C3353F0F010DAF82272C5E19AC72865140`。本轮只改显示状态，没有新增 RAM 厂商数据来源，未公开发布。
+
+### 通用报告 RAM 来源补充（2026-10-10）
+
+- 新增主报告／板级附件冒号 DDR 字段回归先因未生成硬件段落失败，修复后通过。解析器从主报告和 `dumpstate_board.txt` 提取已有硬件白名单，同时支持 DDR 字段冒号与下划线写法，不按机型推测厂商。
+- `testDebugUnitTest lintDebug lintRelease assembleRelease --offline --console=plain` 成功；760 项 JVM 测试，0 failures/errors。完整用户 ZIP 的生产解析器复测通过：本机匹配、三星 UFS 4.0、962–1006 mAh；RAM 厂商仍为空，不能宣称解决这台设备的 RAM 识别。
+- 签名验证、K60 Pro 覆盖安装和冷启动通过，保留应用数据，手机 Download 未放安装包。APK SHA-256：`FBD5163D3F028499E6C4AE879EDEA4F92776C6016F939D5E32D9DB784F02DDAA`。未执行仪器测试或真实模型调用，未公开发布。
