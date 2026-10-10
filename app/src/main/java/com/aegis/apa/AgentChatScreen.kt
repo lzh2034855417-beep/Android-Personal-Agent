@@ -1,6 +1,19 @@
 package com.aegis.apa
 
 import androidx.compose.foundation.clickable
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -64,6 +77,16 @@ fun AgentChatScreen(
     rootAuthorizationPending: Boolean = false
 ) {
     val appLanguage = LocalAppLanguage.current
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    var inputFocused by remember { mutableStateOf(false) }
+    var inputBounds by remember { mutableStateOf<Rect?>(null) }
+    var pageOrigin by remember { mutableStateOf(Offset.Zero) }
+    fun dismissInput() {
+        focusManager.clearFocus(force = true)
+        keyboard?.hide()
+    }
+    BackHandler(enabled = inputFocused) { dismissInput() }
     var infoExpanded by rememberSaveable { mutableStateOf(false) }
     val clearActionLabel = stringResource(R.string.agent_clear)
     val settingsActionLabel = stringResource(R.string.common_settings)
@@ -147,7 +170,17 @@ fun AgentChatScreen(
     }
 
     Column(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize()
+            .onGloballyPositioned { pageOrigin = it.positionInRoot() }
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    // Observe before child controls, without consuming their click or scroll.
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    if (inputFocused && inputBounds?.contains(down.position + pageOrigin) == false) {
+                        dismissInput()
+                    }
+                }
+            },
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         androidx.compose.material3.Card(
@@ -451,7 +484,9 @@ fun AgentChatScreen(
                     value = userMessage,
                     onValueChange = { userMessage = it },
                     label = { Text(text = stringResource(R.string.ask_your_device)) },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f)
+                        .onGloballyPositioned { inputBounds = it.boundsInRoot() }
+                        .onFocusChanged { inputFocused = it.isFocused },
                     enabled = !isOnlineAnalyzing && !conversationLoading,
                     maxLines = 4
                 )

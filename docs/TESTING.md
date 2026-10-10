@@ -326,3 +326,10 @@ After the approved branch was locally synchronized to `D:/AndroidPersonalAgent`,
 - 保留续航区间并明确为本周期含待机的满电外推，非连续亮屏或当前剩余续航。独立实际 ZIP 验收通过：两个 QQ UID 区分、区间／占比不变、共享组压缩、未截断；无标签解析生成报告 2719 字符。实际页面仍需重新导入后人工验收。
 - 新增两个回归先失败后修复；全量 769 项 JVM 测试通过，0 failures/errors，Debug/Release Lint 0 错误，Debug／仪器／签名 Release APK 构建通过。未运行仪器测试。本轮优化展示与解释，未宣称 91 秒导入耗时已改善。
 - 原正式签名核验通过；APK SHA-256：73F2290E8B4ADC5D955CE919A36B28AD549A6E85D0FDAC01141C53D6778A344A。K60 Pro 覆盖安装成功，启动 Status: ok，保留数据，不往手机 Download 放安装包；未公开发布。
+
+### Agent 长按输入菜单退出（2026-10-10）
+
+- 根因：聊天页缺少输入框外触摸清焦点处理；K60 真机测试先失败（点击标题外部后 Focused 仍为 true），修复后通过。保留原生长按／粘贴与选择；父级在 Initial 阶段观察外部触摸而不消费子控件事件，清焦点并隐藏键盘。返回在输入框聚焦时退出编辑。
+- AgentInputDismissUiTest 在 K60 Pro 实际运行通过：长按、外部点击退出、草稿保留、再次输入、键盘收起后返回不离开聊天页。红米阻止 ActivityScenario 后台启动，测试采用项目已有的显式前台 ComponentActivity 启动方式；最初锁屏／通知栏阻挡的两次等待已中止，不计为通过。
+- 全量 769 项 JVM 测试、Debug/Release Lint 与正式包构建通过；正式签名核验通过。最终测试 APK 的构建与设备执行通过，不将其视为全量仪器测试验收。
+- 正式包 SHA-256：676C10DB59EDCBCD0668BFF5DCDCCC55795101D4D51BFB9AFE63C180274F9E03。K60 正式版覆盖安装 Success、冷启动 Status: ok，数据保留，未在手机 Download 留 APK，未公开发布。
