@@ -142,6 +142,7 @@ private val diagnosticEnglishText = mapOf(
     "待验证后台线索：目前只有一种后台证据，不能确认异常或因果；可在使用强度相近的窗口核对该指标是否持续偏高。" to "An unverified background clue: one signal cannot establish an anomaly or causation. Check whether it stays elevated in comparable usage windows.",
     "系统或共享 UID 仅供观察，不能安全拆分责任或据此限制。" to "System or shared UIDs are observation-only; responsibility cannot be safely split and this evidence does not justify restrictions.",
     "前台耗电占主要部分，这更像前台使用成本，不能据此判断后台异常。" to "Foreground use accounts for most of the drain; this does not establish a background anomaly.",
+    "前台状态计时较多，但时长不等于耗电占比；不能据此判断前台耗电占主导或后台异常。" to "Foreground state timing is higher, but time does not establish the power share or a background anomaly.",
     "后台耗电占主要部分，值得优先核对，但单一系统估算不能证明异常。" to "Background drain accounts for most of the total; one system estimate does not prove an anomaly.",
     "这是耗电总量排行，只能说明消耗较多，不能单独证明后台异常。" to "Higher total consumption alone does not prove a background anomaly.",
     "后台耗电落在共享 UID，只能作为排行观察，不能安全拆分或限制。" to "Background drain belongs to a shared UID; use it only for ranking. It cannot be safely split or restricted.",

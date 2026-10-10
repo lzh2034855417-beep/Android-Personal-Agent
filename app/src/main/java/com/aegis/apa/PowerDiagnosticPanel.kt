@@ -341,7 +341,9 @@ private fun PowerCandidateCard(
                 val group = if ((candidate.uid ?: Int.MAX_VALUE) < 10_000 || candidate.packageNames.any {
                     it == "android" || it.startsWith("com.android.") || it.startsWith("com.miui.")
                 }) "System component group" else "Shared UID group"
-                "$group: ${candidate.displayNames.ifEmpty { candidate.packageNames }.joinToString()}"
+                "$group: ${candidate.displayNames.ifEmpty { candidate.packageNames }.take(3).joinToString { it.take(80) }}" +
+                    (if (candidate.packageNames.size > 3) " (${candidate.packageNames.size} total)" else "") +
+                    (candidate.uid?.let { " · UID $it" } ?: "")
             }
             candidate.packageNames.isEmpty() -> candidate.uid?.let { "UID $it" } ?: "Unknown app"
             else -> candidate.displayNames.firstOrNull()?.let { "$it (${candidate.packageNames.single()})" }
@@ -351,8 +353,10 @@ private fun PowerCandidateCard(
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(name, style = MaterialTheme.typography.titleSmall)
+            if (candidate.packageNames.size == 1) candidate.uid?.let { Text("UID: $it", style = MaterialTheme.typography.bodySmall) }
             if (candidate.packageNames.isNotEmpty()) {
-                Text((if (english) "Packages: " else "包名：") + candidate.packageNames.joinToString(), style = MaterialTheme.typography.bodySmall)
+                Text((if (english) "Packages: " else "包名：") + candidate.packageNames.take(3).joinToString() +
+                    (if (candidate.packageNames.size > 3) if (english) " (${candidate.packageNames.size} total)" else " 等${candidate.packageNames.size}项" else ""), style = MaterialTheme.typography.bodySmall)
             }
             Text((if (english) "Facts: " else "事实：") + candidate.facts.joinToString(if (english) "; " else "；") { diagnosticDisplayText(it, language) })
             Text((if (english) "Interpretation: " else "解释：") + diagnosticDisplayText(candidate.reason, language))

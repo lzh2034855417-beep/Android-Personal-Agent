@@ -318,3 +318,11 @@ After the approved branch was locally synchronized to `D:/AndroidPersonalAgent`,
 - 最终 testDebugUnitTest、lintDebug、lintRelease、assembleDebug、assembleDebugAndroidTest、assembleRelease 全部通过：767 项 JVM 测试，0 failures/errors；两种 Lint 均 0 错误。未运行仪器测试。
 - 最终构建生产解析器复测用户 K60 Pro 原 ZIP 通过：本机身份匹配、美光 RAM／LPDDR5、三星 UFS 4.0、实际耗电 962–1006 mAh。一加、三星为源码格式合成样例，尚无这些品牌真机报告验收。
 - 正式签名验证通过，原证书不变。APK SHA-256：43429A0DEBB2023C82EBD2DF8F8087E755B6D84FFDD60DC6411DD0F8BC98D79B。K60 Pro 覆盖安装成功、冷启动 Status: ok，保留数据；手机 Download 未放安装包，未公开发布。
+
+### K60 报告精简与口径解释（2026-10-10）
+
+- 共享 UID 名称与包名最多显示前三项和总数，完整包名复制仍保留；中文报告及中英文卡片均精简。应用总量与后台排行显示 UID，避免把分身／其他用户的同名应用混为一项。
+- 原 K60 报告的 QQ UID 10292 总量 44.0 mAh；UID 99910292 总量 27.5 mAh、后台 24.7 mAh，89.8% 属于后者，未改动数值。小米服务的前台 2.16 mAh／后台 0.112 mAh 不足以解释总量 158 mAh，修正原先“前台主导”结论；状态计时不再推导耗电占比。
+- 保留续航区间并明确为本周期含待机的满电外推，非连续亮屏或当前剩余续航。独立实际 ZIP 验收通过：两个 QQ UID 区分、区间／占比不变、共享组压缩、未截断；无标签解析生成报告 2719 字符。实际页面仍需重新导入后人工验收。
+- 新增两个回归先失败后修复；全量 769 项 JVM 测试通过，0 failures/errors，Debug/Release Lint 0 错误，Debug／仪器／签名 Release APK 构建通过。未运行仪器测试。本轮优化展示与解释，未宣称 91 秒导入耗时已改善。
+- 原正式签名核验通过；APK SHA-256：73F2290E8B4ADC5D955CE919A36B28AD549A6E85D0FDAC01141C53D6778A344A。K60 Pro 覆盖安装成功，启动 Status: ok，保留数据，不往手机 Download 放安装包；未公开发布。

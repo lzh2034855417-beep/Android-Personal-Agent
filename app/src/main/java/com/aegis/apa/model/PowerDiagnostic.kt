@@ -56,7 +56,9 @@ fun RankedPowerCandidate.userFacingName(): String {
             "共享 UID 应用组"
         }
         val names = displayNames.ifEmpty { packageNames }
-        return "$groupLabel（${names.joinToString("、")}）"
+        val suffix = if (names.size > 3) "等${packageNames.size}项" else ""
+        return "$groupLabel（${names.take(3).joinToString("、") { it.take(80) }}$suffix）" +
+            (uid?.let { " · UID $it" } ?: "")
     }
     val packageName = packageNames.firstOrNull()
     val displayName = displayNames.firstOrNull()?.takeIf { it.isNotBlank() && it != packageName }
@@ -69,7 +71,8 @@ fun RankedPowerCandidate.userFacingName(): String {
 
 fun RankedPowerCandidate.packageSummary(): String? = packageNames
     .takeIf(List<String>::isNotEmpty)
-    ?.joinToString(prefix = "包名：")
+    ?.let { names -> names.take(3).joinToString(prefix = "包名：") +
+        if (names.size > 3) " 等${names.size}项" else "" }
 
 fun RankedPowerCandidate.packageCopyText(): String? = packageNames
     .takeIf(List<String>::isNotEmpty)?.joinToString("\n")

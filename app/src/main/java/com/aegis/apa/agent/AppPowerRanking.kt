@@ -41,7 +41,7 @@ object AppPowerRanking {
                     if (english) "Shared UID" else "共享 UID"
                 } else if (english) "System / unmapped UID" else "系统／未归属 UID"
                 "$group ${app.uid?.toString() ?: "?"}${if (names.isBlank()) "" else " ($names)"}"
-            } else names
+            } else "$names${app.uid?.let { " (UID $it)" } ?: ""}"
             val share = denominator?.takeIf { mah <= it &&
                 PowerEvidenceConsistency.issue(app, snapshot.system.batteryDrainWindow) == null }?.let {
                 val upper = window?.drainUpperMah ?: it

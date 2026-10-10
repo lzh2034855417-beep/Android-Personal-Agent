@@ -23,6 +23,23 @@ import java.time.Instant
 
 class PowerDiagnosticReportTest {
     @Test
+    fun largeSharedUidStaysCompactAndKeepsRuntimeAndStateTimeLimits() {
+        val packages = (1..60).map { "com.example.component$it" }
+        val candidate = RankedPowerCandidate(1000, packages, packages.map { "组件${it.substringAfterLast("component")}" },
+            listOf("系统估算耗电 110.0 mAh"), DiagnosticConfidence.LOW, AdviceLevel.OBSERVE, "仅供观察")
+        val snapshot = snapshotWithCandidates(listOf(candidate)).copy(system = SystemPowerEvidence(
+            batteryDrainWindow = BatteryDrainWindowEvidence(21 * 3_600_000L, 4374.0, 962.0, true, 1006.0)))
+        val zh = PowerDiagnosticReportBuilder.build(snapshot)
+        val en = PowerDiagnosticReportBuilder.build(snapshot, language = AppLanguage.EN)
+        assertTrue(zh.contains("UID 1000"))
+        assertTrue(zh.contains("等60项"))
+        assertFalse(zh.contains("com.example.component60"))
+        assertTrue(zh.contains("不是连续亮屏或剩余续航"))
+        assertTrue(en.contains("not continuous screen-on or remaining runtime"))
+        assertTrue(zh.length < 3000)
+    }
+
+    @Test
     fun standaloneWakeLockIsPublishedAsUnverifiedEvidenceInBothLanguages() {
         val snapshot = PowerDiagnosticPipeline.analyze(
             sections = listOf(RawDiagnosticSection("batterystats", DiagnosticSourceStatus.AVAILABLE,

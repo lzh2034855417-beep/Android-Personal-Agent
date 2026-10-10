@@ -9,6 +9,7 @@ import com.aegis.apa.model.PowerDiagnosticSnapshot
 import com.aegis.apa.model.PowerVerdictType
 import com.aegis.apa.model.RankedPowerCandidate
 import com.aegis.apa.model.userFacingName
+import com.aegis.apa.model.packageSummary
 import java.util.Locale
 import com.aegis.apa.localization.AppLanguage
 
@@ -44,6 +45,7 @@ object PowerDiagnosticReportBuilder {
                 if (window.isDrainRange) appendLine("耗电量为系统记录的区间，上下限均保留，不取中点作为精确值。")
                 if (window.durationMillis >= MIN_RUNTIME_PROJECTION_WINDOW_MILLIS && projectedHours.isFinite()) {
                     appendLine("同等使用强度预计续航：${formatRange(window.capacityMah / upperMahPerHour, projectedHours)}小时")
+                    appendLine("外推提示：按本周期含待机的平均耗电折算，假设电池从满电开始；不是连续亮屏或剩余续航，也不代表今天全天。")
                 } else if (window.durationMillis < MIN_RUNTIME_PROJECTION_WINDOW_MILLIS) {
                     appendLine("窗口提示：统计窗口不足 2 小时，仅保留实测速率，不外推完整续航。")
                 }
@@ -115,6 +117,7 @@ object PowerDiagnosticReportBuilder {
                 val projectedHours = window.capacityMah / mahPerHour
                 if (window.durationMillis >= MIN_RUNTIME_PROJECTION_WINDOW_MILLIS && projectedHours.isFinite()) {
                     appendLine("Projected runtime at the same intensity: ${formatRange(window.capacityMah / upperMahPerHour, projectedHours)} hours")
+                    appendLine("Projection note: extrapolated from this window's average including standby, assuming a full battery; not continuous screen-on or remaining runtime, or today's full-day result.")
                 } else if (window.durationMillis < MIN_RUNTIME_PROJECTION_WINDOW_MILLIS) appendLine("Window note: under 2 hours; keep the measured rate only and do not project full runtime.")
             }
             appendLine(AppPowerRanking.build(snapshot, AppLanguage.EN))
@@ -145,6 +148,7 @@ object PowerDiagnosticReportBuilder {
                 }
                 appendEnglishCandidates("Total consumption", verdict.totalConsumption, false, includeAdvancedActions)
                 appendEnglishCandidates("Background consumption", verdict.backgroundConsumption, false, includeAdvancedActions)
+                if (verdict.backgroundConsumption.isNotEmpty()) appendLine("Background shares use the same UID's total. Different UIDs may belong to cloned apps or other users. State timing is not total background runtime.")
                 appendEnglishCandidates("Background risk warnings / same-window evidence", verdict.backgroundSuspects, true, includeAdvancedActions)
                 appendEnglishCandidates("Unverified background / scheduling observations", verdict.schedulingObservations, false, includeAdvancedActions)
                 if (verdict.limits.isNotEmpty()) appendLine("Evidence limits: ${verdict.limits.joinToString("; ") { englishLimit(it) }}")
@@ -168,7 +172,9 @@ object PowerDiagnosticReportBuilder {
         }
         candidates.forEachIndexed { index, candidate ->
             appendLine("${index + 1}. ${englishCandidateName(candidate)}")
-            if (candidate.packageNames.isNotEmpty()) appendLine("Packages: ${candidate.packageNames.joinToString()}")
+            if (candidate.packageNames.size == 1) candidate.uid?.let { appendLine("UID: $it") }
+            if (candidate.packageNames.isNotEmpty()) appendLine("Packages: ${candidate.packageNames.take(3).joinToString()}" +
+                if (candidate.packageNames.size > 3) " (${candidate.packageNames.size} total)" else "")
             appendLine("Facts: ${candidate.facts.joinToString("; ") { englishFact(it) }}")
             appendLine("Interpretation: ${englishExplanation(candidate.reason)}")
             appendLine("Confidence: ${candidate.confidence.englishLabel()}")
@@ -188,7 +194,10 @@ object PowerDiagnosticReportBuilder {
                 (candidate.uid ?: Int.MAX_VALUE) < 10_000 ||
                 candidate.packageNames.any { it == "android" || it.startsWith("com.android.") || it.startsWith("com.miui.") }
             ) "System component group" else "Shared-UID app group"
-            return "$groupLabel (${candidate.displayNames.ifEmpty { candidate.packageNames }.joinToString()})"
+            val names = candidate.displayNames.ifEmpty { candidate.packageNames }
+            return "$groupLabel (${names.take(3).joinToString { it.take(80) }}" +
+                (if (names.size > 3) "; ${candidate.packageNames.size} total" else "") + ")" +
+                (candidate.uid?.let { " · UID $it" } ?: "")
         }
         val packageName = candidate.packageNames.firstOrNull()
         val displayName = candidate.displayNames.firstOrNull()?.takeIf { it.isNotBlank() && it != packageName }
@@ -241,6 +250,8 @@ object PowerDiagnosticReportBuilder {
     }
 
     private fun englishKnownExplanation(value: String): String = when (value) {
+        "前台状态计时较多，但时长不等于耗电占比；不能据此判断前台耗电占主导或后台异常。" ->
+            "Foreground state timing is higher, but time does not establish the power share or a background anomaly."
         "前台耗电占主要部分，这更像前台使用成本，不能据此判断后台异常。" ->
             "Foreground use accounts for most of the drain; this does not indicate a background anomaly."
         "后台耗电占主要部分，值得优先核对，但单一系统估算不能证明异常。" ->
@@ -350,6 +361,7 @@ object PowerDiagnosticReportBuilder {
         }
 
         appendLine("【后台耗电排行】")
+        if (verdict.backgroundConsumption.isNotEmpty()) appendLine("占比按同一 UID 的总耗电计算；不同 UID 可能对应分身或其他用户。状态计时不等于后台持续运行时长。")
         if (verdict.backgroundConsumption.isEmpty()) {
             appendLine("没有解析到可比较的应用后台耗电量。")
         } else {
@@ -389,7 +401,8 @@ object PowerDiagnosticReportBuilder {
     ) {
         val name = candidate.userFacingName()
         appendLine("${index + 1}. $name")
-        if (candidate.packageNames.isNotEmpty()) appendLine("包名：${candidate.packageNames.joinToString()}")
+        if (candidate.packageNames.size == 1) candidate.uid?.let { appendLine("UID：$it") }
+        candidate.packageSummary()?.let { appendLine(it) }
         appendLine("事实：${candidate.facts.joinToString("；")}")
         appendLine("解释：${candidate.reason}")
         appendLine("置信度：${candidate.confidence.chineseLabel()}")

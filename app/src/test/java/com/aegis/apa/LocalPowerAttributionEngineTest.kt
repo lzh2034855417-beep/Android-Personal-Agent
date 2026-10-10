@@ -16,6 +16,14 @@ import org.junit.Test
 import java.time.Instant
 
 class LocalPowerAttributionEngineTest {
+    @Test
+    fun smallForegroundBreakdownCannotExplainMostOfTotalPower() {
+        val verdict = LocalPowerAttributionEngine.attribute(snapshotFor(AppPowerEvidence(
+            uid = 10181, packageNames = listOf("com.xiaomi.xmsf"), estimatedPowerMah = 158.0,
+            foregroundPowerMah = 2.16, backgroundPowerMah = 0.112)))
+        assertTrue(!verdict.totalConsumption.single().reason.contains("前台耗电占主要部分"))
+    }
+
     @Test fun highBackgroundPowerWarnsWithoutRequiringRestrictionEvidence() {
         val verdict = LocalPowerAttributionEngine.attribute(snapshotFor(AppPowerEvidence(
             uid = 10123, packageNames = listOf("com.tencent.mm"),
@@ -272,7 +280,7 @@ class LocalPowerAttributionEngineTest {
             )
         )
 
-        assertTrue(verdict.totalConsumption.single().reason.contains("前台使用成本"))
+        assertTrue(verdict.totalConsumption.single().reason.contains("时长不等于耗电占比"))
         assertTrue(verdict.backgroundSuspects.isEmpty())
     }
 

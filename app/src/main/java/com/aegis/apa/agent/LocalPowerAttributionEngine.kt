@@ -81,13 +81,10 @@ object LocalPowerAttributionEngine {
     private fun totalCandidate(app: AppPowerEvidence, window: com.aegis.apa.model.BatteryDrainWindowEvidence?): RankedPowerCandidate {
         val power = app.estimatedPowerMah ?: 0.0
         val conflict = PowerEvidenceConsistency.issue(app, window)
-        val foregroundDominated = when {
-            app.foregroundPowerMah != null && app.backgroundPowerMah != null ->
-                app.foregroundPowerMah > app.backgroundPowerMah
-            app.foregroundDurationMillis != null ->
-                app.foregroundDurationMillis > (app.backgroundDurationMillis ?: 0L)
-            else -> false
-        }
+        val foregroundDominated = app.foregroundPowerMah?.let { it > power / 2.0 && it <= power } == true
+        val foregroundTimeDominated = app.foregroundDurationMillis?.let {
+            it > (app.backgroundDurationMillis ?: Long.MAX_VALUE)
+        } == true
         val backgroundDominated = app.backgroundPowerMah != null && power > 0.0 &&
             app.backgroundPowerMah / power >= AttributionPolicy.MIN_BACKGROUND_POWER_SHARE
         return RankedPowerCandidate(
@@ -101,6 +98,7 @@ object LocalPowerAttributionEngine {
                 conflict != null -> "统计口径待核查：$conflict；不能作为本周期同口径排行或限制依据。"
                 foregroundDominated -> "前台耗电占主要部分，这更像前台使用成本，不能据此判断后台异常。"
                 backgroundDominated -> "后台耗电占主要部分，值得优先核对，但单一系统估算不能证明异常。"
+                foregroundTimeDominated -> "前台状态计时较多，但时长不等于耗电占比；不能据此判断前台耗电占主导或后台异常。"
                 else -> "这是耗电总量排行，只能说明消耗较多，不能单独证明后台异常。"
             }
         )
