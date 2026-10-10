@@ -364,7 +364,9 @@ object BugReportSectionExtractor {
             val value = line.toString().removeSuffix("\r")
             val trimmed = value.trim()
             if (trimmed.startsWith("------")) {
-                inSystemProperties = !lineTruncated && !lineHadNul && trimmed == "------ SYSTEM PROPERTIES ------"
+                inSystemProperties = !lineTruncated && !lineHadNul &&
+                    (trimmed == "------ SYSTEM PROPERTIES ------" ||
+                        trimmed == "------ SYSTEM PROPERTIES (getprop) ------")
             } else if (inSystemProperties) {
                 verificationHeaders.consume(value, incomplete = lineTruncated || lineHadNul)
             }

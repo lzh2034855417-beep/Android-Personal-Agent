@@ -283,3 +283,11 @@ After the approved branch was locally synchronized to `D:/AndroidPersonalAgent`,
 - 最终正式 APK SHA-256：`0E5FCF70593DF70010882207B38257E436529ADD86C61509CE2F22F1C19F4344`；签名验证通过，发布证书不变。
 - `adb install -r` 在 K60 Pro 成功，保留应用数据；MainActivity 冷启动 `Status: ok`，安装版本 0.3.1 / versionCode 6。未在手机 Download 保留 APK，未公开发布。
 - 用户原报告的重新导入、厂商实际页面和新 AI 回答仍需人工复测；本轮没有执行仪器测试或真实模型评测，不能把安装启动视为完整验收。
+
+### K60 Pro 身份匹配补验（2026-10-10）
+
+- 用户反馈修复后仍显示报告无法匹配。定位为标准标题 `SYSTEM PROPERTIES (getprop)` 未被识别，导致身份白名单为空；新增嵌套 ZIP 回归先失败后通过，覆盖匹配／不匹配、序列号排除及段落外型号不被读取。
+- 使用生产提取器、身份匹配和耗电／硬件解析器读取用户提供的完整 `bugreport-2026-10-10-175802.zip`，端到端验证通过：本机身份匹配、三星 UFS 4.0、实际耗电 962–1006 mAh；RAM 厂商仍无证据。原始报告没有加入 Git。
+- 同一全量 Gradle 命令通过：759 项 JVM 测试，0 failures/errors；Debug/Release Lint 与三个 APK 编译通过。
+- 签名验证通过，证书不变；最终 APK SHA-256 `44C409A53A0EEF5BBED7F118F472B487B42909034A8308A35C68CF179E92ECCA`。K60 Pro 覆盖安装成功，启动 `Status: ok`，保留数据，不在手机 Download 放安装包。
+- 手机界面需重新导入原 ZIP 并确认“是本机报告”；未执行自动化仪器测试或真实模型评测，不把解析器验收替代人工页面验收。

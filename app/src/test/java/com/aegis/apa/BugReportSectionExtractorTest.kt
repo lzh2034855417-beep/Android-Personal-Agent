@@ -17,6 +17,34 @@ import java.util.zip.ZipOutputStream
 
 class BugReportSectionExtractorTest {
     @Test
+    fun standardGetpropHeadingLetsK60HardwareMatchTheCurrentDevice() {
+        val header = """
+            ------ SYSTEM PROPERTIES (getprop) ------
+            [ro.product.manufacturer]: [Xiaomi]
+            [ro.product.model]: [22127RK46C]
+            [ro.build.version.sdk]: [35]
+            [ro.build.version.incremental]: [OS3.0.4.0.VMKCNXM]
+            [ro.serialno]: [must-not-be-retained]
+            ------ 0.048s was the duration of 'SYSTEM PROPERTIES' ------
+            [ro.product.model]: [Wrong model outside properties]
+        """.trimIndent()
+        val nested = zipOf("bugreport-socrates.txt" to "$header\n$reportText",
+            "FS/vendor/bootlog_copy.txt" to "UFS INQUIRY ID : SAMSUNG\nUFS Spec Version : 4.0")
+        val result = BugReportSectionExtractor.extract(
+            zipBytesOf("bugreport-socrates.zip" to nested).inputStream(), "bugreport.zip"
+        ) as BugReportReadResult.Success
+        assertEquals("22127RK46C", result.verificationHeaderFields["ro.product.model"])
+        assertEquals(4, result.verificationHeaderFields.size)
+        val cache = com.aegis.apa.tool.HardwareSupplyCache(java.io.File("unused-cache"), "Xiaomi", "22127RK46C")
+        assertTrue(cache.matchesReport(result.verificationHeaderFields))
+        assertTrue(!com.aegis.apa.tool.HardwareSupplyCache(java.io.File("unused-cache"), "Xiaomi", "OTHER")
+            .matchesReport(result.verificationHeaderFields))
+        val hardware = result.sections.single { it.source == "hardware" }
+        assertEquals("Samsung", com.aegis.apa.tool.DeviceProfileParser.parse(
+            hardware.output, com.aegis.apa.tool.DeviceProfileAccess.STANDARD).hardwareSupplyInfo?.storageVendor)
+    }
+
+    @Test
     fun k60CopiedBootlogPreservesNamedUfsManufacturer() {
         val result = BugReportSectionExtractor.extract(
             zipOf("bugreport-device.txt" to reportText,
