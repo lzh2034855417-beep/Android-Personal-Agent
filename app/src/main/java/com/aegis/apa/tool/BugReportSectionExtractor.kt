@@ -366,7 +366,8 @@ object BugReportSectionExtractor {
             val value = line.toString().removeSuffix("\r")
             val trimmed = value.trim()
             if (!lineTruncated && !lineHadNul &&
-                (value.contains("DDR", ignoreCase = true) || value.contains("UFS", ignoreCase = true))) {
+                (value.contains("DDR", ignoreCase = true) || value.contains("UFS", ignoreCase = true) ||
+                    value.contains("Manufacturer ID", ignoreCase = true))) {
                 hardwareFieldPatterns.forEach { (label, pattern) ->
                     if (label !in hardwareFields) {
                         pattern.find(value)?.groupValues?.get(1)?.let { hardwareFields[label] = it }
@@ -545,6 +546,17 @@ object BugReportSectionExtractor {
     }
 
     private val hardwareFieldPatterns = listOf(
+        // Qualcomm boot records pair the mode-register vendor and device type,
+        // without a DDR prefix. Keep this ID separate from extended JEDEC IDs.
+        "DDR MR Manufacturer ID" to Regex(
+            "(?:^|\\n)\\s*(?:[0-9]+\\s+)?B\\s*-\\s*[0-9]+\\s*-\\s*Manufacturer ID\\s*=\\s*(0x[0-9a-f]+),\\s*Device Type\\s*=\\s*0x[0-9a-f]+\\s*(?=\\r?$|\\n)",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)
+        ),
+        "DDR MR Manufacturer ID" to Regex("\\bDDR MR Manufacturer ID\\s*=\\s*(0x[0-9a-f]+)\\b", RegexOption.IGNORE_CASE),
+        "DDR Device Type" to Regex(
+            "(?:^|\\n)\\s*(?:[0-9]+\\s+)?B\\s*-\\s*[0-9]+\\s*-\\s*Manufacturer ID\\s*=\\s*0x[0-9a-f]+,\\s*Device Type\\s*=\\s*(0x[0-9a-f]+)\\s*(?=\\r?$|\\n)",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)
+        ),
         "DDR Device Type" to Regex(
             "\\bDDR[\\s_]+Device[\\s_]+Type\\s*[:=]\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)\\b",
             RegexOption.IGNORE_CASE

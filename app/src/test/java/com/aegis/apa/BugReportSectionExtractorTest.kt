@@ -17,6 +17,23 @@ import java.util.zip.ZipOutputStream
 
 class BugReportSectionExtractorTest {
     @Test
+    fun k60BootRecordWithoutDdrPrefixReadsMicronModeRegisterId() {
+        val record = "135\tB -   1247450 - Manufacturer ID = 0xff, Device Type = 0x8"
+        for (name in listOf("bootlog_copy.txt", "dumpstate_board.txt", "bugreport-device.txt")) {
+            val entries = if (name.startsWith("bugreport")) arrayOf(name to "$record\n$reportText")
+                else arrayOf("bugreport-device.txt" to reportText, name to record)
+            val result = BugReportSectionExtractor.extract(zipOf(*entries).inputStream(), "bugreport.zip")
+                as BugReportReadResult.Success
+            val raw = result.sections.single { it.source == "hardware" }.output
+            val info = com.aegis.apa.tool.DeviceProfileParser.parse(raw,
+                com.aegis.apa.tool.DeviceProfileAccess.STANDARD).hardwareSupplyInfo
+            assertEquals("美光 (Micron)", info?.ramVendor)
+            assertEquals("LPDDR5", info?.ramType)
+            assertEquals(com.aegis.apa.tool.HardwareSupplySource.ANDROID_BUGREPORT, info?.source)
+        }
+    }
+
+    @Test
     fun ramFieldsAreReadFromMainReportAndBoardAttachment() {
         for ((name, body) in listOf(
             "bugreport-device.txt" to "DDR Manufacturer ID: 0x01CE\nDDR Device Type: 0x9\n$reportText",

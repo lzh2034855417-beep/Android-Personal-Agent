@@ -268,7 +268,8 @@ object DeviceProfileParser {
             source = HardwareSupplySource.ROOT_SYSFS
         ).takeIf(HardwareSupplyInfo::hasDetails)
         val bugReportHardware = HardwareSupplyInfo(
-            ramVendor = DDR_MANUFACTURER_ID.find(raw)?.groupValues?.get(1)?.let(::ddrVendorFromId),
+            ramVendor = DDR_MR_MANUFACTURER_ID.find(raw)?.groupValues?.get(1)?.let(::deviceTreeDdrVendorFromId)
+                ?: DDR_MANUFACTURER_ID.find(raw)?.groupValues?.get(1)?.let(::ddrVendorFromId),
             ramType = DDR_DEVICE_TYPE.find(raw)?.groupValues?.get(1)?.let(::decodeDdrType),
             storageVendor = UFS_INQUIRY_ID.find(raw)?.groupValues?.get(1)?.let {
                 if (it.matches(Regex("(?i)(?:0x)?[0-9a-f]+"))) ufsVendorFromId(it) else normalizeStorageVendor(it)
@@ -374,6 +375,9 @@ object DeviceProfileParser {
     private val DDR_DEVICE_TYPE = Regex(
         "\\bDDR[\\s_]+Device[\\s_]+Type\\s*[:=]\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)\\b",
         RegexOption.IGNORE_CASE
+    )
+    private val DDR_MR_MANUFACTURER_ID = Regex(
+        "\\bDDR MR Manufacturer ID\\s*=\\s*(0x[0-9a-f]+)\\b", RegexOption.IGNORE_CASE
     )
     private val DDR_MANUFACTURER_ID = Regex(
         "\\bDDR[\\s_]+Manufacturer[\\s_]+ID\\s*[:=]\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)\\b",
