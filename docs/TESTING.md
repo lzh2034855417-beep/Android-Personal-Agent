@@ -291,3 +291,9 @@ After the approved branch was locally synchronized to `D:/AndroidPersonalAgent`,
 - 同一全量 Gradle 命令通过：759 项 JVM 测试，0 failures/errors；Debug/Release Lint 与三个 APK 编译通过。
 - 签名验证通过，证书不变；最终 APK SHA-256 `44C409A53A0EEF5BBED7F118F472B487B42909034A8308A35C68CF179E92ECCA`。K60 Pro 覆盖安装成功，启动 `Status: ok`，保留数据，不在手机 Download 放安装包。
 - 手机界面需重新导入原 ZIP 并确认“是本机报告”；未执行自动化仪器测试或真实模型评测，不把解析器验收替代人工页面验收。
+
+### 通用硬件状态文案（2026-10-10）
+
+- 用户截图确认三星 UFS 4.0、SM8550 和 walt 已显示。缺失的 RAM 厂商／类型提示改为“未知（当前读取结果未提供）”，未获得硬件读取结果时显示“未读取”；中英文设备页与分享卡片共用逻辑，适用于所有机型。
+- `testDebugUnitTest assembleRelease --offline --console=plain` 通过，759 项测试、0 failures。正式签名验证通过，K60 Pro 覆盖安装成功并冷启动 `Status: ok`，保留数据。
+- 最新 APK SHA-256：`349BF193CBB9D7C78CC1CDB9A79205C3353F0F010DAF82272C5E19AC72865140`。本轮只改显示状态，没有新增 RAM 厂商数据来源，未公开发布。

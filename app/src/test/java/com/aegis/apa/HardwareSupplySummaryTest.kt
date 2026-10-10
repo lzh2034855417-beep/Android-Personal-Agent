@@ -42,8 +42,8 @@ class HardwareSupplySummaryTest {
         )
 
         assertEquals(
-            "RAM：16GB · 待读取\n" +
-                "ROM：512GB · 待读取",
+            "RAM：16GB · 未读取\n" +
+                "ROM：512GB · 未读取",
             summary
         )
     }
@@ -57,7 +57,7 @@ class HardwareSupplySummaryTest {
             language = AppLanguage.EN
         )
 
-        assertEquals("RAM: 16GB · Pending\nROM: 512GB · Pending", summary)
+        assertEquals("RAM: 16GB · Not read\nROM: 512GB · Not read", summary)
     }
 
     @Test
