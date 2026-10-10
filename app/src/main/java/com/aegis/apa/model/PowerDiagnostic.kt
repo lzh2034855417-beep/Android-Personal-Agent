@@ -113,9 +113,14 @@ data class AppPowerEvidence(
 data class BatteryDrainWindowEvidence(
     val durationMillis: Long,
     val capacityMah: Double,
+    /** Lower bound; exact only when equal to drainUpperMah. */
     val drainMah: Double,
-    val usesActualDrain: Boolean
-)
+    val usesActualDrain: Boolean,
+    val drainUpperMah: Double = drainMah
+) {
+    val isDrainRange: Boolean get() = drainUpperMah != drainMah
+    val exactDrainMah: Double? get() = drainMah.takeUnless { isDrainRange }
+}
 
 data class SystemPowerEvidence(
     val interactive: Boolean? = null,

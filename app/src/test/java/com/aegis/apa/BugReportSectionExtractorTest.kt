@@ -17,6 +17,20 @@ import java.util.zip.ZipOutputStream
 
 class BugReportSectionExtractorTest {
     @Test
+    fun k60CopiedBootlogPreservesNamedUfsManufacturer() {
+        val result = BugReportSectionExtractor.extract(
+            zipOf("bugreport-device.txt" to reportText,
+                "FS/vendor/bootlog_copy.txt" to "UFS INQUIRY ID : SAMSUNG\nUFS Spec Version : 4.0").inputStream(),
+            "bugreport.zip"
+        ) as BugReportReadResult.Success
+        val hardware = result.sections.single { it.source == "hardware" }.output
+        val parsed = com.aegis.apa.tool.DeviceProfileParser.parse(
+            hardware, com.aegis.apa.tool.DeviceProfileAccess.STANDARD).hardwareSupplyInfo
+        assertEquals("Samsung", parsed?.storageVendor)
+        assertEquals("UFS 4.0", parsed?.storageSpec)
+    }
+
+    @Test
     fun partialBootlogDoesNotEraseRamFromEarlierBootlogInSameArchive() {
         val result = BugReportSectionExtractor.extract(
             zipOf(

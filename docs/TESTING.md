@@ -272,3 +272,14 @@ After the approved branch was locally synchronized to `D:/AndroidPersonalAgent`,
 - Debug 与 AndroidTest APK 编译成功；APK 元数据确认 `versionCode 6`、`versionName 0.3.1-preview`。
 - 预览 APK：`app/build/outputs/apk/debug/APA-v0.3.1-debug.apk`，SHA-256 `20588E2CCA56A8FD7C6261276C1C74CBDA94E1E0AC698CCA1863CA7255DBAB5D`。
 - `git diff --check` 通过。此轮未安装手机、未执行真机／真实模型测试、未生成签名正式 APK、未创建正式标签或 GitHub Release。
+
+## K60 Pro 报告兼容修复（2026-10-10）
+
+- 只读检查用户手机当天报告的 ZIP 结构和白名单字段：`actual drain: 962-1006`，同窗口 `Computed drain: 1.00`；硬件附件为 `bootlog_copy.txt`，UFS 厂商字段为 `SAMSUNG`、规格为 4.0。原始归档和日志正文没有存入仓库。
+- 区间值之前回退到 1.0 mAh，导致错误速率、排行分母和冲突提示。六项新增回归先全部失败，修复后通过；区间保留上下限，占比保留范围，超过总量上限才标记冲突，复测标量归档不保存区间端点为精确值。
+- 复制版 bootlog／文本厂商端到端测试先因缺少硬件段落失败，再修复；RAM 厂商／类型没有找到可识别证据，保持未知。
+- 独立只读审查无阻断问题，提醒科学计数法负指数会被区间检查拒绝；新增 `1e-3` 回归先失败后修复。
+- 最终命令：`testDebugUnitTest lintDebug lintRelease assembleDebug assembleDebugAndroidTest assembleRelease --offline --console=plain`，使用现有本地正式签名配置。`BUILD SUCCESSFUL`；96 套件、758 项 JVM 测试，0 failures/errors/skips；Debug Lint 0 错误／35 警告，Release Lint 0 错误／33 警告。
+- 最终正式 APK SHA-256：`0E5FCF70593DF70010882207B38257E436529ADD86C61509CE2F22F1C19F4344`；签名验证通过，发布证书不变。
+- `adb install -r` 在 K60 Pro 成功，保留应用数据；MainActivity 冷启动 `Status: ok`，安装版本 0.3.1 / versionCode 6。未在手机 Download 保留 APK，未公开发布。
+- 用户原报告的重新导入、厂商实际页面和新 AI 回答仍需人工复测；本轮没有执行仪器测试或真实模型评测，不能把安装启动视为完整验收。

@@ -89,14 +89,26 @@ object BatteryStatsEvidenceParser {
         val estimatedPower = statistics.substringAfter(ESTIMATED_POWER_HEADER, missingDelimiterValue = "")
         if (estimatedPower.isEmpty()) return null
         val capacityMah = numericValue(estimatedPower, "Capacity")?.takeIf { it.isFinite() && it > 0.0 } ?: return null
-        val actualDrainMah = numericValue(estimatedPower, "actual drain")?.takeIf { it.isFinite() && it >= 0.0 }
+        val actualRaw = rawValue(estimatedPower, "actual drain")
+        val scalarActual = actualRaw?.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 }
+        val rangeMatch = actualRaw?.let { Regex("^([0-9]+(?:\\.[0-9]+)?)\\s*-\\s*([0-9]+(?:\\.[0-9]+)?)$").matchEntire(it) }
+        val range = rangeMatch?.let {
+            val lower = it.groupValues[1].toDoubleOrNull() ?: return null
+            val upper = it.groupValues[2].toDoubleOrNull() ?: return null
+            if (!lower.isFinite() || !upper.isFinite() || lower < 0 || upper < lower) return null
+            lower to upper
+        }
+        // A malformed positive interval must not become a misleading point estimate.
+        if (range == null && scalarActual == null && actualRaw?.matches(Regex("^[0-9].*-.*$")) == true) return null
+        val actualDrainMah = range?.first ?: scalarActual
         val computedDrainMah = numericValue(estimatedPower, "Computed drain")?.takeIf { it.isFinite() && it >= 0.0 }
         val drainMah = actualDrainMah ?: computedDrainMah ?: return null
         return BatteryDrainWindowEvidence(
             durationMillis = durationMillis,
             capacityMah = capacityMah,
             drainMah = drainMah,
-            usesActualDrain = actualDrainMah != null
+            usesActualDrain = actualDrainMah != null,
+            drainUpperMah = range?.second ?: drainMah
         )
     }
 

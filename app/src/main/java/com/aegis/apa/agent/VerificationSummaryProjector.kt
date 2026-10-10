@@ -54,7 +54,8 @@ object VerificationSummaryProjector {
         }
 
         val drain = snapshot.system.batteryDrainWindow
-        metric(VerificationMetricKind.OVERALL_POWER, emptyList(), drain?.drainMah, VerificationUnit.MAH,
+        // The archive stores scalar metrics; do not turn an interval endpoint into an exact value.
+        metric(VerificationMetricKind.OVERALL_POWER, emptyList(), drain?.exactDrainMah, VerificationUnit.MAH,
             if (drain?.usesActualDrain == true) VerificationEstimate.ACTUAL else VerificationEstimate.ESTIMATED,
             "batterystats", EvidenceField.OVERALL_POWER_MAH)
 

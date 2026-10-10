@@ -31,7 +31,8 @@ object AppPowerRanking {
         val comparable = measured.filterNot { it in conflicting }
         val apps = comparable.filterNot(::isGroup).take(5)
         val groups = comparable.filter(::isGroup).take(5)
-        val denominator = snapshot.system.batteryDrainWindow?.drainMah?.takeIf { it.isFinite() && it > 0 }
+        val window = snapshot.system.batteryDrainWindow
+        val denominator = window?.drainMah?.takeIf { it.isFinite() && it > 0 }
         fun row(app: AppPowerEvidence): String {
             val mah = app.estimatedPowerMah!!
             val names = app.displayNames.ifEmpty { app.packageNames }.take(3).joinToString(" / ") { it.take(80) }
@@ -43,7 +44,9 @@ object AppPowerRanking {
             } else names
             val share = denominator?.takeIf { mah <= it &&
                 PowerEvidenceConsistency.issue(app, snapshot.system.batteryDrainWindow) == null }?.let {
-                String.format(Locale.US, "%.1f%%", mah / it * 100)
+                val upper = window?.drainUpperMah ?: it
+                if (upper > it) String.format(Locale.US, "%.1f%%–%.1f%%", mah / upper * 100, mah / it * 100)
+                else String.format(Locale.US, "%.1f%%", mah / it * 100)
             } ?: if (english) "share unavailable" else "占比不可用"
             return "$label · ${String.format(Locale.US, "%.1f", mah)} mAh · $share"
         }

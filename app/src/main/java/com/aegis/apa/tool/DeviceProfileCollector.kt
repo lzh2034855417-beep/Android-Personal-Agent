@@ -270,7 +270,9 @@ object DeviceProfileParser {
         val bugReportHardware = HardwareSupplyInfo(
             ramVendor = DDR_MANUFACTURER_ID.find(raw)?.groupValues?.get(1)?.let(::ddrVendorFromId),
             ramType = DDR_DEVICE_TYPE.find(raw)?.groupValues?.get(1)?.let(::decodeDdrType),
-            storageVendor = UFS_INQUIRY_ID.find(raw)?.groupValues?.get(1)?.let(::ufsVendorFromId),
+            storageVendor = UFS_INQUIRY_ID.find(raw)?.groupValues?.get(1)?.let {
+                if (it.matches(Regex("(?i)(?:0x)?[0-9a-f]+"))) ufsVendorFromId(it) else normalizeStorageVendor(it)
+            },
             storageSpec = UFS_SPEC_VERSION.find(raw)?.groupValues?.get(1)?.let { "UFS ${it.trim()}" },
             source = HardwareSupplySource.ANDROID_BUGREPORT
         ).takeIf(HardwareSupplyInfo::hasDetails)
@@ -378,7 +380,7 @@ object DeviceProfileParser {
         RegexOption.IGNORE_CASE
     )
     private val UFS_INQUIRY_ID = Regex(
-        "UFS\\s+INQUIRY\\s+ID\\s*[-:=]\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)",
+        "UFS\\s+INQUIRY\\s+ID\\s*[-:=]\\s*(SAMSUNG|SK\\s*HYNIX|HYNIX|MICRON|KIOXIA|TOSHIBA|XBSTOR|0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)\\b",
         RegexOption.IGNORE_CASE
     )
     private val UFS_SPEC_VERSION = Regex(

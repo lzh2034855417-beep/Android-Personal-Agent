@@ -11,7 +11,7 @@ internal object PowerEvidenceConsistency {
               language: AppLanguage = AppLanguage.ZH_CN): String? {
         val total = app.estimatedPowerMah?.takeIf { it.isFinite() && it > 0 } ?: return null
         val background = app.backgroundPowerMah?.takeIf { it.isFinite() && it >= 0 }
-        val drain = window?.drainMah?.takeIf { it.isFinite() && it > 0 }
+        val drain = window?.drainUpperMah?.takeIf { it.isFinite() && it > 0 }
         fun mah(value: Double) = String.format(Locale.US, "%.1f", value)
         return when {
             background != null && background > total -> if (language == AppLanguage.EN)

@@ -537,7 +537,7 @@ object BugReportSectionExtractor {
             RegexOption.IGNORE_CASE
         ),
         "UFS INQUIRY ID" to Regex(
-            "UFS\\s+INQUIRY\\s+ID\\s*[-:=]\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)",
+            "UFS\\s+INQUIRY\\s+ID\\s*[-:=]\\s*(SAMSUNG|SK\\s*HYNIX|HYNIX|MICRON|KIOXIA|TOSHIBA|XBSTOR|0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)\\b",
             RegexOption.IGNORE_CASE
         ),
         "UFS Spec Version" to Regex(
@@ -580,7 +580,7 @@ object BugReportSectionExtractor {
 
     private fun isHardwareLogEntry(name: String): Boolean {
         val basename = name.substringAfterLast('/').lowercase(Locale.ROOT)
-        return basename == "bootlog.txt"
+        return basename == "bootlog.txt" || basename == "bootlog_copy.txt"
     }
 
     private fun isZipEntry(name: String): Boolean =

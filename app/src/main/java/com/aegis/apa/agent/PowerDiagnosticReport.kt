@@ -33,15 +33,18 @@ object PowerDiagnosticReportBuilder {
             snapshot.system.batteryDrainWindow?.let { window ->
                 val hours = window.durationMillis / 3_600_000.0
                 val mahPerHour = window.drainMah / hours
+                val upperMahPerHour = window.drainUpperMah / hours
                 val percentPerHour = window.drainMah / window.capacityMah / hours * 100.0
+                val upperPercentPerHour = window.drainUpperMah / window.capacityMah / hours * 100.0
                 val projectedHours = window.capacityMah / mahPerHour
                 appendLine("统计周期：自上次充满后")
                 appendLine("在电池上运行：${formatDuration(window.durationMillis)}")
-                appendLine("周期耗电：${formatDecimal(window.drainMah)} mAh / ${formatDecimal(window.capacityMah)} mAh")
-                appendLine("平均耗电：${formatDecimal(mahPerHour)} mAh/小时（${formatDecimal(percentPerHour)}%/小时）")
-                if (window.durationMillis >= MIN_RUNTIME_PROJECTION_WINDOW_MILLIS) {
-                    appendLine("同等使用强度预计续航：${formatDecimal(projectedHours)}小时")
-                } else {
+                appendLine("周期耗电：${formatRange(window.drainMah, window.drainUpperMah)} mAh / ${formatDecimal(window.capacityMah)} mAh")
+                appendLine("平均耗电：${formatRange(mahPerHour, upperMahPerHour)} mAh/小时（${formatRange(percentPerHour, upperPercentPerHour)}%/小时）")
+                if (window.isDrainRange) appendLine("耗电量为系统记录的区间，上下限均保留，不取中点作为精确值。")
+                if (window.durationMillis >= MIN_RUNTIME_PROJECTION_WINDOW_MILLIS && projectedHours.isFinite()) {
+                    appendLine("同等使用强度预计续航：${formatRange(window.capacityMah / upperMahPerHour, projectedHours)}小时")
+                } else if (window.durationMillis < MIN_RUNTIME_PROJECTION_WINDOW_MILLIS) {
                     appendLine("窗口提示：统计窗口不足 2 小时，仅保留实测速率，不外推完整续航。")
                 }
             }
@@ -101,14 +104,18 @@ object PowerDiagnosticReportBuilder {
             snapshot.system.batteryDrainWindow?.let { window ->
                 val hours = window.durationMillis / 3_600_000.0
                 val mahPerHour = window.drainMah / hours
+                val upperMahPerHour = window.drainUpperMah / hours
                 val percentPerHour = window.drainMah / window.capacityMah / hours * 100.0
+                val upperPercentPerHour = window.drainUpperMah / window.capacityMah / hours * 100.0
                 appendLine("Window: since the last full charge")
                 appendLine("Time on battery: ${formatDurationEnglish(window.durationMillis)}")
-                appendLine("Window drain: ${formatDecimal(window.drainMah)} mAh / ${formatDecimal(window.capacityMah)} mAh")
-                appendLine("Average drain: ${formatDecimal(mahPerHour)} mAh/hour (${formatDecimal(percentPerHour)}%/hour)")
-                if (window.durationMillis >= MIN_RUNTIME_PROJECTION_WINDOW_MILLIS) {
-                    appendLine("Projected runtime at the same intensity: ${formatDecimal(window.capacityMah / mahPerHour)} hours")
-                } else appendLine("Window note: under 2 hours; keep the measured rate only and do not project full runtime.")
+                appendLine("Window drain: ${formatRange(window.drainMah, window.drainUpperMah)} mAh / ${formatDecimal(window.capacityMah)} mAh")
+                appendLine("Average drain: ${formatRange(mahPerHour, upperMahPerHour)} mAh/hour (${formatRange(percentPerHour, upperPercentPerHour)}%/hour)")
+                if (window.isDrainRange) appendLine("Drain is a system-recorded interval; keep both bounds, not an exact midpoint.")
+                val projectedHours = window.capacityMah / mahPerHour
+                if (window.durationMillis >= MIN_RUNTIME_PROJECTION_WINDOW_MILLIS && projectedHours.isFinite()) {
+                    appendLine("Projected runtime at the same intensity: ${formatRange(window.capacityMah / upperMahPerHour, projectedHours)} hours")
+                } else if (window.durationMillis < MIN_RUNTIME_PROJECTION_WINDOW_MILLIS) appendLine("Window note: under 2 hours; keep the measured rate only and do not project full runtime.")
             }
             appendLine(AppPowerRanking.build(snapshot, AppLanguage.EN))
             val unavailable = snapshot.sources.values.filter { it.status != DiagnosticSourceStatus.AVAILABLE }
@@ -437,4 +444,7 @@ object PowerDiagnosticReportBuilder {
     }
 
     private fun formatDecimal(value: Double): String = String.format(Locale.US, "%.1f", value)
+
+    private fun formatRange(lower: Double, upper: Double): String =
+        if (lower == upper) formatDecimal(lower) else "${formatDecimal(lower)}–${formatDecimal(upper)}"
 }

@@ -273,8 +273,9 @@ internal fun PowerDiagnosticReportCards(report: PowerDiagnosticSnapshot, onCopyP
                 Text(if (english) "Battery window evidence" else "电量窗口证据", style = MaterialTheme.typography.titleSmall)
                 Text(if (english) "Window duration: ${window.durationMillis / 60_000} min"
                     else "窗口时长：${window.durationMillis / 60_000} 分钟", style = MaterialTheme.typography.bodySmall)
-                Text(if (english) "Window drain: ${window.drainMah} mAh · Capacity: ${window.capacityMah} mAh"
-                    else "窗口耗电：${window.drainMah} mAh · 容量：${window.capacityMah} mAh", style = MaterialTheme.typography.bodySmall)
+                val drainText = if (window.isDrainRange) "${window.drainMah}–${window.drainUpperMah}" else "${window.drainMah}"
+                Text(if (english) "Window drain: $drainText mAh · Capacity: ${window.capacityMah} mAh"
+                    else "窗口耗电：$drainText mAh · 容量：${window.capacityMah} mAh", style = MaterialTheme.typography.bodySmall)
                 Text(if (english) { if (window.usesActualDrain) "Drain uses the recorded charge decrease." else "Drain is a system estimate." }
                     else if (window.usesActualDrain) "耗电量采用记录的电量下降值。" else "耗电量采用系统估算值。", style = MaterialTheme.typography.bodySmall)
             }
