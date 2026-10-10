@@ -10,6 +10,35 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DeviceProfileParserTest {
+    @Test fun deviceTreeManufacturerUsesLpddrModeRegisterIds() {
+        for ((id, vendor) in listOf("00000001" to "三星 (Samsung)",
+            "00000006" to "海力士 (SK hynix)", "000000ff" to "美光 (Micron)")) {
+            val profile = DeviceProfileParser.parse("DDR_VENDOR_HEX=$id", DeviceProfileAccess.ROOT)
+            assertEquals(vendor, profile.hardwareSupplyInfo?.ramVendor)
+        }
+    }
+
+    @Test
+    fun systemNodesExposeRamVendorWithoutBugReport() {
+        val profile = com.aegis.apa.tool.DeviceProfileParser.parse(
+            "DDR_VENDOR_HEX=000001ce\nDDR_TYPE_HEX=00000008\nSTORAGE=SKhynix|HN8T271EJKX152",
+            com.aegis.apa.tool.DeviceProfileAccess.ROOT
+        )
+        assertEquals("三星 (Samsung)", profile.hardwareSupplyInfo?.ramVendor)
+        assertEquals("LPDDR5", profile.hardwareSupplyInfo?.ramType)
+        assertEquals("SK hynix", profile.hardwareSupplyInfo?.storageVendor)
+    }
+
+    @Test
+    fun emptyZeroAndMalformedSupplierNodesDoNotGuessAVendor() {
+        for (value in listOf("", "00000000", "garbage", "001ce\u0000", "123456789")) {
+            val profile = com.aegis.apa.tool.DeviceProfileParser.parse(
+                "DDR_VENDOR_HEX=$value", com.aegis.apa.tool.DeviceProfileAccess.ROOT
+            )
+            assertNull(profile.hardwareSupplyInfo?.ramVendor)
+        }
+    }
+
     @Test
     fun parsesSm8850CpuPoliciesAndThermalSensors() {
         val raw = """

@@ -55,8 +55,8 @@ data class PowerDiagnosticDisplayModel(
                         "当前应用级证据不足，不建议限制或冻结任何应用。",
                         "App-level evidence is insufficient. Do not restrict or freeze any app on this evidence.")
                     verdict.backgroundSuspects.isNotEmpty() -> text(
-                        "${verdict.backgroundSuspects.size} 个候选存在同窗口后台线索；相关性不等于已证明责任。请结合各项置信度与限制。",
-                        "${verdict.backgroundSuspects.size} candidates have background signals in the same window. Correlation does not prove responsibility; review each confidence level and limitation.")
+                        "${verdict.backgroundSuspects.size} 个候选存在待核查的后台风险或统计口径问题；风险提示不等于建议限制，请查看各项证据与最高建议。",
+                        "${verdict.backgroundSuspects.size} candidates have background risks or measurement-basis issues to check. A warning does not authorize restriction; review the evidence and maximum advice.")
                     else -> text("已解析到耗电或调度统计；没有达到后台异常阈值的应用。耗电多不等于后台异常。",
                         "Consumption or scheduling statistics are available. No app reached the background-anomaly threshold; high consumption does not prove an anomaly.")
                 },
@@ -87,6 +87,7 @@ private fun coverageLabel(field: EvidenceField, status: EvidenceFieldStatus, lan
     val name = when (field) {
         EvidenceField.UID_PACKAGES -> if (english) "UID/package mapping" else "UID 与包名映射"
         EvidenceField.POWER_MAH -> if (english) "Estimated consumption" else "估算耗电"
+        EvidenceField.OVERALL_POWER_MAH -> if (english) "Overall battery drain" else "整体电量消耗"
         EvidenceField.FOREGROUND_TIME -> if (english) "Foreground time" else "前台时长"
         EvidenceField.WAKELOCK_TIME -> if (english) "Wake lock time" else "唤醒锁时长"
         EvidenceField.WAKEUP_ALARMS -> if (english) "Wakeups/alarms" else "唤醒与闹钟"
@@ -113,6 +114,16 @@ private fun displayLimit(value: String, language: AppLanguage): String {
 internal fun diagnosticDisplayText(value: String, language: AppLanguage): String {
     if (language != AppLanguage.EN) return value
     diagnosticEnglishText[value]?.let { return it }
+    // Engine caveats can be concatenated. Translate only a complete sequence of
+    // known messages; leave device-specific/unrecognized evidence verbatim.
+    var remaining = value
+    val translatedParts = mutableListOf<String>()
+    while (remaining.isNotEmpty()) {
+        val part = diagnosticEnglishText.entries.firstOrNull { remaining.startsWith(it.key) } ?: break
+        translatedParts += part.value
+        remaining = remaining.removePrefix(part.key)
+    }
+    if (remaining.isEmpty() && translatedParts.isNotEmpty()) return translatedParts.joinToString(" ")
     val templates = listOf(
         Regex("系统估算耗电 ([0-9.]+) mAh") to { m: MatchResult -> "Estimated drain: ${m.groupValues[1]} mAh" },
         Regex("系统估算后台耗电 ([0-9.]+) mAh，占该应用总耗电 ([0-9.]+)%") to { m: MatchResult -> "Estimated background drain: ${m.groupValues[1]} mAh; ${m.groupValues[2]}% of this app's total" },
@@ -128,6 +139,8 @@ internal fun diagnosticDisplayText(value: String, language: AppLanguage): String
 }
 
 private val diagnosticEnglishText = mapOf(
+    "待验证后台线索：目前只有一种后台证据，不能确认异常或因果；可在使用强度相近的窗口核对该指标是否持续偏高。" to "An unverified background clue: one signal cannot establish an anomaly or causation. Check whether it stays elevated in comparable usage windows.",
+    "系统或共享 UID 仅供观察，不能安全拆分责任或据此限制。" to "System or shared UIDs are observation-only; responsibility cannot be safely split and this evidence does not justify restrictions.",
     "前台耗电占主要部分，这更像前台使用成本，不能据此判断后台异常。" to "Foreground use accounts for most of the drain; this does not establish a background anomaly.",
     "后台耗电占主要部分，值得优先核对，但单一系统估算不能证明异常。" to "Background drain accounts for most of the total; one system estimate does not prove an anomaly.",
     "这是耗电总量排行，只能说明消耗较多，不能单独证明后台异常。" to "Higher total consumption alone does not prove a background anomaly.",

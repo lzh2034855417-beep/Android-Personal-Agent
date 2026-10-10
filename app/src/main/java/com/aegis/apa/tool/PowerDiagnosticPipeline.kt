@@ -7,6 +7,17 @@ import com.aegis.apa.model.PowerDiagnosticSnapshot
 import java.time.Instant
 
 object PowerDiagnosticPipeline {
+    /** Imported reports may be large; never parse them on the caller's UI thread. */
+    suspend fun analyzeImported(
+        imported: BugReportReadResult.Success,
+        sampledAt: Instant,
+        collectionDurationMillis: Long,
+        packageLabelResolver: (String) -> String? = { null }
+    ): PowerDiagnosticSnapshot = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+        analyze(imported.sections, DiagnosticInputSource.BUGREPORT, sampledAt,
+            collectionDurationMillis, packageLabelResolver, imported.verificationHeaderFields)
+    }
+
     fun analyze(
         sections: List<RawDiagnosticSection>,
         inputSource: DiagnosticInputSource,

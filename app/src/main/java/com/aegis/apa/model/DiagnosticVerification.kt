@@ -50,7 +50,7 @@ class VerificationSampleContext(
     scenarioNote: String,
     val noCharging: VerificationConfirmation
 ) {
-    val scenarioNote: String = boundedText(scenarioNote, 500)
+    val scenarioNote: String = boundedUnicodeText(scenarioNote, 500)
     fun copy(device: VerificationDeviceContext = this.device, scenario: VerificationScenario = this.scenario,
         scenarioNote: String = this.scenarioNote, noCharging: VerificationConfirmation = this.noCharging) =
         VerificationSampleContext(device, scenario, scenarioNote, noCharging)
@@ -67,9 +67,9 @@ class VerificationChange(
     val noOtherChanges: VerificationConfirmation,
     sideEffects: String
 ) {
-    val description: String = boundedText(description, 500)
-    val rollback: String = boundedText(rollback, 500)
-    val sideEffects: String = boundedText(sideEffects, 500)
+    val description: String = boundedUnicodeText(description, 500)
+    val rollback: String = boundedUnicodeText(rollback, 500)
+    val sideEffects: String = boundedUnicodeText(sideEffects, 500)
     fun copy(description: String = this.description, rollback: String = this.rollback, confirmedAt: Instant = this.confirmedAt,
         similarScenario: VerificationConfirmation = this.similarScenario, noOtherChanges: VerificationConfirmation = this.noOtherChanges,
         sideEffects: String = this.sideEffects) = VerificationChange(description, rollback, confirmedAt, similarScenario, noOtherChanges, sideEffects)
@@ -130,7 +130,7 @@ class VerificationRecord(
     val retest: DiagnosticVerificationSummary?,
     val closeReason: VerificationCloseReason?
 ) {
-    val title: String = boundedText(title, 80)
+    val title: String = boundedUnicodeText(title, 80)
     fun copy(id: String = this.id, schemaVersion: Int = this.schemaVersion, ruleVersion: Int = this.ruleVersion,
         scopeId: String = this.scopeId, createdAt: Instant = this.createdAt, updatedAt: Instant = this.updatedAt,
         revision: Long = this.revision, title: String = this.title, state: VerificationState = this.state,
@@ -147,5 +147,3 @@ class VerificationTransitionException(val state: VerificationState, val operatio
     IllegalStateException("Cannot $operation from ${state.wireId}")
 
 private fun canonicalPackages(packageNames: List<String>): List<String> = packageNames.distinct().sorted()
-
-private fun boundedText(value: String, limit: Int): String = value.map { if (it.isISOControl()) ' ' else it }.joinToString("").take(limit)

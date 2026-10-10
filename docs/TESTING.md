@@ -1,5 +1,36 @@
 # 测试与验证记录
 
+## 问题驱动诊断向导全链路验收（2026-10-09，开发副本）
+
+**已实现**：待机掉电／使用发热本地规则、显式回答／样本确认、版本化内存会话、单一手动主动作，以及独立可选解释的预览／确认／备注默认关闭／取消／过期结果保护。向导只在页面 ViewModel 内存保留，配置变化保留，进程死亡重新开始；最多两份已确认摘要。热读数按各自来源和时间描述性并列，不进入耗电比较、不计算散热改善或健康百分比；生产窗口起止未知不能计算调整效果。
+
+**合成验证**：新增 `GuidedDiagnosticPipelineTest` 十项，从真实 Bug Report extractor/parser → adapter → 两套 evaluate → payload，覆盖选区／actual=0／重复区段拒绝、不完整映射／共享 UID、未知窗口／归属／回答门控、本地主动作不可替换、报告热状态优先级、备注及标识隐私、温度不进耗电比较和记录缺失／保存失败不伪造成功。正向验证动作只使用显式标注的合成窗口元数据；真实生产报告没有该能力。两份完整报告的解释载荷可超限，测试验证拒绝发送且不截断本地事实。
+
+最终审查修复补充十项 JVM 测试：Activity 共用初始化器保留主动选择的无 Key 会话；整体耗电使用独立 `OVERALL_POWER_MAH` 覆盖，不升级应用 `POWER_MAH`；真实进程／恢复观察经 adapter→发热规则→payload 保留未知充电窗口及粗略掉电速度；共用主动作／手动重试／主动刷新事件分发与基础快照交付边界验证实际分发次数、完整版本键、在途任务和两样本替换上限。任务已结束但会话未结束时可主动刷新；已识别系统警告仍优先，实际结束会话不可复活。新读数仍须预览确认，无自动采样／重试。确认勾选项改为合并语义的带标签行，仪器断言检查标签及 checkbox role，仅编译未上机。
+
+门控敏感性 RED：临时仅在测试的 adapter→rule 边界给真实 ROOT 样本伪造匹配的明确窗口和无充电状态；10 项中 1 项预期行为断言失败（期待 `idle.observe_condition`，实际 `idle.verify_background`）。移除变异后 10/10 通过。它证明断言能抓住错误窗口授权，不是发现或提交了生产缺陷。首次夹具运行的三项失败已纠正（重复支持标题应拒绝、缺失可选来源单独保留、双完整报告应超限），不计作产品行为 RED。
+
+最终离线命令使用现有 Android Studio JBR、Gradle 缓存与 wrapper，在 `C:/Users/ROG/Documents/APA/work/current` 执行：
+
+```powershell
+$env:JAVA_HOME = 'C:/Program Files/Android/Android Studio/jbr'
+$env:GRADLE_USER_HOME = 'C:/Users/ROG/.gradle'
+./gradlew.bat testDebugUnitTest lintDebug lintRelease assembleDebug assembleDebugAndroidTest --offline
+$env:TEMP = 'C:/Users/ROG/Documents/APA/work/current/.superpowers/sdd/2026-10-03-guided-diagnostics/eval-temp'
+$env:TMP = $env:TEMP
+& 'C:/Users/ROG/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe' -B -X utf8 -m unittest discover -s scripts/ai_eval -p 'test_*.py' -v
+```
+
+最终审查修复后的 Gradle 退出 0（36 秒），`:app:testDebugUnitTest` 实际执行；新鲜 XML 为 **693 项／90 套件，0 failure/error/skipped**，时间范围 `2026-10-09T15:47:34.297Z` 至 `15:47:38.101Z`。原 pipeline 十项保留；本轮新增十项，另强化既有重复动作断言。Python **18/18** 通过，临时目录运行后为空。Debug 与 Android 仪器 APK 均重新构建，仪器 Kotlin 源码实际编译；这些结果不代表设备运行。
+
+Lint XML：Debug **0 错误／35 警告**；Release **0 错误／33 警告**。共同警告为 `GradleDependency` 3、`ModifierParameter` 4、`OldTargetApi` 1、`RedundantLabel` 1、`UnusedResources` 12、`UseKtx` 9、`UseTomlInstead` 3；Debug 另有 `NewerVersionAvailable` 2（既有机型名称库／Compose 插件依赖）。这些位置在原有构建配置、Manifest、资源、聊天／诊断界面和偏好／分享工具；没有 `Guided*.kt`、两套新规则或新 pipeline 文件告警。未升级依赖或添加 suppression。报告：`app/build/test-results/testDebugUnitTest/TEST-*.xml`、`app/build/reports/tests/testDebugUnitTest/index.html`、`app/build/reports/lint-results-{debug,release}.{xml,html,sarif}`。
+
+本地 APK：`app/build/outputs/apk/debug/APA-v0.3.0-debug.apk`（SHA-256 `A94974BB80785DB097491C591B2EB7361A158BDC220BB7422821425792ACC28E`）；已编译仪器 APK：`app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`（`4F12741BC663B10F8FBFD3F7DF8B615BA125374807EA290C4D9AA507E037A26C`）。均未安装／发布。
+
+**设备验证：未运行**。发布前需另行授权执行 OEM／Root 输出、真实 Keystore、MainActivity 回调时序、旋转／后台返回／退出／取消／删除／进程死亡、小屏／大字体／IME／滚动／读屏与中英文，以及实际 Android 解码器及两种协议仪器测试。分别用缺失和冲突样本做人工可用性验收，确认用户能说明未知项与下一步。
+
+**真实模型验证：未运行**。离线十二例是手工合成契约；格式 PASS 和合法 ID 不能证明准确，全部人工事实核查仍待执行。未来授权模型运行须保留精确载荷及原始响应，分别记录格式错误和人工事实错误的分母与未审数量，见 [guided-diagnostics-evaluation](guided-diagnostics-evaluation.md)。本轮不连接设备／服务、不下载依赖、不推送或发布；此开发副本验证不能替代主目录同步后的独立复验。
+
 ## 双语回答过滤与离线评测（2026-10-02）
 
 - 基线 `7547b7c`，分支 `codex/bilingual-ai-evals`。补齐英文及混合语言的 L0/普通聊天高级动作过滤、已附报告重复索取过滤和英文健康任务字段清洗；按句段保留普通设置、否定性提醒与报告事实。
@@ -223,3 +254,21 @@ Additional regressions cover a mismatched map-key/window source and bilingual ti
 ### Main-project delivery verification (2026-10-03)
 
 After the approved branch was locally synchronized to `D:/AndroidPersonalAgent`, the same full offline command succeeded again (33 seconds): **500 JVM tests / 0 failures, errors or skips**, both APKs built, and the Python tool suite passed **14/14**. This delivery-directory lint run reported **0 errors / 36 warnings per variant**, versus 35 in the isolated checkout. Report comparison identified only availability warnings for the unchanged device-marketing-name dependency and Kotlin Compose plugin; the two dependency configuration files have no feature-branch changes. No dependency upgrade or warning suppression was made. Actual instrumentation/device/model execution remains pending.
+
+## 0.3.1 候选代码留存（2026-10-10）
+
+用户确认本轮只整理和保留下一正式版本，不立即发布。配置更新为 `0.3.1` / `versionCode 6`，Debug 显示 `0.3.1-preview`。发布时间与剩余验收见 [RELEASE_0.3.1](RELEASE_0.3.1.md)。
+
+在当前 Android Studio 副本 `C:/Users/ROG/Documents/APA/work/current` 上重新运行：
+
+```powershell
+./gradlew.bat testDebugUnitTest lintDebug lintRelease assembleDebug assembleDebugAndroidTest --offline --console=plain
+& 'C:/Users/ROG/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe' -B -X utf8 -m unittest discover -s scripts/ai_eval -p 'test_*.py' -v
+```
+
+- Gradle `BUILD SUCCESSFUL`；95 个 JVM 套件、750 项测试，0 failures/errors/skips。
+- Python 离线评测工具单测 18 项通过，不调用真实模型。
+- Debug Lint：0 错误、35 警告；Release Lint：0 错误、33 警告。
+- Debug 与 AndroidTest APK 编译成功；APK 元数据确认 `versionCode 6`、`versionName 0.3.1-preview`。
+- 预览 APK：`app/build/outputs/apk/debug/APA-v0.3.1-debug.apk`，SHA-256 `20588E2CCA56A8FD7C6261276C1C74CBDA94E1E0AC698CCA1863CA7255DBAB5D`。
+- `git diff --check` 通过。此轮未安装手机、未执行真机／真实模型测试、未生成签名正式 APK、未创建正式标签或 GitHub Release。

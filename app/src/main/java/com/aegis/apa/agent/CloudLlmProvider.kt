@@ -241,14 +241,14 @@ internal fun buildCloudAnalysisPrompt(
                 }
                 appendLine("如果无法判断速度，围绕速率缺口给出一个测量步骤，不转去解释无关的应用排行。")
             }
-            PowerQuestionIntent.ATTRIBUTION -> appendLine("先回答后台耗电排行中哪个应用最值得优先核对；高耗电或后台耗电较高不等同于异常。")
+            PowerQuestionIntent.ATTRIBUTION -> appendLine("只在本地裁决有同窗口后台异常证据时单独解释异常对象，表述为疑似而非已证实；正常应用只保留本地排行，不逐个点评。高耗电或后台耗电较高不等同于异常；相关的本地待验证线索可以单独简短说明，但不能写成异常段落或据此建议限制。")
             PowerQuestionIntent.BATTERY_HEALTH,
             PowerQuestionIntent.OTHER -> Unit
         }
         if (powerIntent == PowerQuestionIntent.ATTRIBUTION) {
-            appendLine("最多解释 3 个主要耗电对象，但首先只指出一个有证据支持的优先对象；只有解释并列或限制确有必要时才补充其他对象。必须写出应用名或包名、报告中的原始数值和耗电更偏前台还是后台。")
-            appendLine("后台耗电排行优先指出后台耗电量和占比；单一耗电估算只能作为优先核对线索。")
-            appendLine("系统调度观察必须分别说明真实唤醒与普通定时任务；这些是独立累计计数，系统调度观察不得用于耗电归因，也不得据此生成限制或冻结建议。")
+            appendLine("只解释本地裁决支持的异常，优先一个对象；确有必要时最多补充两个并列异常对象。异常须写应用名或包名、报告中的原始数值和同窗口证据，不把排行对象升级成异常。")
+            appendLine("存在异常时，后台耗电排行优先指出后台耗电量和占比；单一耗电估算只能作为优先核对线索。")
+            appendLine("真实唤醒、普通定时任务和后台任务是独立累计计数，系统调度观察不得用于耗电归因，也不得据此生成限制或冻结建议。观察项中的单项后台耗电或唤醒锁是待验证线索，与累计计数区分，不得凑成多项同窗口异常证据。")
             appendLine("不得修改报告中的数值，不得把高耗电或后台耗电排行改写成已确认异常。")
             appendLine("不得超过报告给出的最高建议级别；尤其不得把观察或限制升级为冻结候选。")
             if (advancedAdviceAllowed) {
@@ -264,13 +264,9 @@ internal fun buildCloudAnalysisPrompt(
             appendLine("系统调度数据只有在直接改变结论时才简短写进证据限制，不要单列调度栏目，也不要用累计计数凑篇幅。")
         }
         appendLine("如果证据仍不足，不要复述所有缺失栏目，只给出一个最有价值的下一步；没有内容的字段可以省略。")
-        val outputFields = when (powerIntent) {
-            PowerQuestionIntent.DRAIN_RATE -> "结论：、耗电窗口：、实测速率：、建议：、证据限制："
-            PowerQuestionIntent.ATTRIBUTION -> "结论：、主要耗电：、后台判断：、建议：、证据限制："
-            PowerQuestionIntent.BATTERY_HEALTH,
-            PowerQuestionIntent.OTHER -> "结论：、依据：、建议："
-        }
-        appendLine("输出使用这些纯文本字段：$outputFields。优先控制在 600 至 800 个中文字符以内，不要重复同一限制。")
+        appendLine("可用纯文本字段：结论：、异常：、建议：、必要限制：。只有结论必需，其余按需省略；没有异常就省略异常段落，不逐项解释正常应用。")
+        appendLine("同一速率、续航估算和窗口只说一次，合并进结论；没有必要动作就不写建议。已有有效速率时，不因缺少历史基线就主动安排新的观察任务。")
+        appendLine("无异常时正文通常控制在 180 个中文字符以内，有异常时以 300 字为目标；必要安全提醒不受该目标限制。不要罗列不影响当前回答的缺失字段，不输出原始字段枚举。")
         appendLine()
     } else {
         appendLine("【回答任务】")

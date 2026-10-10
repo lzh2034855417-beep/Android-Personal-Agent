@@ -7,6 +7,40 @@ import org.junit.Test
 import java.nio.ByteBuffer
 
 class VerificationArchiveTest {
+    // Catches split surrogate pairs and UTF-16 field gates in the strict UTF-8 archive path.
+    @Test fun emojiAtTitleBoundaryRoundTrips() {
+        val title = "a".repeat(79) + "😀"
+        val sample = record.copy(title = title)
+        val restored = VerificationArchive.decode(encode(listOf(sample)), now).records.single()
+        assertEquals(title, restored.title)
+        assertEquals(80, restored.title.codePointCount(0, restored.title.length))
+    }
+
+    @Test fun unicodeNotesAndSanitizedSurrogatesRoundTripThroughStrictUtf8() {
+        val note = "😀".repeat(500)
+        val sample = record.copy(title = "中\uD800\uDC00\uDC00",
+            change = record.change!!.copy(description = note, rollback = note, sideEffects = note),
+            baseline = record.baseline.copy(context = record.baseline.context.copy(scenarioNote = note)))
+        val restored = VerificationArchive.decode(encode(listOf(sample)), now).records.single()
+        assertEquals("中\uD800\uDC00\uFFFD", restored.title)
+        assertEquals(note, restored.baseline.context.scenarioNote)
+        assertEquals(note, restored.change!!.description)
+        assertEquals(note, restored.change.rollback)
+        assertEquals(note, restored.change.sideEffects)
+    }
+
+    // Catches treating the new code point allowance as permission to exceed encoded record bytes.
+    @Test fun supplementaryNotesStillRespectEncodedRecordQuota() {
+        fun sample(note: String) = record.copy(
+            target = VerificationTarget.AppGroup((1..12).map { "p$it" + "a".repeat(3500) }),
+            change = record.change!!.copy(description = note, rollback = note, sideEffects = note),
+            baseline = record.baseline.copy(context = record.baseline.context.copy(scenarioNote = note)),
+            retest = record.retest!!.copy(context = record.retest.context.copy(scenarioNote = note)))
+        val ascii = sample("a".repeat(500))
+        assertEquals(listOf(ascii), VerificationArchive.decode(encode(listOf(ascii)), now).records)
+        expectEncodeFailure(VerificationStorageFailure.LIMIT) { encode(listOf(sample("😀".repeat(500)))) }
+    }
+
     @Test fun legacyPreviewV1RemainsReadableAndCanBeReencoded() {
         // Golden captured from the intermediate uncompressed v1 encoder, before compact encoding.
         val legacy = VerificationFixtures.legacyPreviewBytes()

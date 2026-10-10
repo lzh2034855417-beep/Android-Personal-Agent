@@ -22,6 +22,27 @@ import java.time.Instant
 
 class PowerDiagnosticDisplayModelTest {
     @Test
+    fun composedClueCaveatsAreLocalizedWithoutLosingScopeOrSharedUidSafety() {
+        val verdict = com.aegis.apa.agent.LocalPowerAttributionEngine.attribute(
+            PowerDiagnosticSnapshot(
+                sampledAtInstant = java.time.Instant.EPOCH, collectionDurationMillis = 0,
+                sources = emptyMap(), findings = emptyList(), system = SystemPowerEvidence(),
+                apps = listOf(com.aegis.apa.model.AppPowerEvidence(
+                    uid = 1000, packageNames = listOf("android"),
+                    wakeLockDurationMillis = 24 * 60_000L, wakeupCount = 500, sharedUid = true
+                ))
+            )
+        )
+        val reason = verdict.schedulingObservations.single().reason
+        val english = diagnosticDisplayText(reason, AppLanguage.EN)
+        assertTrue(english.contains("unverified"))
+        assertTrue(english.contains("since boot"))
+        assertTrue(english.contains("shared"))
+        assertTrue(english.none { it in '\u4e00'..'\u9fff' })
+        assertEquals(reason, diagnosticDisplayText(reason, AppLanguage.ZH_CN))
+    }
+
+    @Test
     fun englishRetainsUnknownEvidenceAndAdviceVerbatim() {
         val candidate = candidate("com.example.one", AdviceLevel.OBSERVE)
         val display = PowerDiagnosticDisplayModel.from(emptySnapshot().copy(

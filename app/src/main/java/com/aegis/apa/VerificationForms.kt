@@ -29,7 +29,13 @@ internal fun verificationInitialContext(snapshot: PowerDiagnosticSnapshot) = Ver
 
 @Composable
 internal fun VerificationSampleForm(snapshot: PowerDiagnosticSnapshot, record: VerificationRecord?, enabled: Boolean,
-    onDismiss: () -> Unit, onSave: (VerificationTarget, VerificationSampleContext, String) -> Unit) {
+    onDismiss: () -> Unit, onSave: (VerificationTarget, VerificationSampleContext, String) -> Unit) =
+    VerificationSampleForm(snapshot, record, enabled, onDismiss, onSave, null)
+
+@Composable
+internal fun VerificationSampleForm(snapshot: PowerDiagnosticSnapshot, record: VerificationRecord?, enabled: Boolean,
+    onDismiss: () -> Unit, onSave: (VerificationTarget, VerificationSampleContext, String) -> Unit,
+    fixedTarget: VerificationTarget?) {
     var title by remember { mutableStateOf(record?.title ?: "") }
     var targetIndex by remember(snapshot) { mutableIntStateOf(0) }
     var scenario by remember { mutableStateOf(VerificationScenario.OTHER) }
@@ -39,7 +45,7 @@ internal fun VerificationSampleForm(snapshot: PowerDiagnosticSnapshot, record: V
     var preview by remember(snapshot) { mutableStateOf<DiagnosticVerificationSummary?>(null) }
     val groups = remember(snapshot) { snapshot.apps.filter { it.packageNames.isNotEmpty() }
         .sortedByDescending { it.estimatedPowerMah ?: -1.0 }.map { VerificationTarget.AppGroup(it.packageNames) }.distinct().take(20) }
-    val target = record?.target ?: if (targetIndex == 0) VerificationTarget.Overall else groups[targetIndex - 1]
+    val target = record?.target ?: fixedTarget ?: if (targetIndex == 0) VerificationTarget.Overall else groups[targetIndex - 1]
     val context = verificationInitialContext(snapshot).copy(scenario = scenario, scenarioNote = note, noCharging = noCharging,
         device = verificationInitialContext(snapshot).device.copy(ownership =
             if (ownership == VerificationConfirmation.YES) VerificationOwnership.USER_CONFIRMED else VerificationOwnership.UNKNOWN))
@@ -65,14 +71,18 @@ internal fun VerificationSampleForm(snapshot: PowerDiagnosticSnapshot, record: V
                     "No raw report, logs, Key, account, unique device ID, full app list, or report URI is saved. No automatic network or export. Packages, times, and notes can still be sensitive.")) }
                 item { Text(verificationText("统计窗口未知：无法计算调整效果。确认归属或场景不能补造窗口；导入时间不是报告时间。",
                     "Unknown statistics windows prevent calculating adjustment effects. Ownership or scenario confirmations cannot create windows; import time is not report time.")) }
+                if (fixedTarget != null) item { Text(verificationText("本向导仅验证耗电，不验证发热。目标来自当前本地证据图：", "This guide verifies power only, not heat. Target from the current local evidence graph: ") +
+                    (fixedTarget as? VerificationTarget.AppGroup)?.packageNames?.joinToString().orEmpty()) }
                 if (projected == null) {
                     if (record == null) {
                         item { VerificationTextField(title, { title = it }, verificationText("标题", "Title"), 80, "verification-title") }
-                        item { Text(verificationText("选择验证目标", "Choose target")) }
-                        item { FilterChip(selected = targetIndex == 0, onClick = { targetIndex = 0 }, label = {
-                            Text(verificationText("整体耗电", "Overall power")) }) }
-                        items(groups.size) { index -> FilterChip(selected = targetIndex == index + 1,
-                            onClick = { targetIndex = index + 1 }, label = { Text(groups[index].packageNames.joinToString()) }) }
+                        if (fixedTarget == null) {
+                            item { Text(verificationText("选择验证目标", "Choose target")) }
+                            item { FilterChip(selected = targetIndex == 0, onClick = { targetIndex = 0 }, label = {
+                                Text(verificationText("整体耗电", "Overall power")) }) }
+                            items(groups.size) { index -> FilterChip(selected = targetIndex == index + 1,
+                                onClick = { targetIndex = index + 1 }, label = { Text(groups[index].packageNames.joinToString()) }) }
+                        }
                     }
                     item { Text(verificationText("使用场景（同枚举不证明相似）", "Scenario (same category does not prove similarity)")) }
                     items(VerificationScenario.entries) { value -> FilterChip(selected = scenario == value,
@@ -154,8 +164,8 @@ internal fun VerificationChangeForm(record: VerificationRecord, enabled: Boolean
 
 @Composable
 private fun VerificationTextField(value: String, onValueChange: (String) -> Unit, label: String, limit: Int, tag: String) {
-    OutlinedTextField(value, { onValueChange(it.take(limit)) }, modifier = Modifier.fillMaxWidth().testTag(tag),
-        label = { Text(label) }, supportingText = { Text("${value.length}/$limit") }, maxLines = 5)
+    OutlinedTextField(value, { onValueChange(boundedUnicodeText(it, limit)) }, modifier = Modifier.fillMaxWidth().testTag(tag),
+        label = { Text(label) }, supportingText = { Text("${value.codePointCount(0, value.length)}/$limit") }, maxLines = 5)
 }
 
 @Composable

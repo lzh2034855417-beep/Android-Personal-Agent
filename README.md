@@ -4,7 +4,7 @@
 
 [English](README_EN.md) · [路线图](ROADMAP.md) · [架构审计](docs/ARCHITECTURE.md) · [数据规范](docs/DATA_MODEL.md) · [技术债](docs/TECH_DEBT.md) · [测试](docs/TESTING.md)
 
-> 当前源码配置为 `0.3.0`（`versionCode 5`），Debug 安装版本为 `0.3.0-preview`。已发布 APK 与对应更新说明以 [GitHub Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases) 为准。
+> 当前源码配置为待发布的 `0.3.1`（`versionCode 6`），Debug 安装版本为 `0.3.1-preview`。本次候选版先留存，最早于北京时间 2026-10-17 02:23:45（距 v0.3.0 发布满 15 天）完成发布验收后发布；计划和检查项见 [0.3.1 发布准备](docs/RELEASE_0.3.1.md)。已发布 APK 与对应更新说明以 [GitHub Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases) 为准。
 
 ## 能做什么
 
@@ -40,6 +40,14 @@ Root 用户也可执行下面的只读诊断。续航速度和应用归因是两
 
 ## 能力等级与限制
 
+### 按问题排查（当前开发代码）
+
+在 Agent 的系统耗电诊断附近选择“按问题排查”，可免 Key 排查待机掉电或使用发热。确认回答和样本后，本地展示事实、最多三项待验证解释、证据缺口与一个主动作；来源不完整、共享 UID、报告归属或时间未知都不能授权具体应用调整。生产报告窗口起止通常未知，不能据此计算调整效果。
+
+向导仅保存在页面 ViewModel 内存中，配置变化保留，进程死亡后须重新开始；每会话最多两份已确认摘要。电池温度与报告热状态只按各自来源和时间描述性并列，不代表 CPU／表面温度，不计算散热改善或健康百分比，不设通用危险线、不要求制造高温。
+
+“解释本次排查”须先预览、再确认发送；自由备注默认关闭，只发送当前白名单证据、本地规则结果与主动作，不携带普通聊天历史、原始报告或唯一设备标识。完整系统／用户提示词合计超过 16 KiB UTF-8 时拒绝发送，不截断；包名和时间仍可能敏感。模型解释不能替换本地动作，格式通过不证明内容准确。真实解析到规则及载荷的合成验收已执行；界面／协议仪器测试仅编译，授权设备、人工可用性与真实模型评测仍是发布前门槛，详见 [测试记录](docs/TESTING.md) 与 [解释评测](docs/guided-diagnostics-evaluation.md)。
+
 ### 诊断 → 调整 → 复测
 
 成功诊断后可打开“本地验证记录”，预览并保存基线、记录一项手动调整与回退方式，再选择当前诊断为复测。无需 Key；记录独立加密保留 30 天，最多 20 条，清空聊天不删除记录。同来源仍须通过窗口、设备归属、场景及逐指标门控；未知或重叠的累计窗口只能并列展示原值，观察变化不能证明调整效果。
@@ -57,6 +65,7 @@ Root 用户也可执行下面的只读诊断。续航速度和应用归因是两
 ## 数据和隐私
 
 - 打开应用及 Activity 恢复时，**自动在本机采集/刷新**基础设备与可见应用数据；开启 Usage Access 后还读取使用事件。这与发送范围是两件事。
+- 检测到 Root 接口或管理器时，启动及恢复前台会以 `su -c "id -u"` 检查 APA 当前身份；仅 UID 0 确认已授权，与电池节点是否可读无关。检查限时 8 秒、输出限长 1 KiB，不读完整报告、不修改系统、不上传；未授权时可能弹出管理器授权提示。拒绝、超时或失败后不自动反复请求，可点击“重新检查 Root 授权”或从 APA 打开 Root 管理器后返回重试；Root 报告仍须手动采集。
 - **点击在线发送**才请求所选模型服务；没有 APA 中转服务器。本次请求包含基础快照、所选 Level 报告、可选应用报告，以及成功导入或采集后自动选中且仍可取消的系统耗电诊断摘要。
 - 续航观察的确定性回答在本机生成，不会因为配置了模型 Key 就自动把精确观察时间和电量轨迹发送给模型服务。
 - Level 0 的使用习惯排行有独立发送开关，默认关闭；开启系统 Usage Access 不等于选择发送。基础报告不含高级档案推导的硬件等级。展开“选择报告”可查看发送范围，历史回答可能引用之前的数据，清空对话可移除这些历史。
@@ -79,7 +88,7 @@ $env:ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"
 
 macOS/Linux 使用 `./gradlew` 执行相同任务。首次构建需要下载依赖；仅在已有缓存时加 `--offline`。
 
-- Debug：`com.aegis.apa.preview` / APA Preview，APK：`app/build/outputs/apk/debug/APA-v0.3.0-debug.apk`，安装后显示版本 `0.3.0-preview`。
+- Debug：`com.aegis.apa.preview` / APA Preview，APK：`app/build/outputs/apk/debug/APA-v0.3.1-debug.apk`，安装后显示版本 `0.3.1-preview`。
 - Release：`com.aegis.apa` / APA。预览版和正式版可同时存在，数据互不合并。
 - Debug 构建和 Lint/单元测试不需要发布密钥。APK/AAB 正式打包要求本地完整签名配置，不能把 Key 提交到 Git。
 - 本地 `keystore.properties` 使用 `storeFile`、`storePassword`、`keyAlias`、`keyPassword`；可用 `-Papa.signingProperties=本地文件` 指定替代配置，PowerShell 中整项加引号。相对 storeFile 按 app 模块目录解析。

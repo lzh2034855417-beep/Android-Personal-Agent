@@ -163,7 +163,8 @@ class VerificationPanelUiTest {
                 }
             }
         }
-        rule.onNodeWithText("Not saved", substring = true).assertExists()
+        rule.onNodeWithText("Saving; wait", substring = true).assertExists()
+        rule.onNodeWithText("Not saved: current changes", substring = true).assertDoesNotExist()
         rule.onNodeWithTag("verification-create").assertIsNotEnabled()
         rule.onNodeWithTag("verification-clear").assertIsNotEnabled()
     }
@@ -179,7 +180,7 @@ class VerificationPanelUiTest {
                 AndroidPersonalAgentTheme {
                     VerificationPanel(state, diagnostic(), { _, _, _ -> },
                         { state = state.copy(selectedId = it) }, { _, _, _ -> }, { _, _, _ -> },
-                        { _, _, _ -> }, {}, {})
+                        { _, _, _ -> }, {}, {}, { _, _ -> }, { _, _ -> })
                 }
             }
         }
@@ -209,12 +210,55 @@ class VerificationPanelUiTest {
     private fun form(tag: String) = rule.onNodeWithTag("verification-form-list").performScrollToNode(hasTestTag(tag))
     private fun detail(tag: String) = rule.onNodeWithTag("verification-detail-list").performScrollToNode(hasTestTag(tag))
 
-    private fun show(record: VerificationRecord? = null, compact: Boolean = false) {
+    // Catches CLOSED disabling all recovery actions and a retry starting a new transition.
+    @Test fun failedClosedCandidateCanRetryInEnglish() {
+        show(record = record())
+        rule.runOnIdle {
+            controller.select("synthetic")
+            assertTrue(File(archiveFile.parentFile, archiveFile.name + ".pending").mkdir())
+        }
+        detail("verification-close-completed")
+        rule.onNodeWithTag("verification-close-completed").performClick()
+        rule.onNodeWithTag("verification-close-completed").assertIsNotEnabled()
+        detail("verification-retry-save")
+        rule.onNodeWithText("Retry save").assertExists()
+        rule.runOnIdle { assertTrue(File(archiveFile.parentFile, archiveFile.name + ".pending").delete()) }
+        rule.onNodeWithTag("verification-retry-save").performClick()
+        rule.runOnIdle {
+            assertNull(controller.state.unsavedRecord)
+            assertEquals(VerificationState.CLOSED, controller.state.records.single().state)
+        }
+        rule.onNodeWithTag("verification-retry-save").assertDoesNotExist()
+    }
+
+    // Catches discard deleting the durable record and missing Chinese recovery copy.
+    @Test fun failedClosedCandidateCanDiscardInChinese() {
+        show(record = record(), language = AppLanguage.ZH_CN)
+        rule.runOnIdle {
+            controller.select("synthetic")
+            assertTrue(File(archiveFile.parentFile, archiveFile.name + ".pending").mkdir())
+        }
+        detail("verification-close-completed")
+        rule.onNodeWithTag("verification-close-completed").performClick()
+        detail("verification-discard-unsaved")
+        rule.onNodeWithText("放弃未保存修改").assertExists()
+        rule.onNodeWithTag("verification-discard-unsaved").performClick()
+        rule.runOnIdle {
+            assertNull(controller.state.unsavedRecord)
+            assertEquals(VerificationState.RETEST_SAVED, controller.state.records.single().state)
+            assertTrue(File(archiveFile.parentFile, archiveFile.name + ".pending").delete())
+        }
+        rule.onNodeWithTag("verification-discard-unsaved").assertDoesNotExist()
+    }
+
+    private lateinit var archiveFile: File
+    private fun show(record: VerificationRecord? = null, compact: Boolean = false, language: AppLanguage = AppLanguage.EN) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val file = File(context.cacheDir, "verification-ui-${UUID.randomUUID()}.enc")
+        archiveFile = file
         val store = VerificationStore(file, { SecretKeySpec(ByteArray(32) { 7 }, "AES") }, { now })
         val scopeId = store.load().scopeId!!
-        record?.let { assertNull(store.upsert(it.copy(scopeId = scopeId)).failure) }
+        record?.let { assertNull(store.upsert(it.copy(scopeId = scopeId), store.mutationToken()).failure) }
         rule.setContent {
             var state by remember { mutableStateOf(VerificationUiState()) }
             remember { VerificationController(store, { now }, Executor { it.run() }, { state = it }).also { controller = it } }
@@ -226,7 +270,7 @@ class VerificationPanelUiTest {
                     override val containerSize: IntSize get() = IntSize((320 * density).toInt(), actualWindow.containerSize.height)
                 } else actualWindow
             }
-            CompositionLocalProvider(LocalAppLanguage provides AppLanguage.EN, LocalWindowInfo provides window,
+            CompositionLocalProvider(LocalAppLanguage provides language, LocalWindowInfo provides window,
                 LocalDensity provides Density(LocalDensity.current.density, if (compact) 1.5f else 1f)) {
                 AndroidPersonalAgentTheme {
                     Box(if (compact) Modifier.width(320.dp).height(520.dp) else Modifier) {
@@ -236,7 +280,8 @@ class VerificationPanelUiTest {
                             }, onSelect = controller::select, onChange = controller::recordChange,
                             onRetest = { id, revision, contextInput -> controller.recordRetest(id, revision,
                                 verificationSummary(diagnostic(), controller.state.records.single().target, contextInput)!!) },
-                            onClose = controller::close, onDelete = controller::delete, onClear = controller::clear)
+                            onClose = controller::close, onDelete = controller::delete, onClear = controller::clear,
+                            onRetrySave = controller::retrySave, onDiscardUnsaved = controller::discardUnsaved)
                     }
                 }
             }
@@ -244,7 +289,8 @@ class VerificationPanelUiTest {
     }
 
     @Composable private fun PanelFixture(state: VerificationUiState, onClear: () -> Unit = {}) = VerificationPanel(
-        state, diagnostic(), { _, _, _ -> }, {}, { _, _, _ -> }, { _, _, _ -> }, { _, _, _ -> }, {}, onClear)
+        state, diagnostic(), { _, _, _ -> }, {}, { _, _, _ -> }, { _, _, _ -> }, { _, _, _ -> }, {}, onClear,
+        { _, _ -> }, { _, _ -> })
 
     private fun diagnostic() = PowerDiagnosticSnapshot(now.minusSeconds(100), 10,
         mapOf("batterystats" to DiagnosticSourceResult("batterystats", DiagnosticSourceStatus.AVAILABLE)),

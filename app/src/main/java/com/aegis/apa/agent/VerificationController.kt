@@ -32,6 +32,7 @@ class VerificationController(
     private var clearing = false
     private var pendingWrites = 0
     private val desiredRecords = linkedMapOf<String, VerificationRecord>()
+    private val desiredTokens = mutableMapOf<String, VerificationMutationToken>()
     private val idVersions = mutableMapOf<String, Long>()
     private val deleting = mutableSetOf<String>()
     private val queue = ArrayDeque<() -> Unit>()
@@ -73,10 +74,33 @@ class VerificationController(
     fun close(id: String, expectedRevision: Long, reason: VerificationCloseReason) =
         update(id, expectedRevision) { record, now -> VerificationRecordReducer.close(record, reason, now) }
 
+    fun retrySave(id: String, expectedRevision: Long) = synchronized(lock) {
+        if (!canMutate() || pendingWrites > 0 || id in deleting) return@synchronized
+        val candidate = desiredRecords[id] ?: return@synchronized
+        if (candidate.revision != expectedRevision) return@synchronized
+        save(candidate)
+    }
+
+    fun discardUnsaved(id: String, expectedRevision: Long) = synchronized(lock) {
+        if (!canMutate() || pendingWrites > 0 || id in deleting) return@synchronized
+        val candidate = desiredRecords[id] ?: return@synchronized
+        if (candidate.revision != expectedRevision) return@synchronized
+        desiredRecords.remove(id)
+        desiredTokens.remove(id)
+        invalidate(id)
+        if (creatingId == id) creatingId = null
+        if (currentState.selectedId == id && currentState.records.none { it.id == id }) {
+            currentState = currentState.copy(selectedId = null)
+        }
+        currentState = currentState.copy(storageFailure = null)
+        publish()
+    }
+
     fun delete(id: String) = synchronized(lock) {
         if (!canMutate() || id in deleting || findRecord(id) == null) return@synchronized
         deleting += id
         desiredRecords.remove(id)
+        desiredTokens.remove(id)
         val version = invalidate(id)
         val submittedGeneration = generation
         mutation {
@@ -99,7 +123,6 @@ class VerificationController(
         if (disposed || currentState.loading || clearing) return@synchronized
         clearing = true
         val submittedGeneration = ++generation
-        desiredRecords.clear()
         mutation {
             val result = store.clear()
             synchronized(lock) {
@@ -108,7 +131,11 @@ class VerificationController(
                     creatingId = null
                     deleting.clear()
                     applyResult(result)
-                    if (result.failure == null) currentState = currentState.copy(selectedId = null)
+                    if (result.failure == null) {
+                        desiredRecords.clear()
+                        desiredTokens.clear()
+                        currentState = currentState.copy(selectedId = null)
+                    }
                 }
             }
         }
@@ -137,6 +164,9 @@ class VerificationController(
         }
 
     private fun save(record: VerificationRecord) {
+        // Edits and retries of one pending intent retain its original clear barrier.
+        val token = desiredTokens[record.id] ?: store.mutationToken()
+        desiredTokens[record.id] = token
         desiredRecords[record.id] = record
         val version = invalidate(record.id)
         val submittedGeneration = generation
@@ -145,13 +175,16 @@ class VerificationController(
                 submittedGeneration == generation && idVersions[record.id] == version &&
                     desiredRecords[record.id]?.revision == record.revision && record.id !in deleting
             }
-            val result = if (valid) store.upsert(record) else null
+            val result = if (valid) store.upsert(record, token) else null
             synchronized(lock) {
                 if (result != null && submittedGeneration == generation && idVersions[record.id] == version &&
                     desiredRecords[record.id]?.revision == record.revision) {
                     if (creatingId == record.id) creatingId = null
                     applyResult(result)
-                    if (result.failure == null) desiredRecords.remove(record.id)
+                    if (result.failure == null) {
+                        desiredRecords.remove(record.id)
+                        desiredTokens.remove(record.id)
+                    }
                 }
             }
         }

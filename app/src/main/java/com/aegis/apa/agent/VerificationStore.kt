@@ -10,31 +10,34 @@ import java.time.Instant
 import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import javax.crypto.Cipher
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 enum class VerificationStorageFailure { DAMAGED, UNSUPPORTED, KEY_UNAVAILABLE, LIMIT, WRITE_FAILED }
+class VerificationMutationToken internal constructor()
 data class VerificationLoadResult(val records: List<VerificationRecord>, val scopeId: String?,
     val failure: VerificationStorageFailure? = null, val expiredIds: List<String> = emptyList())
 /** Every store for the same path shares its in-process mutation lock and deletion barriers. */
 class VerificationStore(private val file: File, private val key: () -> SecretKey, private val clock: () -> Instant = Instant::now) {
     private class Coordinator {
-        val generation = AtomicLong()
+        val token = AtomicReference(VerificationMutationToken())
         val deletedIds = mutableSetOf<String>()
     }
     private val coordinator = coordinators.computeIfAbsent(file.canonicalPath) { Coordinator() }
 
     fun load(): VerificationLoadResult = synchronized(coordinator) { loadLatest() }
 
-    fun upsert(record: VerificationRecord): VerificationLoadResult {
-        val submittedGeneration = coordinator.generation.get()
+    /** Lock-free snapshot: capturing intent while holding a controller lock cannot invert locks. */
+    fun mutationToken(): VerificationMutationToken = coordinator.token.get()
+
+    fun upsert(record: VerificationRecord, token: VerificationMutationToken): VerificationLoadResult {
         return synchronized(coordinator) {
             val latest = loadLatest()
             if (latest.failure != null) return@synchronized latest
             val existing = latest.records.firstOrNull { it.id == record.id }
-            if (submittedGeneration != coordinator.generation.get() || record.id in coordinator.deletedIds ||
+            if (token !== coordinator.token.get() || record.id in coordinator.deletedIds ||
                 record.scopeId != latest.scopeId || record.revision < 0 ||
                 record.createdAt > clock() || Duration.between(record.createdAt, clock()) >= Duration.ofDays(30) ||
                 (existing != null && (record.revision <= existing.revision || record.createdAt != existing.createdAt))) {
@@ -66,7 +69,7 @@ class VerificationStore(private val file: File, private val key: () -> SecretKey
         val failure = persist(scope, emptyList())
         if (failure != null) latest.copy(failure = failure) else {
             coordinator.deletedIds += latest.records.map { it.id } + latest.expiredIds
-            coordinator.generation.incrementAndGet()
+            coordinator.token.set(VerificationMutationToken())
             VerificationLoadResult(emptyList(), scope)
         }
     }

@@ -17,6 +17,144 @@ import java.util.zip.ZipOutputStream
 
 class BugReportSectionExtractorTest {
     @Test
+    fun partialBootlogDoesNotEraseRamFromEarlierBootlogInSameArchive() {
+        val result = BugReportSectionExtractor.extract(
+            zipOf(
+                "bugreport-device.txt" to reportText,
+                "FS/vendor/bootlog.txt" to "DDR Manufacturer ID = 0x01CE\nDDR Device Type = 0x9",
+                "FS/data/vendor/bootlog.txt" to "UFS INQUIRY ID = 0x06\nUFS Spec Version = 4.10"
+            ).inputStream(), "bugreport.zip"
+        ) as BugReportReadResult.Success
+        val hardware = result.sections.single { it.source == "hardware" }.output
+        assertTrue(hardware.contains("DDR Manufacturer ID = 0x01CE"))
+        assertTrue(hardware.contains("DDR Device Type = 0x9"))
+        assertTrue(hardware.contains("UFS INQUIRY ID = 0x06"))
+        val parsed = com.aegis.apa.tool.DeviceProfileParser.parse(
+            hardware, com.aegis.apa.tool.DeviceProfileAccess.STANDARD
+        ).hardwareSupplyInfo
+        assertEquals("三星 (Samsung)", parsed?.ramVendor)
+        assertEquals("LPDDR5X", parsed?.ramType)
+        assertEquals("SK hynix", parsed?.storageVendor)
+    }
+
+    @Test
+    fun partialOuterBootlogDoesNotEraseRamFromSelectedNestedReport() {
+        val nested = zipOf(
+            "bugreport-device.txt" to reportText,
+            "FS/vendor/bootlog.txt" to "DDR Manufacturer ID = 0x01AD\nDDR Device Type = 0x9"
+        )
+        val result = BugReportSectionExtractor.extract(
+            zipBytesOf(
+                "bugreport-Xiaomi.zip" to nested,
+                "FS/data/vendor/bootlog.txt" to "UFS INQUIRY ID = 0x06".toByteArray()
+            ).inputStream(), "bugreport.zip"
+        ) as BugReportReadResult.Success
+        val hardware = result.sections.single { it.source == "hardware" }.output
+        assertTrue(hardware.contains("DDR Manufacturer ID = 0x01AD"))
+        assertTrue(hardware.contains("UFS INQUIRY ID = 0x06"))
+    }
+
+    @Test
+    fun nestedBootlogComplementsEarlierOuterFieldsAndKeepsFirstConflictingValue() {
+        val nested = zipOf(
+            "bugreport-device.txt" to reportText,
+            "FS/vendor/bootlog.txt" to "DDR Manufacturer ID = 0x01AD\nDDR Device Type = 0x9"
+        )
+        val result = BugReportSectionExtractor.extract(
+            zipBytesOf(
+                "FS/bootlog.txt" to "DDR Manufacturer ID = 0x01CE\nUFS INQUIRY ID = 0x06".toByteArray(),
+                "bugreport-Xiaomi.zip" to nested
+            ).inputStream(), "bugreport.zip"
+        ) as BugReportReadResult.Success
+        val hardware = result.sections.single { it.source == "hardware" }.output
+        assertTrue(hardware.contains("DDR Manufacturer ID = 0x01CE"))
+        assertTrue(hardware.contains("DDR Device Type = 0x9"))
+        assertTrue(hardware.contains("UFS INQUIRY ID = 0x06"))
+    }
+
+    @Test
+    fun hardwareFromOneImportNeverLeaksIntoAnotherImport() {
+        BugReportSectionExtractor.extract(
+            zipOf("bugreport-device.txt" to reportText,
+                "FS/bootlog.txt" to "DDR Manufacturer ID = 0x01CE").inputStream(), "first.zip"
+        )
+        val second = BugReportSectionExtractor.extract(
+            zipOf("bugreport-device.txt" to reportText,
+                "FS/bootlog.txt" to "UFS INQUIRY ID = 0x06").inputStream(), "second.zip"
+        ) as BugReportReadResult.Success
+        assertEquals("UFS INQUIRY ID = 0x06", second.sections.single { it.source == "hardware" }.output)
+    }
+
+    @Test
+    fun legacyPositionalCancellationStillStopsBeforeReading() {
+        val result = BugReportSectionExtractor.extract(reportText.byteInputStream(), "bugreport.txt", BugReportReadLimits(), { true })
+        assertEquals(BugReportReadResult.Cancelled, result)
+    }
+
+    @Test
+    fun progressCountsInputBytesAndDoesNotFloodCallbacks() {
+        val bytes = ("irrelevant log\n".repeat(500_000) + reportText).toByteArray()
+        val counts = mutableListOf<Long>()
+        val result = BugReportSectionExtractor.extract(bytes.inputStream(), "bugreport.txt", onBytesRead = counts::add)
+        assertTrue(result is BugReportReadResult.Success)
+        assertEquals(bytes.size.toLong(), counts.last())
+        assertTrue(counts.zipWithNext().all { (first, next) -> next > first })
+        assertTrue(counts.size <= 8)
+    }
+
+    @Test
+    fun cancellationFromProgressStopsLargeRead() {
+        val bytes = ("irrelevant log\n".repeat(500_000) + reportText).toByteArray()
+        var cancelled = false
+        val result = BugReportSectionExtractor.extract(bytes.inputStream(), "bugreport.txt",
+            isCancelled = { cancelled }, onBytesRead = { cancelled = true })
+        assertEquals(BugReportReadResult.Cancelled, result)
+    }
+
+    @Test
+    fun buffersProviderReadsWithoutChangingSelectedSections() {
+        val bytes = ("irrelevant log\n".repeat(500_000) + reportText).toByteArray()
+        var reads = 0
+        val provider = object : FilterInputStream(bytes.inputStream()) {
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                reads++
+                return super.read(buffer, offset, length)
+            }
+        }
+        val result = BugReportSectionExtractor.extract(provider, "bugreport.txt")
+        assertTrue(result is BugReportReadResult.Success)
+        assertTrue("Too many provider reads: $reads", reads < 150)
+    }
+
+    @Test
+    fun excessiveNulsInsideZipIdentifyTheTextCheckNotTheArchiveType() {
+        val result = BugReportSectionExtractor.extract(
+            zipOf("bugreport.txt" to (reportText + "\u0000".repeat(1_025))).inputStream(),
+            "bugreport.zip"
+        ) as BugReportReadResult.Rejected
+        assertEquals(BugReportRejectReason.UNSUPPORTED_FORMAT, result.reason)
+        assertEquals("signature=zip;text=nul_limit", result.diagnosticDetail)
+    }
+
+    @Test
+    fun excessiveNulsOutsideZipIdentifyTheMissingZipSignature() {
+        val result = BugReportSectionExtractor.extract(
+            (reportText + "\u0000".repeat(1_025)).byteInputStream(), "bugreport.zip"
+        ) as BugReportReadResult.Rejected
+        assertEquals(BugReportRejectReason.UNSUPPORTED_FORMAT, result.reason)
+        assertEquals("signature=not_zip;text=nul_limit", result.diagnosticDetail)
+    }
+
+    @Test
+    fun nonZipBinaryWithUnrelatedNameIdentifiesFilenameCheck() {
+        val result = BugReportSectionExtractor.extract(
+            byteArrayOf(1, 2, 3, 4).inputStream(), "device.zip"
+        ) as BugReportReadResult.Rejected
+        assertEquals(BugReportRejectReason.UNSUPPORTED_FORMAT, result.reason)
+        assertEquals("signature=not_zip;text=name_unsupported", result.diagnosticDetail)
+    }
+
+    @Test
     fun keepsOnlyExactMainReportVerificationProperties() {
         // Catches retaining unique/extra identifiers or dropping allowlisted main-report metadata.
         val header = """
@@ -158,6 +296,40 @@ class BugReportSectionExtractorTest {
         )
 
         assertEquals(rejected(BugReportRejectReason.UNSUPPORTED_FORMAT), result)
+    }
+
+    @Test
+    fun largeZipReportWithMoreThan1024SparseNulsStillExtractsDiagnostics() {
+        // A fixed report-wide count wrongly rejects sparse padding in large OEM reports.
+        val padding = ("ordinary vendor log " + "x".repeat(100) + "\u0000\n").repeat(2_048)
+        val result = BugReportSectionExtractor.extract(
+            zipOf("bugreport-Xiaomi.txt" to (padding + reportText)).inputStream(),
+            "bugreport-Xiaomi.zip"
+        )
+        assertTrue("Sparse NUL padding must not reject a large report: $result", result is BugReportReadResult.Success)
+        result as BugReportReadResult.Success
+        assertEquals(listOf("batterystats", "alarm"), result.sections.map { it.source })
+        assertTrue(result.sections.first().output.contains("UID u0a123: 245.5"))
+    }
+
+    @Test
+    fun sparseNulPaddingBeforeValidPlainTextDoesNotCauseEarlyRejection() {
+        val padding = "\u0000".repeat(2_048) + "\n" + ("ordinary log " + "x".repeat(100) + "\n").repeat(2_048)
+        val result = BugReportSectionExtractor.extract(
+            (padding + reportText).byteInputStream(), "bugreport.txt"
+        )
+        assertTrue("Leading padding must be judged against the complete bounded report: $result", result is BugReportReadResult.Success)
+        result as BugReportReadResult.Success
+        assertTrue(result.sections.first().output.contains("UID u0a123: 245.5"))
+    }
+
+    @Test
+    fun largeHighNulDensityReportIsStillRejectedEvenWithServiceMarkers() {
+        val binaryLikeReport = reportText + ("x".repeat(90) + "\u0000".repeat(10) + "\n").repeat(2_048)
+        val result = BugReportSectionExtractor.extract(
+            zipOf("bugreport.txt" to binaryLikeReport).inputStream(), "bugreport.zip"
+        ) as BugReportReadResult.Rejected
+        assertEquals(BugReportRejectReason.UNSUPPORTED_FORMAT, result.reason)
     }
 
     @Test

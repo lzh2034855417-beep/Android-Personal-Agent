@@ -9,7 +9,7 @@ import java.util.concurrent.Executor
 class VerificationExplanationControllerTest {
     // Catches late work from an old record/revision being displayed, including queued UI publication.
     @Test fun selectionDeletionRevisionCancelAndDisposeInvalidateLateReplies() {
-        for (invalidate in listOf("selection", "delete", "revision", "cancel", "dispose")) {
+        for (invalidate in listOf("selection", "delete", "revision", "close", "cancel", "dispose")) {
             val work = Queue(); val publish = Queue()
             var record: com.aegis.apa.model.VerificationRecord? = VerificationFixtures.record()
             val controller = VerificationExplanationController({ record }, { "Level 0" }, { AppLanguage.EN }, work, publish,
@@ -21,6 +21,8 @@ class VerificationExplanationControllerTest {
                 "selection" -> record = record!!.copy(id = "other")
                 "delete" -> record = null
                 "revision" -> record = record!!.copy(revision = 3)
+                "close" -> record = record!!.copy(revision = 3, state = com.aegis.apa.model.VerificationState.CLOSED,
+                    closeReason = com.aegis.apa.model.VerificationCloseReason.COMPLETED)
                 "cancel" -> controller.cancel()
                 "dispose" -> controller.dispose()
             }

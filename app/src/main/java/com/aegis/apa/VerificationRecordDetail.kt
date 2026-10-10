@@ -9,7 +9,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.aegis.apa.agent.VerificationComparisonEngine
 import com.aegis.apa.agent.VerificationResultFormatter
-import com.aegis.apa.agent.StoredApiKey
+import com.aegis.apa.agent.VerificationExplanationUiState
 import com.aegis.apa.localization.LocalAppLanguage
 import com.aegis.apa.model.*
 
@@ -18,8 +18,12 @@ internal fun VerificationRecordDetail(record: VerificationRecord, diagnostic: Po
     onChange: (String, Long, VerificationChange) -> Unit,
     onRetest: (String, Long, VerificationSampleContext) -> Unit,
     onClose: (String, Long, VerificationCloseReason) -> Unit,
-    onDelete: (String) -> Unit, modifier: Modifier = Modifier,
-    explanationCredentials: () -> StoredApiKey? = { null }, explanationLevel: String? = "Level 0") {
+    onDelete: (String) -> Unit, unsaved: Boolean, recoveryEnabled: Boolean,
+    onRetrySave: (String, Long) -> Unit, onDiscardUnsaved: (String, Long) -> Unit,
+    modifier: Modifier = Modifier,
+    explanation: VerificationExplanationUiState = VerificationExplanationUiState(),
+    onExplanationPreview: () -> Unit = {}, onExplanationDismiss: () -> Unit = {},
+    onExplanationNotes: (Boolean) -> Unit = {}, onExplanationSend: () -> Unit = {}, onExplanationStop: () -> Unit = {}) {
     var change by remember(record.id) { mutableStateOf(false) }
     var retest by remember(record.id) { mutableStateOf(false) }
     var delete by remember(record.id) { mutableStateOf(false) }
@@ -29,7 +33,27 @@ internal fun VerificationRecordDetail(record: VerificationRecord, diagnostic: Po
     }
     val active = enabled && record.state != VerificationState.CLOSED
     LazyColumn(modifier.fillMaxWidth().testTag("verification-detail-list"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text(record.title, style = MaterialTheme.typography.titleMedium); Text(verificationStateLabel(record.state)) }
+        item {
+            Text(record.title, style = MaterialTheme.typography.titleMedium)
+            Text(if (unsaved) verificationText("未保存的状态：", "Unsaved state: ") + when (record.state) {
+                VerificationState.BASELINE_SAVED -> verificationText("基线", "Baseline")
+                VerificationState.CHANGE_RECORDED -> verificationText("手动调整", "Manual adjustment")
+                VerificationState.RETEST_SAVED -> verificationText("复测", "Retest")
+                VerificationState.CLOSED -> verificationText("结束", "Closed")
+            } else verificationStateLabel(record.state))
+        }
+        if (unsaved) {
+            item { Button(onClick = { onRetrySave(record.id, record.revision) }, enabled = recoveryEnabled,
+                modifier = Modifier.fillMaxWidth().testTag("verification-retry-save")) {
+                Text(verificationText("重试保存", "Retry save"))
+            } }
+            item { OutlinedButton(onClick = { onDiscardUnsaved(record.id, record.revision) }, enabled = recoveryEnabled,
+                modifier = Modifier.fillMaxWidth().testTag("verification-discard-unsaved")) {
+                Text(verificationText("放弃未保存修改", "Discard unsaved changes"))
+            }
+                Text(verificationText("仅放弃当前未保存修改；已保存版本会保留。", "Only unsaved changes are discarded; the saved version is kept."))
+            }
+        }
         item { Text(verificationText("目标：", "Target: ") + when (val target = record.target) {
             VerificationTarget.Overall -> verificationText("整体耗电", "Overall power")
             is VerificationTarget.AppGroup -> target.packageNames.joinToString()
@@ -65,7 +89,8 @@ internal fun VerificationRecordDetail(record: VerificationRecord, diagnostic: Po
             Text(paragraph, modifier = Modifier.testTag("verification-result-$index"), style = MaterialTheme.typography.bodySmall)
         } }
         item(key = "explanation-${record.id}-${record.revision}") {
-            VerificationExplanationPanel(record, explanationLevel, explanationCredentials, enabled = enabled)
+            VerificationExplanationPanel(record, explanation, onExplanationPreview, onExplanationDismiss,
+                onExplanationNotes, onExplanationSend, onExplanationStop, enabled = enabled && !unsaved)
         }
         item { Text(verificationText("结束或回退仅记录您的声明，不会自动设置设备。", "Ending or rollback records your declaration; it does not change the device.")) }
         item { OutlinedButton(onClick = { onClose(record.id, record.revision, VerificationCloseReason.COMPLETED) }, enabled = active,

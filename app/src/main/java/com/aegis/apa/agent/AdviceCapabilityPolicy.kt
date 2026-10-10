@@ -1,6 +1,16 @@
 package com.aegis.apa.agent
 
 object AdviceCapabilityPolicy {
+    /** Preserve the user's choice during a probe; effectiveLevel still gates every use. */
+    fun selectionAfterAccessRefresh(
+        requestedLevel: String?,
+        shizukuAuthorized: Boolean,
+        rootAuthorized: Boolean,
+        rootAuthorizationPending: Boolean
+    ): String? = if (rootAuthorizationPending && requestedLevel == "Level 2") {
+        requestedLevel
+    } else effectiveLevel(requestedLevel, shizukuAuthorized, rootAuthorized)
+
     fun allowsLevel(
         level: String,
         shizukuAuthorized: Boolean,

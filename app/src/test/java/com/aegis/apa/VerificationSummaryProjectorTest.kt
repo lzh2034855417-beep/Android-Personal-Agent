@@ -11,6 +11,64 @@ class VerificationSummaryProjectorTest {
         VerificationSummaryProjector.project(snapshot, metadata, context, target)!!
 
     @Test
+    fun appMetricsRequireParsedIdentityCoverageEvenWhenUserConfirmsContext() {
+        // Catches accepting numeric evidence when identity coverage is absent or incomplete.
+        val base = VerificationFixtures.snapshot()
+        val cases = listOf(
+            null to EvidenceFieldStatus.NOT_PARSED,
+            EvidenceFieldStatus.NOT_PARSED to EvidenceFieldStatus.NOT_PARSED,
+            EvidenceFieldStatus.NOT_PRESENT to EvidenceFieldStatus.NOT_PRESENT,
+            EvidenceFieldStatus.SOURCE_UNAVAILABLE to EvidenceFieldStatus.SOURCE_UNAVAILABLE,
+            EvidenceFieldStatus.TRUNCATED to EvidenceFieldStatus.TRUNCATED
+        )
+        cases.forEach { (coverage, expected) ->
+            val fields = base.evidenceCoverage.fields - EvidenceField.UID_PACKAGES
+            val snapshot = base.copy(evidenceCoverage = EvidenceCoverage(
+                if (coverage == null) fields else fields + (EvidenceField.UID_PACKAGES to coverage)))
+            val summary = project(snapshot, target = VerificationTarget.AppGroup(listOf("com.example.app")))
+            summary.metrics.filter { it.key.packageNames.isNotEmpty() }.forEach {
+                assertEquals("identity coverage $coverage", expected, it.status)
+                assertNull("identity coverage $coverage", it.value)
+                assertEquals(VerificationEstimate.UNKNOWN, it.estimate)
+            }
+            val overall = summary.metrics.single { it.key.kind == VerificationMetricKind.OVERALL_POWER }
+            assertEquals(EvidenceFieldStatus.PARSED, overall.status)
+            assertEquals(100.0, overall.value!!, 0.0)
+        }
+    }
+
+    @Test
+    fun appMetricsRequireAvailablePackageSourceEvenWithParsedCoverage() {
+        // Catches trusting a stale PARSED mapping marker over source failure or absence.
+        val base = VerificationFixtures.snapshot()
+        (listOf(null) + DiagnosticSourceStatus.entries.filter { it != DiagnosticSourceStatus.AVAILABLE }).forEach { status ->
+            val otherSources = base.sources - "packages"
+            val snapshot = base.copy(sources = if (status == null) otherSources else otherSources +
+                ("packages" to DiagnosticSourceResult("packages", status)))
+            val expected = if (status == DiagnosticSourceStatus.TRUNCATED) EvidenceFieldStatus.TRUNCATED
+                else EvidenceFieldStatus.SOURCE_UNAVAILABLE
+            val summary = project(snapshot)
+            summary.metrics.filter { it.key.packageNames.isNotEmpty() }.forEach {
+                assertEquals("packages source $status", expected, it.status)
+                assertNull(it.value)
+            }
+            assertEquals(100.0, summary.metrics.single { it.key.kind == VerificationMetricKind.OVERALL_POWER }.value!!, 0.0)
+        }
+    }
+
+    @Test
+    fun duplicateUidRowsCannotBeAssignedToTheSamePackageGroup() {
+        // Catches assigning or summing duplicated rows for one UID even when values agree.
+        val base = VerificationFixtures.snapshot()
+        val summary = project(base.copy(apps = base.apps + base.apps.single()))
+        summary.metrics.filter { it.key.packageNames.isNotEmpty() }.forEach {
+            assertEquals(EvidenceFieldStatus.NOT_PARSED, it.status)
+            assertNull(it.value)
+        }
+        assertEquals(9, summary.metrics.count { it.key.packageNames.isNotEmpty() })
+    }
+
+    @Test
     fun targetSurvivesTopTwentyLimit() {
         // Catches dropping the selected target when it ranks below the first 20 groups.
         val snapshot = VerificationFixtures.snapshot().copy(apps = (1..21).map {

@@ -9,6 +9,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import com.aegis.apa.agent.ConversationMessageState
 import com.aegis.apa.agent.ConversationPersistence
 import com.aegis.apa.agent.AgentConversationMessage
@@ -24,6 +29,8 @@ import com.aegis.apa.model.PowerDiagnosticSnapshot
 import com.aegis.apa.tool.DeviceProfileSnapshot
 import com.aegis.apa.tool.HardwareSupplyInfo
 import com.aegis.apa.tool.RootBatteryInfo
+import com.aegis.apa.tool.RootCommandRunner
+import com.aegis.apa.model.RootAccessState
 import com.aegis.apa.localization.AppLanguage
 
 sealed interface PowerDiagnosticUiState {
@@ -45,6 +52,10 @@ class MainSessionViewModel(
     val selectedAppDetails = mutableStateOf<AppDetails?>(null)
     val rootBatteryInfo = mutableStateOf<RootBatteryInfo?>(null)
     val rootBatteryReading = mutableStateOf(false)
+    val rootAccessState = mutableStateOf(RootAccessState.UNKNOWN)
+    private var rootAuthorizationGeneration = 0L
+    private var rootAuthorizationRetryRequested = false
+    private var rootAuthorizationJob: Job? = null
     val deviceProfile = mutableStateOf<DeviceProfileSnapshot?>(null)
     val deviceProfileReading = mutableStateOf(false)
     val hardwareSupplyInfo = mutableStateOf<HardwareSupplyInfo?>(null)
@@ -58,6 +69,7 @@ class MainSessionViewModel(
     val analyzing = mutableStateOf(false)
     val powerDiagnostic = mutableStateOf<PowerDiagnosticSnapshot?>(null)
     val powerDiagnosticState = mutableStateOf<PowerDiagnosticUiState>(PowerDiagnosticUiState.Idle)
+    val reportImportStatus = mutableStateOf<String?>(null)
     private var chargingObserved = false
     private var observationContinuity = BatteryObservationContinuity.PROCESS_OBSERVED
     private var persistentCheckpointReconciled = false
@@ -74,6 +86,59 @@ class MainSessionViewModel(
     private var analysisGeneration = 0L
     private var onlineAnalysis = false
     private var consumedSharedBugReportUri: String? = null
+
+    fun requestRootAuthorizationRefresh() { rootAuthorizationRetryRequested = true }
+
+    internal fun beginRootAuthorizationCheck(allowRetry: Boolean): Long? {
+        if (rootAccessState.value == RootAccessState.CHECKING) return null
+        if (!allowRetry && !rootAuthorizationRetryRequested && rootAccessState.value in setOf(
+                RootAccessState.DENIED, RootAccessState.TIMED_OUT, RootAccessState.FAILED
+            )) return null
+        rootAuthorizationRetryRequested = false
+        rootAccessState.value = RootAccessState.CHECKING
+        return ++rootAuthorizationGeneration
+    }
+
+    internal fun completeRootAuthorizationCheck(token: Long, result: RootAccessState): Boolean {
+        if (token != rootAuthorizationGeneration || rootAccessState.value != RootAccessState.CHECKING) return false
+        require(result != RootAccessState.UNKNOWN && result != RootAccessState.CHECKING)
+        rootAccessState.value = result
+        return true
+    }
+
+    internal fun cancelRootAuthorizationCheck(token: Long) {
+        if (token == rootAuthorizationGeneration && rootAccessState.value == RootAccessState.CHECKING) {
+            rootAuthorizationGeneration++
+            rootAccessState.value = RootAccessState.UNKNOWN
+        }
+    }
+
+    internal fun markRootUnavailable() {
+        rootAuthorizationGeneration++
+        rootAccessState.value = RootAccessState.UNAVAILABLE
+        rootAuthorizationJob?.cancel()
+    }
+
+    /** One in-flight probe survives rotation; denied/timed-out probes require explicit retry. */
+    fun refreshRootAuthorization(hasRootInterface: Boolean, allowRetry: Boolean = false) {
+        if (!hasRootInterface) { markRootUnavailable(); return }
+        if (rootAuthorizationJob?.isActive == true) return
+        val token = beginRootAuthorizationCheck(allowRetry) ?: return
+        rootAuthorizationJob = viewModelScope.launch {
+            try {
+                val job = checkNotNull(currentCoroutineContext()[Job])
+                val result = withContext(Dispatchers.IO) {
+                    RootCommandRunner.checkAuthorization { !job.isActive }
+                }
+                completeRootAuthorizationCheck(token, result)
+            } catch (cancelled: CancellationException) {
+                cancelRootAuthorizationCheck(token)
+                throw cancelled
+            } catch (_: Exception) {
+                completeRootAuthorizationCheck(token, RootAccessState.FAILED)
+            }
+        }
+    }
 
     fun initializeConversation(persistence: ConversationPersistence) {
         if (conversationInitialized) return

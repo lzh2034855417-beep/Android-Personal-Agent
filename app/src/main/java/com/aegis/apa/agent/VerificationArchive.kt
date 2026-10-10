@@ -221,7 +221,7 @@ object VerificationArchive {
     private fun DataOutputStream.nullableText(value: String?) { writeBoolean(value != null); value?.let { text(it) } }
     private fun DataInputStream.nullableText(): String? = if (flag()) text() else null
     private fun DataOutputStream.text(value: String, chars: Int = Int.MAX_VALUE) {
-        limit(value.length <= chars && value.length <= MAX_FIELD_BYTES)
+        limit(value.codePointCount(0, value.length) <= chars && value.length <= MAX_FIELD_BYTES)
         val encoded = Charsets.UTF_8.newEncoder().onMalformedInput(CodingErrorAction.REPORT)
             .onUnmappableCharacter(CodingErrorAction.REPORT).encode(CharBuffer.wrap(value))
         limit(encoded.remaining() <= MAX_FIELD_BYTES)
@@ -234,7 +234,7 @@ object VerificationArchive {
         val bytes = ByteArray(length).also(::readFully)
         return Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
             .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString().also {
-                limit(it.length <= chars)
+                limit(it.codePointCount(0, it.length) <= chars)
                 if (chars != Int.MAX_VALUE) checkData(it.none(Char::isISOControl))
             }
     }

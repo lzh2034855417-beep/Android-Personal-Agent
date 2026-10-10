@@ -21,10 +21,137 @@ class VerificationControllerTest {
     private fun controller(store: VerificationStore) = VerificationController(store, { now }, worker, published::add)
     private fun seed(store: VerificationStore, id: String = "a"): VerificationRecord {
         val record = VerificationFixtures.record().copy(id = id, scopeId = requireNotNull(store.load().scopeId))
-        assertNull(store.upsert(record).failure)
+        assertNull(store.upsert(record, store.mutationToken()).failure)
         return record
     }
     private fun loaded(store: VerificationStore): VerificationController = controller(store).also { worker.runAll() }
+
+    // Catches a title that looks accepted but becomes unsaved when strict UTF-8 persistence runs.
+    @Test fun emojiAtTitleBoundaryIsSavedAndRecovered() {
+        val store = store(); val controller = loaded(store)
+        val title = "a".repeat(79) + "😀"
+        controller.createBaseline(title, VerificationTarget.Overall, VerificationFixtures.summary())
+        worker.runAll()
+        assertNull(controller.state.storageFailure)
+        assertNull(controller.state.unsavedRecord)
+        assertEquals(title, store.load().records.single().title)
+        assertEquals(title, loaded(store).state.records.single().title)
+    }
+
+
+    // A clear must invalidate work even when it has not entered the shared store yet.
+    @Test fun queuedCreateCannotSurviveOtherControllerClear() {
+        val store = store(); val first = loaded(store)
+        val secondWorker = QueueExecutor()
+        val second = VerificationController(store(), { now }, secondWorker, {})
+        secondWorker.runAll()
+        first.createBaseline("pending", VerificationTarget.Overall, VerificationFixtures.summary())
+        second.clear(); secondWorker.runAll()
+        assertTrue(store.load().records.isEmpty())
+        worker.runAll()
+        assertTrue("pre-clear pending create revived the archive", store.load().records.isEmpty())
+        assertEquals(VerificationStorageFailure.WRITE_FAILED, first.state.storageFailure)
+    }
+
+    // Retry must persist the CLOSED candidate, without attempting another forbidden close transition.
+    @Test fun failedCloseCanRetrySameCandidate() {
+        val store = store(); seed(store); val controller = loaded(store)
+        val blocker = File(folder.root, "verification.enc.pending").apply { assertTrue(mkdir()) }
+        controller.close("a", 2, VerificationCloseReason.ROLLED_BACK); worker.runAll()
+        val candidate = requireNotNull(controller.state.unsavedRecord)
+        assertEquals(VerificationState.CLOSED, candidate.state)
+        assertEquals(2L, store.load().records.single().revision)
+        assertTrue(blocker.delete()); now = now.plusSeconds(600)
+        controller.retrySave("a", 3); controller.retrySave("a", 3)
+        worker.runAll()
+        assertEquals(candidate, store.load().records.single())
+        assertNull(controller.state.unsavedRecord)
+        assertNull(controller.state.storageFailure)
+        assertEquals(3L, controller.state.records.single().revision)
+    }
+
+    // Discard removes only the failed candidate, including a CLOSED one, never its saved predecessor.
+    @Test fun discardFailedCloseRestoresPersistedRecord() {
+        val store = store(); val saved = seed(store); val controller = loaded(store)
+        assertTrue(File(folder.root, "verification.enc.pending").mkdir())
+        controller.close("a", 2, VerificationCloseReason.COMPLETED); worker.runAll()
+        controller.discardUnsaved("a", 3)
+        assertNull(controller.state.unsavedRecord)
+        assertEquals(listOf(saved), controller.state.records)
+        assertEquals(listOf(saved), store.load().records)
+        assertNull(controller.state.storageFailure)
+    }
+
+    // A stale revision or a double click must not operate on a different pending intent.
+    @Test fun staleRecoveryRevisionAndDiscardWhileRetryQueuedAreIgnored() {
+        val store = store(); seed(store); val controller = loaded(store)
+        val blocker = File(folder.root, "verification.enc.pending").apply { assertTrue(mkdir()) }
+        controller.close("a", 2, VerificationCloseReason.COMPLETED); worker.runAll()
+        val candidate = controller.state.unsavedRecord
+        controller.retrySave("a", 2); controller.discardUnsaved("a", 2)
+        assertFalse(controller.state.saving); assertEquals(candidate, controller.state.unsavedRecord)
+        assertTrue(blocker.delete())
+        controller.retrySave("a", 3); controller.discardUnsaved("a", 3)
+        assertEquals(candidate, controller.state.unsavedRecord)
+        worker.runAll()
+        assertEquals(VerificationState.CLOSED, store.load().records.single().state)
+    }
+
+    @Test fun deleteThenRetryCannotRestoreFailedClose() {
+        val store = store(); seed(store); val controller = loaded(store)
+        val blocker = File(folder.root, "verification.enc.pending").apply { assertTrue(mkdir()) }
+        controller.close("a", 2, VerificationCloseReason.COMPLETED); worker.runAll()
+        assertTrue(blocker.delete())
+        controller.delete("a"); controller.retrySave("a", 3); worker.runAll()
+        assertTrue(store.load().records.isEmpty()); assertNull(controller.state.unsavedRecord)
+    }
+
+    @Test fun discardFailedFirstCreateLeavesEmptyArchiveAndAllowsNewCreate() {
+        val store = store(); val controller = loaded(store)
+        val blocker = File(folder.root, "verification.enc.pending").apply { assertTrue(mkdir()) }
+        controller.createBaseline("failed", VerificationTarget.Overall, VerificationFixtures.summary()); worker.runAll()
+        val candidate = requireNotNull(controller.state.unsavedRecord)
+        controller.discardUnsaved(candidate.id, 0)
+        assertNull(controller.state.unsavedRecord); assertNull(controller.state.selectedId)
+        assertTrue(store.load().records.isEmpty()); assertTrue(blocker.delete())
+        controller.createBaseline("new", VerificationTarget.Overall, VerificationFixtures.summary()); worker.runAll()
+        assertEquals("new", store.load().records.single().title)
+    }
+
+    // Refreshing the token on retry would revive a failed create cleared by another controller.
+    @Test fun failedCreateRetryCannotSurviveOtherControllerClear() {
+        val store = store(); val first = loaded(store)
+        val blocker = File(folder.root, "verification.enc.pending").apply { assertTrue(mkdir()) }
+        first.createBaseline("failed", VerificationTarget.Overall, VerificationFixtures.summary()); worker.runAll()
+        val candidate = requireNotNull(first.state.unsavedRecord); assertTrue(blocker.delete())
+        val otherWorker = QueueExecutor()
+        val second = VerificationController(store(), { now }, otherWorker, {})
+        otherWorker.runAll(); second.clear(); otherWorker.runAll()
+        first.retrySave(candidate.id, candidate.revision); worker.runAll()
+        assertTrue(store.load().records.isEmpty())
+        assertEquals(VerificationStorageFailure.WRITE_FAILED, first.state.storageFailure)
+        assertEquals(candidate, first.state.unsavedRecord)
+        // Editing the same failed create is also the old intent, not permission to bypass clear.
+        first.recordChange(candidate.id, 0, VerificationFixtures.change()); worker.runAll()
+        assertTrue(store.load().records.isEmpty())
+        assertEquals(1L, first.state.unsavedRecord?.revision)
+        first.retrySave(candidate.id, 1); worker.runAll()
+        assertTrue(store.load().records.isEmpty())
+        assertEquals(VerificationStorageFailure.WRITE_FAILED, first.state.storageFailure)
+    }
+
+    @Test fun failedClearKeepsPendingCandidateRecoverable() {
+        val store = store(); seed(store); val controller = loaded(store)
+        val blocker = File(folder.root, "verification.enc.pending").apply { assertTrue(mkdir()) }
+        controller.close("a", 2, VerificationCloseReason.COMPLETED); worker.runAll()
+        val candidate = controller.state.unsavedRecord
+        controller.clear(); worker.runAll()
+        assertEquals(2L, store.load().records.single().revision)
+        assertEquals(candidate, controller.state.unsavedRecord)
+        assertEquals(VerificationStorageFailure.WRITE_FAILED, controller.state.storageFailure)
+        assertTrue(blocker.delete()); controller.retrySave("a", 3); worker.runAll()
+        assertEquals(candidate, store.load().records.single())
+    }
 
     // Removing the id invalidation would let the queued retest revive a deleted record.
     @Test fun deleteDuringQueuedSaveCannotRestoreRecord() {

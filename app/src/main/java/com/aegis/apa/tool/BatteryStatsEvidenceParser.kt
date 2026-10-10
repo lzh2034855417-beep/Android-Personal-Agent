@@ -18,8 +18,11 @@ object BatteryStatsEvidenceParser {
     fun parse(output: String): EvidenceParseResult {
         val apps = linkedMapOf<Int, PartialAppEvidence>()
         val parsedFields = mutableSetOf<EvidenceField>()
+        val statistics = BatteryStatisticsSection.sinceLastCharge(output)
+            // Legacy headerless snippets remain readable, but ambiguous/unknown scopes do not.
+            ?: output.takeUnless(BatteryStatisticsSection::hasStatisticsHeading).orEmpty()
 
-        uidPowerPattern.findAll(extractEstimatedPowerSection(output)).forEach { match ->
+        uidPowerPattern.findAll(extractEstimatedPowerSection(statistics)).forEach { match ->
             val uid = AndroidUidParser.parse(match.groupValues[1]) ?: return@forEach
             val power = match.groupValues[2].toDoubleOrNull() ?: return@forEach
             val summaryStates = summaryProcessStatePattern.findAll(match.groupValues[3])
@@ -62,7 +65,7 @@ object BatteryStatsEvidenceParser {
         }
 
         var currentUid: Int? = null
-        output.lineSequence().forEach { line ->
+        statistics.lineSequence().forEach { line ->
             uidBlockPattern.matchEntire(line)?.let { match ->
                 currentUid = AndroidUidParser.parse(match.groupValues[1])
                 return@forEach
@@ -81,18 +84,14 @@ object BatteryStatsEvidenceParser {
     }
 
     fun parseDrainWindow(output: String): BatteryDrainWindowEvidence? {
-        val statistics = output.substringAfter(STATISTICS_SINCE_LAST_CHARGE, missingDelimiterValue = "")
-        if (statistics.isEmpty()) return null
-        val durationText = Regex("(?mi)^\\s*Time on battery:\\s*(.*?)\\s*\\(")
-            .find(statistics)?.groupValues?.get(1) ?: return null
-        val durationMillis = DiagnosticDurationParser.parseMillis(durationText)?.takeIf { it > 0 } ?: return null
+        val statistics = BatteryStatisticsSection.sinceLastCharge(output) ?: return null
+        val durationMillis = BatteryStatisticsSection.batteryDurationMillis(statistics) ?: return null
         val estimatedPower = statistics.substringAfter(ESTIMATED_POWER_HEADER, missingDelimiterValue = "")
         if (estimatedPower.isEmpty()) return null
-        val capacityMah = numericValue(estimatedPower, "Capacity")?.takeIf { it > 0.0 } ?: return null
-        val actualDrainMah = rawValue(estimatedPower, "actual drain")?.toDoubleOrNull()?.takeIf { it > 0.0 }
-        val computedDrainMah = numericValue(estimatedPower, "Computed drain")?.takeIf { it > 0.0 }
+        val capacityMah = numericValue(estimatedPower, "Capacity")?.takeIf { it.isFinite() && it > 0.0 } ?: return null
+        val actualDrainMah = numericValue(estimatedPower, "actual drain")?.takeIf { it.isFinite() && it >= 0.0 }
+        val computedDrainMah = numericValue(estimatedPower, "Computed drain")?.takeIf { it.isFinite() && it >= 0.0 }
         val drainMah = actualDrainMah ?: computedDrainMah ?: return null
-        if (!capacityMah.isFinite() || !drainMah.isFinite()) return null
         return BatteryDrainWindowEvidence(
             durationMillis = durationMillis,
             capacityMah = capacityMah,
@@ -143,5 +142,4 @@ object BatteryStatsEvidenceParser {
         return total
     }
 
-    private const val STATISTICS_SINCE_LAST_CHARGE = "Statistics since last charge:"
 }

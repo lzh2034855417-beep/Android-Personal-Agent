@@ -11,6 +11,31 @@ import org.junit.Test
 
 class AdviceCapabilityPolicyTest {
     @Test
+    fun pendingRootRecheckPreservesSelectionButDoesNotGrantUsableAccess() {
+        val selected = AdviceCapabilityPolicy.selectionAfterAccessRefresh(
+            "Level 2", false, false, rootAuthorizationPending = true
+        )
+        assertEquals("Level 2", selected)
+        assertEquals("Level 0", AdviceCapabilityPolicy.effectiveLevel(selected, false, false))
+        assertEquals("Level 2", AdviceCapabilityPolicy.selectionAfterAccessRefresh(
+            selected, false, true, rootAuthorizationPending = false
+        ))
+        assertEquals("Level 0", AdviceCapabilityPolicy.selectionAfterAccessRefresh(
+            selected, false, false, rootAuthorizationPending = false
+        ))
+    }
+
+    @Test
+    fun rootRecheckDoesNotKeepAnUnauthorizedShizukuSelectionOrAttachAnUnselectedReport() {
+        assertEquals("Level 0", AdviceCapabilityPolicy.selectionAfterAccessRefresh(
+            "Level 1", false, false, rootAuthorizationPending = true
+        ))
+        assertNull(AdviceCapabilityPolicy.selectionAfterAccessRefresh(
+            null, false, false, rootAuthorizationPending = true
+        ))
+    }
+
+    @Test
     fun agentAccessUsesTheCapabilityCentersVerifiedAuthorization() {
         val access = AgentCapabilityAccess.from(
             shizukuAccessState = ShizukuAccessState.AUTHORIZED,

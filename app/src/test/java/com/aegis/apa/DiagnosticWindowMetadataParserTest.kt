@@ -8,6 +8,29 @@ import org.junit.Test
 import java.time.Instant
 
 class DiagnosticWindowMetadataParserTest {
+    @Test
+    fun indentedCrLfHeadingKeepsOnlyItsOwnDurationAndUnknownEndpoints() {
+        // Catches heading/line-ending differences changing selection or invented clock bounds.
+        val output = "  Statistics since last charge:\r\n  Time on battery: 1h (100%) realtime\r\n" +
+            "  Statistics for vendor scope:\r\n  Time on battery: 30m (100%) realtime"
+        val section = RawDiagnosticSection("batterystats", DiagnosticSourceStatus.AVAILABLE, output)
+        val window = DiagnosticWindowMetadataParser.parse(listOf(section), emptyMap()).windowsBySource.getValue("batterystats")
+        assertEquals(VerificationMetricScope.SINCE_LAST_CHARGE, window.scope)
+        assertEquals(3_600_000L, window.batteryDurationMillis)
+        assertNull(window.startedAt)
+        assertNull(window.endedAt)
+    }
+
+    @Test
+    fun nearLastChargeHeadingRemainsUnknown() {
+        // Catches substring-matching a similar OEM heading as the supported scope.
+        val section = RawDiagnosticSection("batterystats", DiagnosticSourceStatus.AVAILABLE,
+            "Statistics since last charge: vendor extension\nTime on battery: 1h (100%) realtime")
+        val window = DiagnosticWindowMetadataParser.parse(listOf(section), emptyMap()).windowsBySource.getValue("batterystats")
+        assertEquals(VerificationMetricScope.UNKNOWN, window.scope)
+        assertNull(window.batteryDurationMillis)
+    }
+
     private val battery = RawDiagnosticSection("batterystats", DiagnosticSourceStatus.AVAILABLE, """
         Statistics since last charge:
         Time on battery: 1h 30m (90%) realtime, 1h uptime

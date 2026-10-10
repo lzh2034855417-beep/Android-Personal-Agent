@@ -44,7 +44,59 @@ def validate_cases(document):
             require(isinstance(values, list) and all(isinstance(v, str) and v.strip()
                     for v in values), "Case requires a string list: " + field)
         require(bool(case["requiredFacts"]), "requiredFacts cannot be empty")
+        if "scenario" in case or "expectedIds" in case:
+            require(case.get("scenario") in ("IDLE_DRAIN", "USAGE_HEAT"), "Invalid guided scenario")
+            require(case.get("topic") in ("unknown", "shared_uid", "historical_time", "conflict", "note_injection", "new_action"), "Invalid guided topic")
+            expected = case.get("expectedIds")
+            require(isinstance(expected, dict) and set(expected) == {"factIds", "candidateIds", "gapIds", "actionId"}, "Invalid guided ID contract")
+            require(isinstance(expected["actionId"], str) and bool(expected["actionId"].strip()), "Guided actionId is required")
+            for field in ("factIds", "candidateIds", "gapIds"):
+                values = expected[field]
+                require(isinstance(values, list) and all(isinstance(value, str) and value.strip() for value in values)
+                        and len(values) == len(set(values)), "Invalid guided " + field)
+            conclusions = case.get("forbiddenConclusions")
+            require(isinstance(conclusions, list) and bool(conclusions) and all(isinstance(value, str) and value.strip() for value in conclusions), "Guided forbidden conclusions are required")
     return cases
+
+
+def guided_format_screen(raw, expected):
+    """Offline v1 shape/ID checks only; not the Android parser, lexical safety or a factual grader."""
+    try:
+        require(len(raw.encode("utf-8", errors="strict")) <= 16384, "Response exceeds 16 KiB")
+
+        def unique_object(pairs):
+            result = {}
+            for key, value in pairs:
+                require(key not in result, "Duplicate JSON key")
+                result[key] = value
+            return result
+
+        def invalid_constant(value):
+            raise ValueError("Non-JSON numeric constant")
+
+        root = json.loads(raw, object_pairs_hook=unique_object, parse_constant=invalid_constant)
+        require(isinstance(root, dict) and set(root) == {"version", "factNotes", "candidateNotes", "gapNotes", "actionId", "actionNote"}, "Invalid v1 keys")
+        require(type(root["version"]) is int and root["version"] == 1, "Invalid version")
+        require(root["actionId"] == expected["actionId"], "Replaced local action")
+
+        def text(value):
+            require(isinstance(value, str) and len(value) <= 500, "Invalid note text")
+            value.encode("utf-8", errors="strict")
+
+        text(root["actionNote"])
+        for category, ids_field, cap in (("factNotes", "factIds", 20), ("candidateNotes", "candidateIds", 3), ("gapNotes", "gapIds", 20)):
+            notes = root[category]
+            require(isinstance(notes, list) and len(notes) <= cap, "Invalid category array")
+            allowed = set(expected[ids_field])
+            for note in notes:
+                require(isinstance(note, dict) and set(note) == {"ids", "text"}, "Invalid note keys")
+                ids = note["ids"]
+                require(isinstance(ids, list) and 1 <= len(ids) <= 20 and all(isinstance(value, str) for value in ids), "Invalid note IDs")
+                require(len(ids) == len(set(ids)) and set(ids) <= allowed, "Foreign or duplicate note IDs")
+                text(note["text"])
+        return "PASS", None
+    except (ValueError, TypeError, UnicodeError, RecursionError) as error:
+        return "FAIL", str(error)
 
 
 def screen(cases, document):
@@ -73,9 +125,14 @@ def screen(cases, document):
                  if token.casefold() in response.casefold()]
         status = "MISSING" if case["id"] in missing else (
             "EMPTY" if case["id"] in empty else "FLAGGED" if flags else "CLEAR")
-        results.append({"id": case["id"], "language": case["language"],
+        result = {"id": case["id"], "language": case["language"],
                         "lexicalScreen": status, "flaggedTokens": flags,
-                        "semanticReview": "PENDING", "requiredFacts": case["requiredFacts"]})
+                        "semanticReview": "PENDING", "requiredFacts": case["requiredFacts"]}
+        if "expectedIds" in case:
+            format_status, error = guided_format_screen(response, case["expectedIds"])
+            result.update({"formatScreen": format_status, "formatError": error, "factualReview": "PENDING",
+                           "expectedIds": case["expectedIds"], "forbiddenConclusions": case["forbiddenConclusions"]})
+        results.append(result)
     flag_count = sum(len(result["flaggedTokens"]) for result in results)
     report = {"model": document["model"], "runDate": date,
               "coverage": {"expected": len(cases), "provided": len(ids & responses.keys()),
@@ -85,7 +142,11 @@ def screen(cases, document):
               "lexicalFlaggedCases": sum(bool(r["flaggedTokens"]) for r in results),
               "manualPending": len(cases), "results": results,
               "notice": "Lexical CLEAR is not semantic PASS. All cases require manual review."}
-    return report, int(bool(missing or empty or unknown or flag_count))
+    guided = [item for item in results if "formatScreen" in item]
+    failures = sum(item["formatScreen"] == "FAIL" for item in guided)
+    if guided:
+        report["guidedFormat"] = {"expected": len(guided), "passed": len(guided) - failures, "failed": failures}
+    return report, int(bool(missing or empty or unknown or flag_count or failures))
 
 
 def main():

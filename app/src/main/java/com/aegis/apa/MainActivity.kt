@@ -36,6 +36,8 @@ import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Card
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedButton
@@ -65,6 +67,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -85,6 +88,7 @@ import com.aegis.apa.agent.CloudLlmProvider
 import com.aegis.apa.agent.CloudProviderCatalog
 import com.aegis.apa.agent.ApiKeyStore
 import com.aegis.apa.agent.ApiSession
+import com.aegis.apa.agent.GuidedExplanationSession
 import com.aegis.apa.agent.AgentMessageCopyPolicy
 import com.aegis.apa.agent.AppReportBuilder
 import com.aegis.apa.agent.DeviceContext
@@ -130,6 +134,7 @@ import com.aegis.apa.model.InstalledApp
 import com.aegis.apa.model.RamInfo
 import com.aegis.apa.tool.RamTool
 import com.aegis.apa.model.RootStatus
+import com.aegis.apa.model.RootAccessState
 import com.aegis.apa.tool.RootTool
 import com.aegis.apa.tool.RootBatteryInfo
 import com.aegis.apa.tool.RootBatteryTool
@@ -154,6 +159,16 @@ import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.text.SimpleDateFormat
 import kotlinx.coroutines.Job
+import com.aegis.apa.agent.GuidedEvidenceAdapter
+import com.aegis.apa.model.GuidedInput
+import com.aegis.apa.model.GuidedSampleResult
+import com.aegis.apa.model.GuidedSamplePreview
+import com.aegis.apa.model.GuidedSessionKey
+import com.aegis.apa.model.GuidedWorkToken
+import com.aegis.apa.model.GuidedStage
+import com.aegis.apa.model.GuidedActionKind
+import com.aegis.apa.model.GuidedAction
+import com.aegis.apa.localization.GuidedDiagnosticCopy
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import rikka.shizuku.Shizuku
@@ -161,7 +176,12 @@ import rikka.shizuku.Shizuku
 
 @OptIn(ExperimentalLayoutApi::class)
 class MainActivity : ComponentActivity() {
+    override fun onResume() {
+        super.onResume()
+        guided.refreshExplanationContext()
+    }
     private val session by lazy { androidx.lifecycle.ViewModelProvider(this)[MainSessionViewModel::class.java] }
+    private val guided by lazy { androidx.lifecycle.ViewModelProvider(this)[GuidedDiagnosticViewModel::class.java] }
     private val batteryObservationStore by lazy { BatteryObservationStore(this) }
     private val verification by lazy {
         androidx.lifecycle.ViewModelProvider(this, object : androidx.lifecycle.ViewModelProvider.Factory {
@@ -177,8 +197,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        ApiSession.update(ApiKeyStore.load(this))
+        ApiSession.initialize { ApiKeyStore.load(this) }
         val appLanguage = AppLanguageStore.load(this)
+        guided.configureExplanation(
+            credentials = GuidedExplanationSession::credentials,
+            configuration = GuidedExplanationSession::configuration,
+            executor = java.util.concurrent.Executor { Dispatchers.IO.dispatch(kotlin.coroutines.EmptyCoroutineContext, it) },
+            publishExecutor = java.util.concurrent.Executor { android.os.Handler(android.os.Looper.getMainLooper()).post(it) })
+        guided.updateExplanationLanguage(appLanguage)
         session.setLanguage(appLanguage)
         val persistedObservation = batteryObservationStore.load()
         session.reconcileBatteryObservation(
@@ -198,6 +224,18 @@ class MainActivity : ComponentActivity() {
                 AndroidPersonalAgentTheme {
                 var selectedPage by rememberSaveable { mutableIntStateOf(0) }
                 var showVerification by rememberSaveable { mutableStateOf(false) }
+                var showGuided by rememberSaveable { mutableStateOf(false) }
+                var guidedPreview by remember { mutableStateOf<GuidedSamplePreview?>(null) }
+                var guidedVerification by remember { mutableStateOf<Triple<GuidedSessionKey, String, PowerDiagnosticSnapshot>?>(null) }
+                var guidedNotice by remember { mutableStateOf<String?>(null) }
+                var guidedExitKey by remember { mutableStateOf<GuidedSessionKey?>(null) }
+                var guidedBasicJob by remember { mutableStateOf<Job?>(null) }
+                val guidedState by guided.state
+                // Only the picker authorization key is saveable, never guided answers or samples.
+                var pickerGuidedId by rememberSaveable { mutableStateOf<String?>(null) }
+                var pickerGuidedRevision by rememberSaveable { androidx.compose.runtime.mutableLongStateOf(0L) }
+                var pickerSampleRevision by rememberSaveable { androidx.compose.runtime.mutableLongStateOf(0L) }
+                var pickerAnswerRevision by rememberSaveable { androidx.compose.runtime.mutableLongStateOf(0L) }
                 var snapshot by session.snapshot
                 val pageStates = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
                 var isSnapshotRefreshing by remember { mutableStateOf(false) }
@@ -216,18 +254,26 @@ class MainActivity : ComponentActivity() {
                         isSnapshotRefreshing = false
                     }
                 }
-                val onRefresh: () -> Unit = {
+                val refreshCapabilities: (Boolean) -> Unit = { allowRootRetry ->
                     scope.launch {
-                        try { refreshSnapshot() }
+                        try {
+                            val fresh = refreshSnapshot()
+                            session.refreshRootAuthorization(
+                                hasRootInterface = fresh.rootStatus.hasSuBinary ||
+                                    fresh.rootStatus.isKernelSuManagerInstalled || fresh.rootStatus.isMagiskManagerInstalled,
+                                allowRetry = allowRootRetry
+                            )
+                        }
                         catch (cancelled: CancellationException) { throw cancelled }
                         catch (_: Exception) { snapshotError = RuntimeUiCopy.text(RuntimeNotice.SNAPSHOT_READ_FAILED, appLanguage) }
                     }
                 }
+                val onRefresh: () -> Unit = { refreshCapabilities(true) }
                 DisposableEffect(Unit) {
                     val observer = LifecycleEventObserver { _, event ->
                         if (event == Lifecycle.Event.ON_RESUME) {
                             shizukuRevision += 1
-                            onRefresh()
+                            refreshCapabilities(false)
                         }
                     }
                     lifecycle.addObserver(observer)
@@ -261,6 +307,47 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 var importedHardwareSupplyInfo by session.hardwareSupplyInfo
+                var hardwareRefreshRevision by remember { mutableIntStateOf(0) }
+                var hardwareSupplyReading by remember { mutableStateOf(false) }
+                var hardwareSupplyReadGeneration by remember { androidx.compose.runtime.mutableLongStateOf(0L) }
+                var hardwareSupplyNotice by remember { mutableStateOf<String?>(null) }
+                var pendingHardwareReport by remember {
+                    mutableStateOf<Pair<HardwareSupplyInfo, Map<String, String>>?>(null)
+                }
+                LaunchedEffect(apaApplication) {
+                    val cached = withContext(Dispatchers.IO) { apaApplication.hardwareSupplyCache.load() }
+                    if (cached != null) importedHardwareSupplyInfo =
+                        importedHardwareSupplyInfo?.mergeMissingFrom(cached) ?: cached
+                }
+                pendingHardwareReport?.let { candidate ->
+                    AlertDialog(
+                        onDismissRequest = { pendingHardwareReport = null },
+                        title = { Text(if (appLanguage == AppLanguage.EN) "Confirm report device" else "确认报告设备") },
+                        text = { Text(if (appLanguage == AppLanguage.EN)
+                            "The report model matches this phone. Is it this phone's report? Only derived hardware fields will be saved locally."
+                            else "报告机型与本机一致。请确认这是这台手机的报告；只在本机保存厂商、规格和型号，不保存原始报告。") },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                pendingHardwareReport = null
+                                scope.launch {
+                                    val saved = withContext(Dispatchers.IO) {
+                                        apaApplication.hardwareSupplyCache.saveReport(candidate.first, candidate.second, true)
+                                    }
+                                    if (saved) {
+                                        val cached = withContext(Dispatchers.IO) { apaApplication.hardwareSupplyCache.load() }
+                                        if (cached != null) importedHardwareSupplyInfo = cached
+                                    } else hardwareSupplyNotice = if (appLanguage == AppLanguage.EN)
+                                        "Hardware information could not be saved." else "硬件信息未能保存；已有信息仍保留。"
+                                }
+                            }) { Text(if (appLanguage == AppLanguage.EN) "This phone" else "是本机报告") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { pendingHardwareReport = null }) {
+                                Text(if (appLanguage == AppLanguage.EN) "Do not save" else "不保存到本机")
+                            }
+                        }
+                    )
+                }
                 var chatMessages by session.messages
                 var isOnlineAnalyzing by session.analyzing
                 var analysisJob by remember { mutableStateOf<Job?>(null) }
@@ -275,6 +362,39 @@ class MainActivity : ComponentActivity() {
                 var batteryObservationStart by session.batteryObservationStart
                 var batteryObservationResult by session.batteryObservationResult
                 var batteryObservationNotice by session.batteryObservationNotice
+                fun activeGuidedKey() = guided.state.value.session?.takeIf { it.stage != GuidedStage.ENDED }?.key
+                fun offerGuidedInput(token: GuidedWorkToken?, input: GuidedInput) {
+                    if (token == null) return
+                    val answers = guided.state.value.session?.answers ?: return
+                    when (val result = GuidedEvidenceAdapter.adapt(input, java.util.UUID.randomUUID().toString(), answers)) {
+                        is GuidedSampleResult.Ready -> guided.completeWork(token) {
+                            guidedPreview = null
+                            guided.offerSample(result.sample)
+                        }
+                        is GuidedSampleResult.Rejected -> guided.failWork(token, result.reasonId)
+                    }
+                }
+                fun collectGuidedBasicSnapshot() {
+                    if (guidedBasicJob?.isActive == true) return
+                    val newKey = activeGuidedKey()
+                    var work: GuidedWorkToken? = null
+                    val job = scope.launch(start = CoroutineStart.LAZY) {
+                        try {
+                            val fresh = refreshSnapshot()
+                            work?.let { guided.offerBasicSnapshot(it, fresh, java.util.UUID.randomUUID().toString()) }
+                        } catch (cancelled: CancellationException) {
+                            work?.let { guided.failWork(it, "guided.collection_failed") }; throw cancelled
+                        } catch (_: Exception) {
+                            work?.let { guided.failWork(it, "guided.collection_failed") }
+                        }
+                    }
+                    work = newKey?.let { guided.beginWork(it) { job.cancel() } }
+                    if (work != null) { guidedBasicJob = job; job.start() } else job.cancel()
+                }
+                LaunchedEffect(guidedState.session?.key, guidedState.availableSampleId) {
+                    guidedPreview = null
+                    if (guidedVerification?.first != guidedState.session?.key) guidedVerification = null
+                }
                 DisposableEffect(Unit) {
                     val binderReceivedListener = Shizuku.OnBinderReceivedListener {
                         shizukuRevision += 1
@@ -317,24 +437,45 @@ class MainActivity : ComponentActivity() {
                     }
                     onDispose { runCatching { unregisterReceiver(powerReceiver) } }
                 }
-                val importBugReportUri: (Uri) -> Unit = { uri ->
+                val importBugReportUri: (Uri, GuidedSessionKey?) -> Unit = { uri, expectedGuidedKey ->
                     if (
                         powerDiagnosticState !is PowerDiagnosticUiState.Collecting &&
                         powerDiagnosticState != PowerDiagnosticUiState.Importing
                     ) {
                         session.agent.includePowerDiagnosticReport.value = false
                         powerDiagnosticState = PowerDiagnosticUiState.Importing
-                        scope.launch {
+                        session.reportImportStatus.value = null
+                        pendingHardwareReport = null
+                        var importJob: Job? = null
+                        val guidedToken = expectedGuidedKey?.takeIf { it == activeGuidedKey() }?.let { key -> guided.beginWork(key) { importJob?.cancel() } }
+                        importJob = scope.launch(start = CoroutineStart.LAZY) {
+                            val importTrace = com.aegis.apa.tool.BugReportImportTrace(BuildConfig.DEBUG)
+                            var readingComplete = false
+                            var lastProgressNanos = 0L
                             try {
                                 val startedNanos = System.nanoTime()
                                 val imported = withContext(Dispatchers.IO) {
                                     val job = currentCoroutineContext()[Job]
-                                    BugReportImporter(contentResolver).import(uri) {
+                                    BugReportImporter(contentResolver, importTrace::record).import(uri, onBytesRead = { bytes ->
+                                        val now = System.nanoTime()
+                                        if (now - lastProgressNanos >= 250_000_000L) {
+                                            lastProgressNanos = now
+                                            scope.launch(Dispatchers.Main) {
+                                                if (!readingComplete && job?.isActive != false && powerDiagnosticState == PowerDiagnosticUiState.Importing) {
+                                                    session.reportImportStatus.value = if (appLanguage == AppLanguage.EN)
+                                                        "Reading file… ${bytes / (1024 * 1024)} MiB read"
+                                                    else "正在读取文件… 已读取 ${bytes / (1024 * 1024)} MiB"
+                                                }
+                                            }
+                                        }
+                                    }) {
                                         job?.isActive == false
                                     }
                                 }
+                                readingComplete = true
                                 when (imported) {
                                     is BugReportReadResult.Success -> {
+                                        session.reportImportStatus.value = if (appLanguage == AppLanguage.EN) "Parsing diagnostic data…" else "正在解析诊断数据…"
                                         val importedHardware = imported.sections
                                             .firstOrNull { it.source == "hardware" }
                                             ?.let { section ->
@@ -343,46 +484,72 @@ class MainActivity : ComponentActivity() {
                                                     access = DeviceProfileAccess.STANDARD
                                                 ).hardwareSupplyInfo
                                             }
-                                        session.replaceImportedHardwareSupplyInfo(importedHardware)
-                                        importedHardwareSupplyInfo = importedHardware
-                                        val analyzed = PowerDiagnosticPipeline.analyze(
-                                            sections = imported.sections,
-                                            inputSource = DiagnosticInputSource.BUGREPORT,
+                                        val parseStartedNanos = System.nanoTime()
+                                        val analyzed = PowerDiagnosticPipeline.analyzeImported(
+                                            imported = imported,
                                             sampledAt = Instant.now(),
                                             collectionDurationMillis = (System.nanoTime() - startedNanos) / 1_000_000,
-                                            packageLabelResolver = ::resolveInstalledAppLabel,
-                                            verificationHeaderFields = imported.verificationHeaderFields
+                                            packageLabelResolver = ::resolveInstalledAppLabel
                                         )
+                                        if (BuildConfig.DEBUG) android.util.Log.d("APA-ReportImport", "stage=parse elapsed_ms=${(System.nanoTime() - parseStartedNanos) / 1_000_000}")
                                         session.completePowerDiagnostic(analyzed)
+                                        if (importedHardware != null) {
+                                            if (apaApplication.hardwareSupplyCache.matchesReport(imported.verificationHeaderFields)) {
+                                                pendingHardwareReport = importedHardware to imported.verificationHeaderFields
+                                            } else {
+                                                hardwareSupplyNotice = if (appLanguage == AppLanguage.EN)
+                                                    "Report device could not be matched; hardware was not saved to this phone."
+                                                    else "报告设备无法与本机确认匹配，未覆盖本机硬件信息。"
+                                            }
+                                        }
+                                        offerGuidedInput(guidedToken, GuidedInput(analyzed, null, null))
                                     }
                                     is BugReportReadResult.Rejected -> {
+                                        guidedToken?.let { guided.failWork(it, "guided.collection_failed") }
                                         powerDiagnosticState = PowerDiagnosticUiState.Error(
-                                            RuntimeUiCopy.bugReportReject(imported.reason, appLanguage)
+                                            importTrace.appendTo(RuntimeUiCopy.bugReportReject(imported.reason, appLanguage))
                                         )
                                     }
                                     BugReportReadResult.Cancelled -> {
+                                        guidedToken?.let { guided.failWork(it, "guided.collection_failed") }
                                         powerDiagnosticState = PowerDiagnosticUiState.Interrupted
                                     }
                                 }
                             } catch (cancelled: CancellationException) {
                                 powerDiagnosticState = PowerDiagnosticUiState.Interrupted
                                 throw cancelled
-                            } catch (_: Exception) {
+                            } catch (failure: Exception) {
+                                importTrace.record("stage=exception type=${failure.javaClass.simpleName.take(80)}")
                                 powerDiagnosticState = PowerDiagnosticUiState.Error(
-                                    RuntimeUiCopy.text(RuntimeNotice.BUG_REPORT_READ_FAILED, appLanguage)
+                                    importTrace.appendTo(RuntimeUiCopy.text(RuntimeNotice.BUG_REPORT_READ_FAILED, appLanguage))
                                 )
+                            } finally {
+                                readingComplete = true
+                                session.reportImportStatus.value = null
+                                guidedToken?.let { guided.failWork(it, "guided.collection_failed") }
                             }
                         }
+                        importJob.start()
                     }
                 }
                 val bugReportPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-                    uri?.let(importBugReportUri)
+                    val key = pickerGuidedId?.let { GuidedSessionKey(it, pickerGuidedRevision, pickerSampleRevision, pickerAnswerRevision) }
+                    pickerGuidedId = null
+                    uri?.let { importBugReportUri(it, key) }
+                }
+                val launchBugReport: () -> Unit = {
+                    val key = activeGuidedKey()
+                    pickerGuidedId = key?.id
+                    pickerGuidedRevision = key?.revision ?: 0
+                    pickerSampleRevision = key?.sampleRevision ?: 0
+                    pickerAnswerRevision = key?.answerRevision ?: 0
+                    bugReportPicker.launch(arrayOf("application/zip", "text/plain", "application/octet-stream"))
                 }
                 val incomingSharedBugReportUri = remember { sharedBugReportUri(intent) }
                 LaunchedEffect(incomingSharedBugReportUri) {
                     incomingSharedBugReportUri?.let { uri ->
                         if (session.consumeSharedBugReport(uri.toString())) {
-                            importBugReportUri(uri)
+                            importBugReportUri(uri, activeGuidedKey())
                         }
                     }
                 }
@@ -413,22 +580,52 @@ class MainActivity : ComponentActivity() {
                 ) {
                     ShizukuCapabilityTool.read(currentSnapshot.rootStatus.isShizukuInstalled)
                 }
-                val rootAuthorized = CapabilityAccessFeedback.hasRootEvidence(
-                    rootBatteryAttempted = rootBatteryInfo != null,
-                    rootBatteryError = rootBatteryInfo?.error,
-                    profileUsedRoot = deviceProfile?.access == DeviceProfileAccess.ROOT,
-                    diagnosticHasSuccessfulCommand =
-                        powerDiagnostic?.inputSource == DiagnosticInputSource.ROOT &&
-                            powerDiagnostic?.sources?.values?.any { source ->
-                                source.status == com.aegis.apa.model.DiagnosticSourceStatus.AVAILABLE ||
-                                    source.status == com.aegis.apa.model.DiagnosticSourceStatus.TRUNCATED
-                            } == true
-                )
+                val rootAccessState by session.rootAccessState
+                val rootAuthorized = rootAccessState == RootAccessState.AUTHORIZED
+                LaunchedEffect(selectedPage == 0, rootAuthorized, hardwareRefreshRevision) {
+                    val generation = ++hardwareSupplyReadGeneration
+                    if (selectedPage != 0) {
+                        hardwareSupplyReading = false
+                        return@LaunchedEffect
+                    }
+                    hardwareSupplyReading = true
+                    val job = currentCoroutineContext()[Job]
+                    try {
+                        val (read, saved) = withContext(Dispatchers.IO) {
+                            val info = DeviceProfileCollector.readHardware(rootAuthorized,
+                                cancellationRequested = { job?.isActive == false })
+                            info to (info == null || apaApplication.hardwareSupplyCache.saveLocal(info))
+                        }
+                        if (read != null) importedHardwareSupplyInfo = read.mergeMissingFrom(importedHardwareSupplyInfo)
+                        hardwareSupplyNotice = if (!saved) {
+                            if (appLanguage == AppLanguage.EN) "Hardware read completed, but saving failed."
+                            else "硬件读取完成，但保存失败；本次结果仍可查看。"
+                        } else null
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        hardwareSupplyNotice = if (appLanguage == AppLanguage.EN)
+                            "Hardware read failed; previously confirmed information is kept."
+                            else "硬件读取失败，已保留之前确认的信息。"
+                    } finally {
+                        if (generation == hardwareSupplyReadGeneration) hardwareSupplyReading = false
+                    }
+                }
                 val agentCapabilityAccess = AgentCapabilityAccess.from(
                     shizukuAccessState = shizukuAccessState,
                     rootAuthorized = rootAuthorized
                 )
+                androidx.compose.runtime.SideEffect {
+                    verification.updateExplanationContext(showVerification,
+                        AdviceCapabilityPolicy.effectiveLevel(
+                            if (agentCapabilityAccess.rootAuthorized) "Level 2" else if (agentCapabilityAccess.shizukuAuthorized) "Level 1" else "Level 0",
+                            agentCapabilityAccess.shizukuAuthorized, agentCapabilityAccess.rootAuthorized), appLanguage)
+                }
+                val exitVerification = { verification.exitExplanation(); showVerification = false }
                 val onCollectPowerDiagnostic: () -> Unit = {
+                    var collectJob: Job? = null
+                    val guidedToken = if (powerDiagnosticState !is PowerDiagnosticUiState.Collecting)
+                        activeGuidedKey()?.let { key -> guided.beginWork(key) { collectJob?.cancel() } } else null
                     if (powerDiagnosticState !is PowerDiagnosticUiState.Collecting) {
                         session.agent.includePowerDiagnosticReport.value = false
                         powerDiagnosticState = PowerDiagnosticUiState.Collecting(
@@ -436,7 +633,7 @@ class MainActivity : ComponentActivity() {
                             8,
                             if (appLanguage == AppLanguage.EN) "Preparing Root authorization" else "准备 Root 授权"
                         )
-                        scope.launch {
+                        collectJob = scope.launch(start = CoroutineStart.LAZY) {
                             try {
                                 val result = withContext(Dispatchers.IO) {
                                     val collectionJob = currentCoroutineContext()[Job]
@@ -456,6 +653,7 @@ class MainActivity : ComponentActivity() {
                                     )
                                 }
                                 session.completePowerDiagnostic(result)
+                                offerGuidedInput(guidedToken, GuidedInput(result, null, null))
                             } catch (cancelled: CancellationException) {
                                 powerDiagnosticState = PowerDiagnosticUiState.Interrupted
                                 throw cancelled
@@ -463,8 +661,11 @@ class MainActivity : ComponentActivity() {
                                 powerDiagnosticState = PowerDiagnosticUiState.Error(
                                     RuntimeUiCopy.text(RuntimeNotice.ROOT_DIAGNOSTIC_FAILED, appLanguage)
                                 )
+                            } finally {
+                                guidedToken?.let { guided.failWork(it, "guided.collection_failed") }
                             }
                         }
+                        collectJob.start()
                     }
                 }
                 val onStartBatteryObservation: () -> Unit = {
@@ -485,7 +686,9 @@ class MainActivity : ComponentActivity() {
                         }
                     }.onFailure { batteryObservationNotice = RuntimeUiCopy.text(RuntimeNotice.BATTERY_START_READ_FAILED, appLanguage) }
                 }
+                val observationGuidedKey = activeGuidedKey()
                 val onFinishBatteryObservation: (Boolean) -> Unit = { userReportedCharging ->
+                    val guidedToken = observationGuidedKey?.takeIf { it == activeGuidedKey() }?.let { key -> guided.beginWork(key) {} }
                     if (userReportedCharging) {
                         // Mark contaminated before clearing so a storage failure can never make this interval valid again.
                         session.markBatteryObservationChargingObserved()
@@ -512,6 +715,7 @@ class MainActivity : ComponentActivity() {
                                 ),
                                 userReportedCharging = false
                             )
+                            offerGuidedInput(guidedToken, GuidedInput(null, null, batteryObservationResult))
                             if (session.batteryObservationStart.value == null) {
                                 if (!batteryObservationStore.clear()) {
                                     batteryObservationNotice = RuntimeUiCopy.text(RuntimeNotice.BATTERY_RESULT_CLEAR_FAILED, appLanguage)
@@ -521,6 +725,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }.onFailure { batteryObservationNotice = RuntimeUiCopy.text(RuntimeNotice.BATTERY_END_READ_FAILED, appLanguage) }
                     }
+                    guidedToken?.let { guided.failWork(it, "guided.collection_failed") }
                 }
                 val onClearBatteryObservation: () -> Unit = {
                     if (batteryObservationStore.clear()) {
@@ -538,7 +743,7 @@ class MainActivity : ComponentActivity() {
                             val job = checkNotNull(currentCoroutineContext()[Job])
                             try {
                                 val result = withContext(Dispatchers.IO) {
-                                    DeviceProfileCollector.read(
+                                    DeviceProfileCollector.readScheduling(
                                         preferRoot = currentSnapshot.rootStatus.hasSuBinary,
                                         cancellationRequested = { !job.isActive }
                                     )
@@ -564,12 +769,112 @@ class MainActivity : ComponentActivity() {
                         deviceProfileReadJob?.start()
                     }
                 }
+                if (showGuided) {
+                    androidx.compose.ui.window.Dialog(onDismissRequest = {
+                        val key = activeGuidedKey()
+                        if (key == null) showGuided = false else guidedExitKey = key
+                    }, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false)) {
+                        androidx.compose.material3.Surface(Modifier.fillMaxSize()) {
+                            Column(Modifier.fillMaxSize().statusBarsPadding()) {
+                                if (guidedState.session == null) TextButton(onClick = { showGuided = false }) {
+                                    Text(if (appLanguage == AppLanguage.EN) "Return to diagnostics" else "返回诊断")
+                                }
+                                guidedNotice?.let { Text(it, modifier = Modifier.heightIn(max = 140.dp).verticalScroll(rememberScrollState()).padding(12.dp)) }
+                                GuidedDiagnosticScreen(guidedState, guided.explanationState.value,
+                                    guided::setExplanationOptions, guided::dismissExplanationPreview,
+                                    guided::sendExplanation, guided::cancelExplanation) { event ->
+                                    when (event) {
+                                        is GuidedUiEvent.Start -> { guided.start(event.scenario); guidedNotice = null }
+                                        is GuidedUiEvent.UpdateAnswers -> if (guided.updateAnswers(event.key, event.answers) && event.answers.reviewed) {
+                                            activeGuidedKey()?.let(guided::evaluateLocal)
+                                        }
+                                        is GuidedUiEvent.PreviewSample -> if (activeGuidedKey() == event.key) {
+                                            guidedPreview = guided.previewSample(event.sampleId)
+                                        }
+                                        is GuidedUiEvent.Restart -> if (guided.restart(event.key, event.scenario)) {
+                                            guidedPreview = null; guidedVerification = null; guidedNotice = null
+                                        }
+                                        is GuidedUiEvent.Exit -> if (guided.end(event.key)) {
+                                            guidedPreview = null; guidedVerification = null; showGuided = false
+                                        }
+                                        is GuidedUiEvent.RequestExplanation -> guided.previewExplanation(event.key)
+                                        is GuidedUiEvent.PauseForEvidence -> if (activeGuidedKey() == event.key) { showGuided = false; selectedPage = 3 }
+                                        is GuidedUiEvent.RequestAction, is GuidedUiEvent.RetryAction, is GuidedUiEvent.RefreshHeatSnapshot -> {
+                                            val current = guided.state.value
+                                            val key = when (event) {
+                                                is GuidedUiEvent.RequestAction -> event.key
+                                                is GuidedUiEvent.RetryAction -> event.key
+                                                is GuidedUiEvent.RefreshHeatSnapshot -> event.key
+                                                else -> null
+                                            }
+                                            val actionId = when (event) {
+                                                is GuidedUiEvent.RequestAction -> event.actionId
+                                                is GuidedUiEvent.RetryAction -> event.actionId
+                                                else -> "heat.refresh_snapshot"
+                                            }
+                                            val action = if (event is GuidedUiEvent.RefreshHeatSnapshot)
+                                                GuidedAction(actionId, GuidedActionKind.COLLECT, emptyList()) else current.assessment?.primaryAction
+                                            if (current.session?.key == key && key != null && action?.id == actionId) {
+                                                val verificationSource = if (action.kind == GuidedActionKind.OPEN_VERIFICATION)
+                                                    guidedVerificationSource(current, key, actionId, powerDiagnostic) else null
+                                                if (action.kind == GuidedActionKind.OPEN_VERIFICATION && verificationSource == null) {
+                                                    guidedNotice = GuidedDiagnosticCopy.text("guided.verification_unavailable", appLanguage)
+                                                } else guided.dispatchAction(event) { dispatchedAction ->
+                                                    when (dispatchedAction.kind) {
+                                                        GuidedActionKind.IMPORT_REPORT -> {
+                                                            showGuided = false
+                                                            launchBugReport()
+                                                        }
+                                                        GuidedActionKind.COLLECT -> collectGuidedBasicSnapshot()
+                                                        GuidedActionKind.OPEN_OBSERVATION -> { showGuided = false; selectedPage = 3 }
+                                                        GuidedActionKind.OPEN_VERIFICATION -> {
+                                                            guidedVerification = Triple(checkNotNull(activeGuidedKey()), actionId, checkNotNull(verificationSource))
+                                                        }
+                                                        GuidedActionKind.END -> showGuided = false
+                                                        GuidedActionKind.ANSWER -> Unit
+                                                        GuidedActionKind.OBSERVE_CONDITION, GuidedActionKind.VIEW_SYSTEM_WARNING -> {
+                                                            guidedNotice = GuidedDiagnosticCopy.action(actionId, appLanguage)
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                guidedExitKey?.let { key -> androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { guidedExitKey = null },
+                    title = { Text(if (appLanguage == AppLanguage.EN) "End and exit?" else "结束并退出？") },
+                    text = { Text(if (appLanguage == AppLanguage.EN) "Cancel unfinished work; the remote service may have received an explanation request. Collection navigation only pauses the session." else "取消未完成任务；远端可能已收到解释请求。返回采集入口仅暂停会话。") },
+                    confirmButton = { TextButton(onClick = { if (guided.end(key)) showGuided = false; guidedExitKey = null }) {
+                        Text(if (appLanguage == AppLanguage.EN) "End and exit" else "结束并退出")
+                    } }, dismissButton = { TextButton(onClick = { guidedExitKey = null }) { Text(if (appLanguage == AppLanguage.EN) "Cancel" else "取消") } }) }
+                guidedPreview?.let { token -> GuidedSamplePreviewForm(token, guidedState.session?.samples.orEmpty(),
+                    { guidedPreview = null }, { replacement -> guided.confirmSample(token, replacement); guidedPreview = null }) }
+                guidedVerification?.let { receipt ->
+                    val target = guidedVerificationTarget(guidedState, receipt.first, receipt.second)
+                    val source = guidedVerificationSource(guidedState, receipt.first, receipt.second, powerDiagnostic)
+                    if (target != null && source === receipt.third) VerificationSampleForm(source, null,
+                        enabled = !verification.state.value.loading && !verification.state.value.saving && verification.state.value.storageFailure == null,
+                        onDismiss = { guidedVerification = null }, fixedTarget = target,
+                        onSave = { savedTarget, context, title ->
+                            val latest = guided.state.value
+                            if (guidedVerificationTarget(latest, receipt.first, receipt.second) == savedTarget &&
+                                guidedVerificationSource(latest, receipt.first, receipt.second, powerDiagnostic) === receipt.third) {
+                                verificationSummary(receipt.third, savedTarget, context)?.let { verification.createBaseline(title, savedTarget, it) }
+                            }
+                            guidedVerification = null
+                        })
+                }
                 if (showVerification) {
-                    androidx.compose.ui.window.Dialog(onDismissRequest = { showVerification = false },
+                    androidx.compose.ui.window.Dialog(onDismissRequest = exitVerification,
                         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
                         androidx.compose.material3.Surface(Modifier.fillMaxSize()) {
                             Column(Modifier.fillMaxSize().statusBarsPadding().padding(bottom = 12.dp)) {
-                                TextButton(onClick = { showVerification = false }) {
+                                TextButton(onClick = exitVerification) {
                                     Text(if (appLanguage == AppLanguage.EN) "Return to chat / diagnostics" else "返回聊天 / 诊断")
                                 }
                                 VerificationPanel(verification.state.value, powerDiagnostic,
@@ -585,7 +890,13 @@ class MainActivity : ComponentActivity() {
                                             verification.recordRetest(id, revision, it)
                                         }
                                     }, onClose = verification::close, onDelete = verification::delete, onClear = verification::clear,
-                                    explanationCredentials = { ApiSession.requireValid() }, capabilityAccess = agentCapabilityAccess)
+                                    onRetrySave = verification::retrySave, onDiscardUnsaved = verification::discardUnsaved,
+                                    explanation = verification.explanationState.value,
+                                    onExplanationPreview = verification::previewExplanation,
+                                    onExplanationDismiss = verification::dismissExplanationPreview,
+                                    onExplanationNotes = verification::includeExplanationNotes,
+                                    onExplanationSend = { verification.sendExplanation { ApiSession.requireValid() } },
+                                    onExplanationStop = verification::stopExplanation)
                             }
                         }
                     }
@@ -628,7 +939,7 @@ class MainActivity : ComponentActivity() {
                             ).forEach { (page, title) ->
                                 NavigationBarItem(
                                     selected = selectedPage == page,
-                                    onClick = { selectedPage = page },
+                                    onClick = { if (selectedPage != page) exitVerification(); selectedPage = page },
                                     icon = { Text(listOf("◉", "▦", "◇", "AI", "⚙")[page]) },
                                     label = { Text(title) }
                                 )
@@ -657,6 +968,9 @@ class MainActivity : ComponentActivity() {
                                 importedHardwareSupplyInfo = importedHardwareSupplyInfo,
                                 isDeviceProfileReading = isDeviceProfileReading,
                                 onReadDeviceProfile = onReadDeviceProfile,
+                                onReadHardware = { hardwareRefreshRevision += 1 },
+                                isHardwareReading = hardwareSupplyReading,
+                                hardwareNotice = hardwareSupplyNotice,
                                 onImportHardwareReport = {
                                     bugReportPicker.launch(
                                         arrayOf("application/zip", "text/plain", "application/octet-stream")
@@ -713,6 +1027,15 @@ class MainActivity : ComponentActivity() {
                                 rootStatus = currentSnapshot.rootStatus,
                                 shizukuAccessState = shizukuAccessState,
                                 rootAuthorized = rootAuthorized,
+                                rootAccessState = rootAccessState,
+                                onCheckRootAuthorization = {
+                                    session.refreshRootAuthorization(
+                                        currentSnapshot.rootStatus.hasSuBinary ||
+                                            currentSnapshot.rootStatus.isKernelSuManagerInstalled ||
+                                            currentSnapshot.rootStatus.isMagiskManagerInstalled,
+                                        allowRetry = true
+                                    )
+                                },
                                 rootBatteryInfo = rootBatteryInfo,
                                 isRootBatteryReading = isRootBatteryReading,
                                 deviceProfile = deviceProfile,
@@ -727,6 +1050,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 },
                                 onOpenRootManager = {
+                                    session.requestRootAuthorizationRefresh()
                                     val rootManagerPackage =
                                         currentSnapshot.rootStatus.kernelSuManagerPackage
                                             ?: "com.topjohnwu.magisk"
@@ -771,6 +1095,8 @@ class MainActivity : ComponentActivity() {
                                 messages = chatMessages,
                                 shizukuAdviceAuthorized = agentCapabilityAccess.shizukuAuthorized,
                                 rootAdviceAuthorized = agentCapabilityAccess.rootAuthorized,
+                                rootAuthorizationPending = rootAccessState == RootAccessState.CHECKING ||
+                                    rootAccessState == RootAccessState.UNKNOWN,
                                 onAnalyze = { question, attachedReportLabel, attachedPowerDiagnosticReport ->
                                     chatMessages = chatMessages + AgentConversationMessage(
                                         role = MessageRole.USER, content = question, attachedReportLabel = attachedReportLabel
@@ -816,6 +1142,10 @@ class MainActivity : ComponentActivity() {
                                 onOnlineAnalyze = { question, selectedLevel, includeAppReport, includeUsageReport, attachedReportLabel, attachedPowerDiagnosticReport ->
                                     val previousMessages = chatMessages
                                     val requestedProvider = ApiSession.provider
+                                    val attachedPowerRanking = powerDiagnostic
+                                        ?.takeIf { attachedPowerDiagnosticReport != null &&
+                                            PowerAnalysisPreflight.classify(question) != PowerQuestionIntent.BATTERY_HEALTH }
+                                        ?.let { com.aegis.apa.agent.AppPowerRanking.build(it, appLanguage) }
                                     val attachedRootBattery = rootBatteryInfo
                                     val attachedDeviceProfile = deviceProfile
                                     val effectiveLevel = AdviceCapabilityPolicy.effectiveLevel(
@@ -875,7 +1205,8 @@ class MainActivity : ComponentActivity() {
                                             }
                                             session.appendAnalysisMessage(generation, AgentConversationMessage(
                                                 role = MessageRole.ASSISTANT,
-                                                content = result.toChatContent(),
+                                                content = result.toChatContent() +
+                                                    (attachedPowerRanking?.let { "\n\n$it" } ?: ""),
                                                 attachedReportLabel = attachedReportLabel,
                                                 source = result.source,
                                                 cloudProvider = requestedProvider,
@@ -921,19 +1252,17 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onClearConversation = { session.clearConversation() },
                                 onOpenVerification = { showVerification = true },
-                                onOpenSettings = { selectedPage = 4 },
+                                onOpenGuidedDiagnostic = { showGuided = true; guidedNotice = null },
+                                onOpenSettings = { exitVerification(); selectedPage = 4 },
                                 powerDiagnosticState = powerDiagnosticState,
+                                reportImportStatus = session.reportImportStatus.value,
                                 powerDiagnostic = powerDiagnostic,
                                 batteryObservationStart = batteryObservationStart,
                                 batteryObservationResult = batteryObservationResult,
                                 batteryObservationNotice = batteryObservationNotice,
                                 rootAvailable = currentSnapshot.rootStatus.hasSuBinary,
                                 onCollectPowerDiagnostic = onCollectPowerDiagnostic,
-                                onImportBugReport = {
-                                    bugReportPicker.launch(
-                                        arrayOf("application/zip", "text/plain", "application/octet-stream")
-                                    )
-                                },
+                                onImportBugReport = launchBugReport,
                                 onStartBatteryObservation = onStartBatteryObservation,
                                 onFinishBatteryObservation = onFinishBatteryObservation,
                                 onClearBatteryObservation = onClearBatteryObservation,
@@ -964,6 +1293,7 @@ class MainActivity : ComponentActivity() {
                             )
                                 else -> SettingsPrivacyScreen(
                                     currentLanguage = appLanguage,
+                                    onCredentialsChanged = guided::refreshExplanationContext,
                                     onLanguageSelected = { language ->
                                         if (language != appLanguage) {
                                             AppLanguageStore.save(this@MainActivity, language)
@@ -1140,7 +1470,10 @@ fun DeviceReportScreen(
     onRefresh: () -> Unit,
     isRefreshing: Boolean = false,
     refreshError: String? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onReadHardware: () -> Unit = {},
+    isHardwareReading: Boolean = false,
+    hardwareNotice: String? = null
 ) {
     val appLanguage = LocalAppLanguage.current
     var isChipDetailsExpanded by rememberSaveable { mutableStateOf(false) }
@@ -1207,6 +1540,13 @@ fun DeviceReportScreen(
                     }
                 }
             }
+            TextButton(onClick = onReadHardware, enabled = !isHardwareReading,
+                modifier = Modifier.testTag("read_hardware_information")) {
+                Text(if (isHardwareReading) {
+                    if (appLanguage == AppLanguage.EN) "Reading hardware…" else "正在读取硬件信息…"
+                } else if (appLanguage == AppLanguage.EN) "Refresh hardware information" else "刷新硬件信息")
+            }
+            hardwareNotice?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             if (hardwareNeedsReview) {
                 HardwareReportImportAction(isHardwareReportBusy, onImportHardwareReport)
                 hardwareFeedback?.let { feedback ->
@@ -1241,7 +1581,7 @@ fun DeviceReportScreen(
                     Text(
                         text = when {
                             isDeviceProfileReading -> if (appLanguage == AppLanguage.EN) "Reading…" else "读取中…"
-                            chipDetails == null -> if (appLanguage == AppLanguage.EN) "Read⌄" else "读取⌄"
+                            chipDetails == null -> if (appLanguage == AppLanguage.EN) "Read scheduling⌄" else "读取调度⌄"
                             isChipDetailsExpanded -> if (appLanguage == AppLanguage.EN) "Collapse⌃" else "收起⌃"
                             else -> if (appLanguage == AppLanguage.EN) "Details⌄" else "详细⌄"
                         }
@@ -1540,7 +1880,9 @@ fun CapabilitySectionsScreen(
     onOpenRootManager: () -> Unit,
     onReadRootBattery: () -> Unit,
     onReadDeviceProfile: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    rootAccessState: RootAccessState = RootAccessState.UNKNOWN,
+    onCheckRootAuthorization: () -> Unit = {}
 ) {
     val language = LocalAppLanguage.current
     val english = language == AppLanguage.EN
@@ -1623,15 +1965,35 @@ fun CapabilitySectionsScreen(
                 Text(
                     text = if (english) {
                         if (rootAuthorized) "A Root command completed successfully; APA has access."
-                        else if (rootStatus.hasSuBinary) "A Root interface was detected, but access has not been confirmed by a successful command."
-                        else "Root is not available yet. Authorize APA in KernelSU or Magisk."
+                        else when (rootAccessState) {
+                            RootAccessState.CHECKING -> "Checking APA's Root access (read-only identity check)…"
+                            RootAccessState.DENIED -> "APA did not receive Root access. Check its grant in KernelSU or Magisk, then retry."
+                            RootAccessState.TIMED_OUT -> "The Root check timed out; access is not confirmed. You can retry manually."
+                            RootAccessState.FAILED -> "The Root identity check failed; access is not confirmed. You can retry manually."
+                            RootAccessState.UNAVAILABLE -> "A usable Root interface was not found. Check KernelSU or Magisk."
+                            else -> "Root access has not been checked yet."
+                        }
                     } else if (rootAuthorized) "Root 命令已实际执行成功，APA 已获得访问。"
-                    else if (rootStatus.hasSuBinary) "已检测到 Root 接口，但尚未通过成功命令确认授权。"
-                    else "Root 接口尚未可用；请在 KernelSU 或 Magisk 中授权 APA。"
+                    else when (rootAccessState) {
+                        RootAccessState.CHECKING -> "正在检测 APA 的 Root 授权（只读身份检查）…"
+                        RootAccessState.DENIED -> "APA 未获得 Root 访问，请检查 KernelSU 或 Magisk 中的授权后重试。"
+                        RootAccessState.TIMED_OUT -> "Root 检测超时，尚未确认授权；可手动重新检查。"
+                        RootAccessState.FAILED -> "Root 身份检查失败，尚未确认授权；可手动重新检查。"
+                        RootAccessState.UNAVAILABLE -> "未找到可用的 Root 接口，请检查 KernelSU 或 Magisk。"
+                        else -> "尚未检测 Root 授权。"
+                    }
                 )
+                Button(
+                    onClick = onCheckRootAuthorization,
+                    enabled = rootAccessState != RootAccessState.CHECKING &&
+                        (rootStatus.hasSuBinary || rootStatus.isKernelSuManagerInstalled || rootStatus.isMagiskManagerInstalled)
+                ) {
+                    Text(if (english) "Recheck Root access" else "重新检查 Root 授权")
+                }
                 Button(
                     onClick = onOpenRootManager,
                     enabled = accessFeedback.rootActionEnabled &&
+                        rootAccessState != RootAccessState.CHECKING &&
                         (rootStatus.isKernelSuManagerInstalled || rootStatus.isMagiskManagerInstalled)
                 ) {
                     Text(
@@ -1643,7 +2005,7 @@ fun CapabilitySectionsScreen(
                 }
                 Button(
                     onClick = onReadRootBattery,
-                    enabled = rootStatus.hasSuBinary && !isRootBatteryReading
+                    enabled = rootStatus.hasSuBinary && !isRootBatteryReading && rootAccessState != RootAccessState.CHECKING
                 ) {
                     Text(
                         text = if (isRootBatteryReading) {
@@ -1702,7 +2064,8 @@ fun CapabilitySectionsScreen(
 fun SettingsPrivacyScreen(
     currentLanguage: AppLanguage = LocalAppLanguage.current,
     onLanguageSelected: (AppLanguage) -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onCredentialsChanged: () -> Unit = {}
 ) {
     val settingsScrollState = rememberScrollState()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -1745,6 +2108,7 @@ fun SettingsPrivacyScreen(
         storedApiKey = loaded
         apiKey = loaded?.apiKey.orEmpty()
         ApiSession.update(loaded)
+        onCredentialsChanged()
         isKeyOperationInProgress = false
     }
 
@@ -1823,6 +2187,7 @@ fun SettingsPrivacyScreen(
                     if (saved != null) {
                         savedProviders = savedProviders + providerToSave
                         ApiSession.update(saved)
+                        onCredentialsChanged()
                     }
                     isKeyOperationInProgress = false
                 }
@@ -1853,6 +2218,7 @@ fun SettingsPrivacyScreen(
                     }
                     savedProviders = savedProviders - providerToDelete
                     if (ApiSession.provider == providerToDelete) ApiSession.update(null)
+                    onCredentialsChanged()
                     isKeyOperationInProgress = false
                 }
             },

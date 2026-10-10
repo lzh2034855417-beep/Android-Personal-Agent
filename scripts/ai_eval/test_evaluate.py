@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import evaluate
 
 SCRIPT = pathlib.Path(__file__).with_name("evaluate.py")
 
@@ -141,6 +142,55 @@ class EvaluationTests(unittest.TestCase):
                 result, report = self.run_cli(cases={**self.cases, **change})
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("error", report)
+
+
+class GuidedEvaluationTests(unittest.TestCase):
+    def setUp(self):
+        self.cases = evaluate.validate_cases(evaluate.load_json(SCRIPT.with_name("guided_cases.json")))
+        self.responses = {"model": "offline-hand-authored-fixture", "runDate": "2026-10-08", "rawResponses": {}}
+        for case in self.cases:
+            self.responses["rawResponses"][case["id"]] = json.dumps({"version": 1, "factNotes": [],
+                "candidateNotes": [], "gapNotes": [], "actionId": case["expectedIds"]["actionId"], "actionNote": ""})
+
+    def test_six_topics_per_scene_both_languages_and_separate_format_factual_review(self):
+        for scene in ("IDLE_DRAIN", "USAGE_HEAT"):
+            cases = [case for case in self.cases if case["scenario"] == scene]
+            self.assertEqual(len(cases), 6)
+            self.assertEqual({case["topic"] for case in cases}, {"unknown", "shared_uid", "historical_time", "conflict", "note_injection", "new_action"})
+            self.assertEqual({case["language"] for case in cases}, {"zh", "en"})
+        report, code = evaluate.screen(self.cases, self.responses)
+        self.assertEqual(code, 0)
+        self.assertEqual(report.get("guidedFormat"), {"expected": 12, "passed": 12, "failed": 0})
+        self.assertTrue(all(item["formatScreen"] == "PASS" and item["factualReview"] == "PENDING" for item in report["results"]))
+
+    def test_foreign_ids_replaced_action_duplicate_json_and_oversize_are_format_failures(self):
+        case = self.cases[0]; original = json.loads(self.responses["rawResponses"][case["id"]])
+        invalid = [json.dumps({**original, "factNotes": [{"ids": ["foreign"], "text": ""}]}),
+                   json.dumps({**original, "actionId": "invented.action"}),
+                   '{"version":1,"version":1}', json.dumps({**original, "actionNote": "中" * 6000})]
+        for raw in invalid:
+            with self.subTest(raw=raw[:80]):
+                self.responses["rawResponses"][case["id"]] = raw
+                report, code = evaluate.screen(self.cases, self.responses)
+                self.assertEqual(code, 1)
+                self.assertEqual(report["results"][0]["formatScreen"], "FAIL")
+                self.assertEqual(report["results"][0]["factualReview"], "PENDING")
+
+    def test_format_pass_does_not_claim_semantic_accuracy_for_wrong_prose(self):
+        case = self.cases[0]; response = json.loads(self.responses["rawResponses"][case["id"]])
+        response["actionNote"] = "Unknown measurements prove a certain app cause."
+        self.responses["rawResponses"][case["id"]] = json.dumps(response)
+        report, code = evaluate.screen(self.cases, self.responses)
+        self.assertEqual(code, 0)
+        self.assertEqual(report["results"][0].get("formatScreen"), "PASS")
+        self.assertEqual(report["results"][0]["factualReview"], "PENDING")
+        self.assertNotIn("accuracy", report)
+
+    def test_invalid_guided_contract_cannot_silently_run_as_ordinary_case(self):
+        document = evaluate.load_json(SCRIPT.with_name("guided_cases.json"))
+        document["cases"][0]["expectedIds"]["actionId"] = ""
+        with self.assertRaises(ValueError):
+            evaluate.validate_cases(document)
 
 
 if __name__ == "__main__":

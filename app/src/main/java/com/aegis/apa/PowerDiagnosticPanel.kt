@@ -56,7 +56,9 @@ fun PowerDiagnosticPanel(
     onCopyPackage: (String) -> Unit,
     showDiagnosticDetails: Boolean = true,
     modifier: Modifier = Modifier,
-    onOpenVerification: () -> Unit = {}
+    onOpenVerification: () -> Unit = {},
+    onOpenGuidedDiagnostic: () -> Unit = {},
+    reportImportStatus: String? = null
 ) {
     val language = LocalAppLanguage.current
     val english = language == AppLanguage.EN
@@ -92,6 +94,9 @@ fun PowerDiagnosticPanel(
     ) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(stringResource(R.string.power_diagnostic), style = MaterialTheme.typography.titleMedium)
+            TextButton(onClick = onOpenGuidedDiagnostic, modifier = Modifier.fillMaxWidth()) {
+                Text(if (english) "Guided diagnosis · no Key needed" else "按问题排查 · 无需 Key")
+            }
             Text(
                 stringResource(R.string.power_diagnostic_description),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -100,7 +105,7 @@ fun PowerDiagnosticPanel(
             Text(stringResource(R.string.app_power_attribution), style = MaterialTheme.typography.titleSmall)
             when (state) {
                 PowerDiagnosticUiState.Idle -> Text(if (english) "No report imported or collected. Standard users can import an Android Bug Report." else "尚未导入或采集；普通用户可导入系统 Bug Report。")
-                PowerDiagnosticUiState.Importing -> Text(if (english) "Reading the system report safely…" else "正在安全读取系统报告…")
+                PowerDiagnosticUiState.Importing -> Text(reportImportStatus ?: if (english) "Reading the system report safely…" else "正在安全读取系统报告…")
                 is PowerDiagnosticUiState.Collecting -> Text(if (english) "Collecting ${state.completed}/${state.total}: ${state.source}" else "正在采集 ${state.completed}/${state.total}：${state.source}")
                 PowerDiagnosticUiState.Ready -> Text(
                     if (english) {
@@ -234,7 +239,7 @@ internal fun PowerDiagnosticReportCards(report: PowerDiagnosticSnapshot, onCopyP
     DiagnosticSection(if (english) "Supporting evidence" else "支持证据") {
         CandidateSection(if (english) "Total consumption" else "耗电总量排行", display.totalConsumption,
             if (english) "No comparable app-consumption data." else "没有可比较的应用耗电量数据。", false, onCopyPackage)
-        CandidateSection(if (english) "Background anomaly suspects" else "后台异常嫌疑", display.backgroundSuspects,
+        CandidateSection(if (english) "Background risks to check" else "后台风险与待核查项", display.backgroundSuspects,
             if (report.localVerdict?.type != PowerVerdictType.SUFFICIENT) {
                 if (english) "Evidence is insufficient to assess background anomalies."
                 else "证据不足，尚不能判断后台是否异常。"
@@ -275,8 +280,8 @@ internal fun PowerDiagnosticReportCards(report: PowerDiagnosticSnapshot, onCopyP
             }
             CandidateSection(if (english) "Background consumption" else "后台耗电排行", display.backgroundConsumption,
                 if (english) "No comparable background-consumption data." else "没有可比较的应用后台耗电量。", false, onCopyPackage)
-            CandidateSection(if (english) "Scheduling observations" else "系统调度观察", display.schedulingObservations,
-                if (english) "No cumulative scheduling data parsed." else "没有解析到应用调度累计数据。", false, onCopyPackage)
+            CandidateSection(if (english) "Unverified background / scheduling observations" else "待验证后台／调度线索", display.schedulingObservations,
+                if (english) "No additional background or scheduling clues." else "没有额外的后台或调度线索。", false, onCopyPackage)
             Text(if (english) "Cumulative scheduling counts can cover another period; they do not establish a same-window anomaly."
                 else "调度累计值可能来自另一统计周期，不能据此认定本次窗口的后台异常。",
                 style = MaterialTheme.typography.bodySmall)

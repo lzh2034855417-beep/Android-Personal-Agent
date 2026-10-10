@@ -46,6 +46,7 @@ object PowerDiagnosticReportBuilder {
                 }
             }
 
+            appendLine(AppPowerRanking.build(snapshot, language))
             val partial = snapshot.sources.values
                 .filter { it.status == DiagnosticSourceStatus.TRUNCATED }
                 .sortedBy { it.source }
@@ -109,6 +110,7 @@ object PowerDiagnosticReportBuilder {
                     appendLine("Projected runtime at the same intensity: ${formatDecimal(window.capacityMah / mahPerHour)} hours")
                 } else appendLine("Window note: under 2 hours; keep the measured rate only and do not project full runtime.")
             }
+            appendLine(AppPowerRanking.build(snapshot, AppLanguage.EN))
             val unavailable = snapshot.sources.values.filter { it.status != DiagnosticSourceStatus.AVAILABLE }
             if (unavailable.isNotEmpty()) appendLine("Incomplete sources: " + unavailable.joinToString("; ") { "${it.source} (${it.status.name})" })
             val verdict = snapshot.localVerdict
@@ -136,8 +138,8 @@ object PowerDiagnosticReportBuilder {
                 }
                 appendEnglishCandidates("Total consumption", verdict.totalConsumption, false, includeAdvancedActions)
                 appendEnglishCandidates("Background consumption", verdict.backgroundConsumption, false, includeAdvancedActions)
-                appendEnglishCandidates("Same-window background anomaly evidence", verdict.backgroundSuspects, true, includeAdvancedActions)
-                appendEnglishCandidates("Scheduling observations", verdict.schedulingObservations, false, includeAdvancedActions)
+                appendEnglishCandidates("Background risk warnings / same-window evidence", verdict.backgroundSuspects, true, includeAdvancedActions)
+                appendEnglishCandidates("Unverified background / scheduling observations", verdict.schedulingObservations, false, includeAdvancedActions)
                 if (verdict.limits.isNotEmpty()) appendLine("Evidence limits: ${verdict.limits.joinToString("; ") { englishLimit(it) }}")
             }
         }.trimEnd()
@@ -218,7 +220,20 @@ object PowerDiagnosticReportBuilder {
         return if (value.containsChinese()) "Additional diagnostic evidence was recorded." else value
     }
 
-    private fun englishExplanation(value: String): String = when (value) {
+    private fun englishExplanation(value: String): String {
+        if (value.startsWith("统计口径待核查：")) return "Measurement basis needs verification: inconsistent app/window estimates cannot confirm abnormal behavior or module causation; do not restrict or freeze."
+        if (value.startsWith("后台耗电偏高，待核查")) return "Elevated background drain needs checking; one system estimate cannot confirm an anomaly or module causation. Do not restrict or freeze."
+        if (value.startsWith("待验证后台线索：")) return buildString {
+            append("An unverified background clue: one background signal cannot establish an anomaly or causation. Check whether it stays elevated in comparable usage windows.")
+            if (value.contains("独立累计值")) append(" Scheduling counts have an independent, possibly since-boot scope; do not combine them with this drain window or use them to restrict or freeze an app.")
+            if (value.contains("系统或共享 UID")) append(" System or shared UIDs are observation-only; responsibility cannot be safely split.")
+        }
+        if (value.startsWith("该统计为独立累计值")) return "This is an independent cumulative count, possibly since boot; do not mix it with this drain window or use it to restrict or freeze an app." +
+                if (value.contains("系统或共享 UID")) " System or shared UIDs are observation-only; responsibility cannot be safely split." else ""
+        return englishKnownExplanation(value)
+    }
+
+    private fun englishKnownExplanation(value: String): String = when (value) {
         "前台耗电占主要部分，这更像前台使用成本，不能据此判断后台异常。" ->
             "Foreground use accounts for most of the drain; this does not indicate a background anomaly."
         "后台耗电占主要部分，值得优先核对，但单一系统估算不能证明异常。" ->
@@ -336,18 +351,19 @@ object PowerDiagnosticReportBuilder {
             }
         }
 
-        appendLine("【同窗口后台异常证据】")
+        appendLine("【后台风险提示与同窗口证据】")
         if (verdict.backgroundSuspects.isEmpty()) {
-            appendLine("没有达到后台异常建议阈值的应用；高耗电或后台耗电较高不等于异常。")
+            appendLine("未形成可确认的后台异常证据；缺失统计不代表正常。")
         } else {
             verdict.backgroundSuspects.forEachIndexed { index, candidate ->
                 appendCandidate(index, candidate, includeActions = true, includeAdvancedActions)
             }
         }
 
-        appendLine("【系统调度观察】")
+        appendLine("【待验证后台／调度线索】")
+        if (verdict.schedulingObservations.isNotEmpty()) appendLine("以下为待验证线索，不是已确认异常。")
         if (verdict.schedulingObservations.isEmpty()) {
-            appendLine("没有解析到应用调度累计数据。")
+            appendLine("没有额外的待验证后台或调度线索。")
         } else {
             verdict.schedulingObservations.forEachIndexed { index, candidate ->
                 appendCandidate(index, candidate, includeActions = false)

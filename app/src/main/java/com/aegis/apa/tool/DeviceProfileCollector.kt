@@ -260,6 +260,8 @@ object DeviceProfileParser {
             ?.substringAfter('=')
             ?.split('|', limit = 2)
         val sysfsHardware = HardwareSupplyInfo(
+            ramVendor = raw.lineSequence().firstOrNull { it.startsWith("DDR_VENDOR_HEX=") }
+                ?.substringAfter('=')?.let(::deviceTreeDdrVendorFromId),
             ramType = sysfsDdrType,
             storageVendor = normalizeStorageVendor(storage?.getOrNull(0)),
             storageModel = storage?.getOrNull(1)?.trim()?.ifEmpty { null },
@@ -295,6 +297,18 @@ object DeviceProfileParser {
         )
     }
 
+    private fun deviceTreeDdrVendorFromId(raw: String): String? {
+        val id = normalizedSupplierId(raw) ?: return null
+        // Mode-register manufacturer IDs, not the extended bootlog IDs below.
+        // Linux drivers/memory/jedec_ddr.h: Samsung=1, Hynix=6, Micron=255.
+        return when (id.trimStart('0')) {
+            "1" -> "三星 (Samsung)"
+            "6" -> "海力士 (SK hynix)"
+            "FF" -> "美光 (Micron)"
+            else -> ddrVendorFromId(raw)
+        }
+    }
+
     private fun ddrVendorFromId(raw: String): String? {
         val id = normalizedSupplierId(raw) ?: return null
         return when (id.trimStart('0')) {
@@ -316,7 +330,7 @@ object DeviceProfileParser {
     }
 
     private fun normalizedSupplierId(raw: String): String? = normalizeHexId(raw)
-        .takeIf { it.length <= 8 && it.any { digit -> digit != '0' } }
+        .takeIf { it.matches(Regex("[0-9A-F]{1,8}")) && it.any { digit -> digit != '0' } }
 
     private fun normalizeHexId(raw: String): String = raw.trim()
         .removePrefix("0x")
@@ -421,14 +435,33 @@ object SystemProfileCommandRunner : ProfileCommandRunner {
 }
 
 object DeviceProfileCollector {
+    fun readHardware(
+        preferRoot: Boolean,
+        runner: ProfileCommandRunner = SystemProfileCommandRunner,
+        cancellationRequested: () -> Boolean = { false }
+    ): HardwareSupplyInfo? = readWithScript(preferRoot, runner, cancellationRequested, hardwareCollectionScript)
+        .hardwareSupplyInfo
+
+    fun readScheduling(
+        preferRoot: Boolean,
+        runner: ProfileCommandRunner = SystemProfileCommandRunner,
+        cancellationRequested: () -> Boolean = { false }
+    ): DeviceProfileSnapshot = readWithScript(preferRoot, runner, cancellationRequested,
+        identityCollectionScript + "\n" + schedulingCollectionScript)
+
     fun read(
         preferRoot: Boolean,
         runner: ProfileCommandRunner = SystemProfileCommandRunner,
         cancellationRequested: () -> Boolean = { false }
+    ): DeviceProfileSnapshot = readWithScript(preferRoot, runner, cancellationRequested, collectionScript)
+
+    private fun readWithScript(
+        preferRoot: Boolean, runner: ProfileCommandRunner,
+        cancellationRequested: () -> Boolean, script: String
     ): DeviceProfileSnapshot {
         checkCollectionCancellation(cancellationRequested)
         if (preferRoot) {
-            val rootResult = runner.run(listOf("su", "-c", collectionScript), cancellationRequested)
+            val rootResult = runner.run(listOf("su", "-c", script), cancellationRequested)
             checkCollectionCancellation(cancellationRequested)
             if (rootResult.succeeded) {
                 return DeviceProfileParser.parse(
@@ -443,19 +476,20 @@ object DeviceProfileCollector {
             } else {
                 "Root 读取失败或被拒绝，已回退标准权限"
             }
-            return readStandard(runner, rootWarning, cancellationRequested)
+            return readStandard(runner, rootWarning, cancellationRequested, script)
         }
 
-        return readStandard(runner, null, cancellationRequested)
+        return readStandard(runner, null, cancellationRequested, script)
     }
 
     private fun readStandard(
         runner: ProfileCommandRunner,
         priorWarning: String?,
-        cancellationRequested: () -> Boolean
+        cancellationRequested: () -> Boolean,
+        script: String
     ): DeviceProfileSnapshot {
         checkCollectionCancellation(cancellationRequested)
-        val result = runner.run(listOf("sh", "-c", collectionScript), cancellationRequested)
+        val result = runner.run(listOf("sh", "-c", script), cancellationRequested)
         checkCollectionCancellation(cancellationRequested)
         val error = when {
             result.timedOut -> listOfNotNull(priorWarning, "标准权限读取超时").joinToString("；")
@@ -474,7 +508,7 @@ object DeviceProfileCollector {
         "输出过长或不完整，已截断".takeIf { result.truncated }
     ).joinToString("；").ifBlank { null }
 
-    private val collectionScript = """
+    private val identityCollectionScript = """
         printf 'MANUFACTURER=%s\n' "${'$'}(getprop ro.product.manufacturer)"
         printf 'MODEL=%s\n' "${'$'}(getprop ro.product.model)"
         printf 'DEVICE=%s\n' "${'$'}(getprop ro.product.device)"
@@ -484,6 +518,13 @@ object DeviceProfileCollector {
         printf 'KERNEL=%s\n' "${'$'}(uname -r)"
         printf 'CPU_PRESENT=%s\n' "${'$'}(cat /sys/devices/system/cpu/present 2>/dev/null)"
         printf 'CPU_ONLINE=%s\n' "${'$'}(cat /sys/devices/system/cpu/online 2>/dev/null)"
+    """.trimIndent()
+
+    private val hardwareCollectionScript = """
+        ddr_vendor=/proc/device-tree/memory/ddr_manufacturer_id
+        if [ -r "${'$'}ddr_vendor" ]; then
+          printf 'DDR_VENDOR_HEX=%s\n' "${'$'}(od -An -tx1 "${'$'}ddr_vendor" 2>/dev/null | tr -d ' \n')"
+        fi
         ddr_type=/proc/device-tree/memory/ddr_device_type
         if [ -r "${'$'}ddr_type" ]; then
           printf 'DDR_TYPE_HEX=%s\n' "${'$'}(od -An -tx1 "${'$'}ddr_type" 2>/dev/null | tr -d ' \n')"
@@ -500,6 +541,9 @@ object DeviceProfileCollector {
             fi
           fi
         done
+    """.trimIndent()
+
+    private val schedulingCollectionScript = """
         for p in /sys/devices/system/cpu/cpufreq/policy*; do
           [ -d "${'$'}p" ] || continue
           name="${'$'}{p##*/}"
@@ -520,4 +564,7 @@ object DeviceProfileCollector {
           esac
         done
     """.trimIndent()
+
+    private val collectionScript = listOf(identityCollectionScript, hardwareCollectionScript, schedulingCollectionScript)
+        .joinToString("\n")
 }

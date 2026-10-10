@@ -15,6 +15,14 @@ object VerificationSummaryProjector {
         val metrics = mutableListOf<VerificationMetric>()
         val groups = snapshot.apps.filter { it.packageNames.isNotEmpty() }.groupBy { it.packageNames.distinct().sorted() }
         val ambiguousGroups = groups.filterValues { it.size > 1 }.keys
+        val identityCoverage = snapshot.evidenceCoverage.fields[EvidenceField.UID_PACKAGES]
+        val identityStatus = when {
+            sources["packages"] != DiagnosticSourceStatus.AVAILABLE && sources["packages"] != DiagnosticSourceStatus.TRUNCATED ->
+                EvidenceFieldStatus.SOURCE_UNAVAILABLE
+            sources["packages"] == DiagnosticSourceStatus.TRUNCATED || identityCoverage == EvidenceFieldStatus.TRUNCATED ->
+                EvidenceFieldStatus.TRUNCATED
+            else -> identityCoverage ?: EvidenceFieldStatus.NOT_PARSED
+        }
 
         fun metric(kind: VerificationMetricKind, packages: List<String>, rawValue: Double?, unit: VerificationUnit,
             estimate: VerificationEstimate, source: String, field: EvidenceField) {
@@ -22,12 +30,16 @@ object VerificationSummaryProjector {
             val sourceAvailable = sourceStatus == DiagnosticSourceStatus.AVAILABLE || sourceStatus == DiagnosticSourceStatus.TRUNCATED
             val key = VerificationMetricKey(kind, packages)
             val ambiguous = key.packageNames in ambiguousGroups
+            val appIdentityStatus = identityStatus.takeIf { key.packageNames.isNotEmpty() }
             val numericValue = rawValue?.takeIf { it.isFinite() && it >= 0.0 }
-            val value = numericValue?.takeIf { sourceAvailable && !ambiguous }
+            // A partial mapping can omit shared-UID members, so it cannot own an app value.
+            val value = numericValue?.takeIf { sourceAvailable && !ambiguous &&
+                (appIdentityStatus == null || appIdentityStatus == EvidenceFieldStatus.PARSED) }
             val coverage = snapshot.evidenceCoverage.fields[field]
             val status = when {
                 ambiguous -> EvidenceFieldStatus.NOT_PARSED
                 !sourceAvailable -> EvidenceFieldStatus.SOURCE_UNAVAILABLE
+                appIdentityStatus != null && appIdentityStatus != EvidenceFieldStatus.PARSED -> appIdentityStatus
                 sourceStatus == DiagnosticSourceStatus.TRUNCATED || coverage == EvidenceFieldStatus.TRUNCATED -> EvidenceFieldStatus.TRUNCATED
                 coverage != null && coverage != EvidenceFieldStatus.PARSED -> coverage
                 rawValue != null && numericValue == null -> EvidenceFieldStatus.NOT_PARSED
@@ -44,7 +56,7 @@ object VerificationSummaryProjector {
         val drain = snapshot.system.batteryDrainWindow
         metric(VerificationMetricKind.OVERALL_POWER, emptyList(), drain?.drainMah, VerificationUnit.MAH,
             if (drain?.usesActualDrain == true) VerificationEstimate.ACTUAL else VerificationEstimate.ESTIMATED,
-            "batterystats", EvidenceField.POWER_MAH)
+            "batterystats", EvidenceField.OVERALL_POWER_MAH)
 
         // Package identity lacks user/profile scope. Multiple rows cannot be safely assigned or summed.
         val ranked = groups.map { (packages, rows) ->

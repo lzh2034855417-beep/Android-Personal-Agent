@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
@@ -161,11 +162,42 @@ class HardwareSupplyLayoutTest {
         rule.onNodeWithText("复制识别信息").assertDoesNotExist()
     }
 
+    @Test fun hardwareIsVisibleWithoutSchedulingAndReadActionsAreIndependent() {
+        var hardwareReads = 0
+        var schedulingReads = 0
+        showDeviceScreen(
+            hardware = HardwareSupplyInfo(
+                ramVendor = "三星 (Samsung)",
+                storageVendor = "SK hynix",
+                source = HardwareSupplySource.ROOT_SYSFS
+            ),
+            withSchedulingProfile = false,
+            onReadHardware = { hardwareReads++ },
+            onReadScheduling = { schedulingReads++ }
+        )
+
+        rule.onNodeWithText("RAM：16GB · 三星 (Samsung)").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("ROM：512GB · SK hynix").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithTag("read_hardware_information").performScrollTo().performClick()
+        rule.runOnIdle {
+            assertEquals(1, hardwareReads)
+            assertEquals(0, schedulingReads)
+        }
+        rule.onNodeWithText("读取调度⌄").performScrollTo().performClick()
+        rule.runOnIdle {
+            assertEquals(1, hardwareReads)
+            assertEquals(1, schedulingReads)
+        }
+    }
+
     private fun showDeviceScreen(
         hardware: HardwareSupplyInfo?,
         onImportHardwareReport: () -> Unit = {},
         onCopyHardwareFeedback: (String) -> Unit = {},
-        isHardwareReportBusy: Boolean = false
+        isHardwareReportBusy: Boolean = false,
+        withSchedulingProfile: Boolean = true,
+        onReadHardware: () -> Unit = {},
+        onReadScheduling: () -> Unit = {}
     ) {
         rule.setContent {
             AndroidPersonalAgentTheme {
@@ -187,7 +219,7 @@ class HardwareSupplyLayoutTest {
                         usageSummary = UsageSummary(false, null, emptyList()),
                         rootBatteryInfo = null,
                         sampledAt = "11:19:00",
-                        deviceProfile = DeviceProfileSnapshot(
+                        deviceProfile = if (withSchedulingProfile) DeviceProfileSnapshot(
                             model = "2509FPN0BC",
                             device = null,
                             soc = "SM8850",
@@ -202,10 +234,11 @@ class HardwareSupplyLayoutTest {
                             thermalSensors = emptyList(),
                             access = DeviceProfileAccess.STANDARD,
                             hardwareSupplyInfo = hardware
-                        ),
-                        importedHardwareSupplyInfo = null,
+                        ) else null,
+                        importedHardwareSupplyInfo = if (withSchedulingProfile) null else hardware,
                         isDeviceProfileReading = false,
-                        onReadDeviceProfile = {},
+                        onReadDeviceProfile = onReadScheduling,
+                        onReadHardware = onReadHardware,
                         onImportHardwareReport = onImportHardwareReport,
                         isHardwareReportBusy = isHardwareReportBusy,
                         onCopyHardwareFeedback = onCopyHardwareFeedback,

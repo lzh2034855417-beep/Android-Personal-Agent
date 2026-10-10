@@ -4,7 +4,7 @@ An experimental Android app that explains battery, heat and resource readings us
 
 [中文](README.md) · [Roadmap](ROADMAP.md) · [Architecture audit](docs/ARCHITECTURE.md) · [Data contract](docs/DATA_MODEL.md) · [Technical debt](docs/TECH_DEBT.md) · [Testing](docs/TESTING.md)
 
-> The current source is configured as `0.3.0` (`versionCode 5`); debug installs display `0.3.0-preview`. Published APKs and release notes are listed on [GitHub Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases).
+> The current source is configured as pending release `0.3.1` (`versionCode 6`); debug installs display `0.3.1-preview`. Preserve this candidate and complete release checks before publishing, no earlier than 2026-10-17 02:23:45 Asia/Shanghai (15 days after v0.3.0). See the [release checklist](docs/RELEASE_0.3.1.md). Published APKs and release notes are listed on [GitHub Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases).
 
 ## Features
 
@@ -40,6 +40,14 @@ After a successful import or collection, APA automatically selects the bounded h
 
 ## Capability levels
 
+### Guided diagnosis (current development code)
+
+Choose Guided diagnosis near System power diagnostics in Agent to investigate idle drain or heat during use without a model key. After confirming answers and samples, local rules show facts, up to three unverified explanations, evidence gaps and one primary action. Incomplete sources, shared UID groups, unknown report ownership or time cannot authorize a specific app adjustment. Production report clock bounds are usually unknown and cannot establish adjustment effects.
+
+The guide lives only in the page ViewModel: configuration changes retain it, but process death requires starting again. A session holds at most two confirmed summaries. Battery temperature and reported thermal state are descriptive observations with separate sources and times, not CPU/surface temperatures or cooling/health percentages. There is no universal danger threshold or instruction to create heat.
+
+Explain this diagnosis requires preview and explicit send confirmation. Free notes default off; only current allowlisted evidence, local results and the primary action are sent, without ordinary chat history, raw reports or unique device identifiers. The combined system/user prompts have an inclusive 16 KiB UTF-8 limit; oversized payloads are rejected without truncation. Package names and times can still be sensitive. Model prose cannot replace the local action, and valid format does not prove accuracy. Synthetic real-parser → rule → payload checks have run; UI/protocol instrumentation is compiled only. Authorized device execution, human usability checks and live-model evaluation remain release gates: see [Testing](docs/TESTING.md) and [Explanation evaluation](docs/guided-diagnostics-evaluation.md).
+
 ### Diagnose → adjust → retest
 
 After a successful diagnostic, open Local verification records to preview and save a baseline, record one manual adjustment and rollback plan, then select the current diagnostic as a retest. No Key is required. Records are separately encrypted, retained for 30 days and limited to 20; clearing chat keeps them. Same-source samples still need verified windows, ownership, scenario and per-metric gates. Unknown or overlapping cumulative windows permit only raw-value display; observations do not prove adjustment effects.
@@ -57,6 +65,7 @@ App visibility can limit enumeration. Root readings retain separate timestamps a
 ## Data handling
 
 - Basic readings and visible apps are collected **locally on entry and Activity resume**. Usage events are read if Usage Access was granted. Collection and transmission selection are different boundaries.
+- When a Root interface or manager is detected, entry and foreground resume check APA's identity with `su -c "id -u"`. Only UID 0 confirms access, independently of battery-node availability. The check is limited to 8 seconds and 1 KiB; it does not read a full report, change the system, or upload data. A manager grant prompt may appear. Denied, timed-out or failed checks are not automatically repeated: use **Recheck Root access**, or open the manager from APA and return to retry. Report collection remains manual.
 - Explicit online Send triggers a direct provider request with a basic snapshot, selected Level report, optional app report and any diagnostic summary that remains selected after import or collection; there is no APA relay server.
 - Deterministic battery-observation answers are generated locally. Configuring a provider key does not automatically send the exact observation timestamps or battery trajectory.
 - A successful system diagnostic selects only its bounded human-readable summary and shows that attachment state clearly. The user can deselect it; the raw Bug Report ZIP and Root output remain local and are released after parsing.
@@ -78,7 +87,7 @@ Android 8/API 26+; compile SDK 36.1, target SDK 36. Use the committed Gradle wra
 
 On Windows use `gradlew.bat` and configure JAVA_HOME/ANDROID_HOME. Initial dependency downloads require network; use `--offline` only with a populated cache.
 
-- Debug package: `com.aegis.apa.preview` (APA Preview); APK: `app/build/outputs/apk/debug/APA-v0.3.0-debug.apk`, installed version `0.3.0-preview`.
+- Debug package: `com.aegis.apa.preview` (APA Preview); APK: `app/build/outputs/apk/debug/APA-v0.3.1-debug.apk`, installed version `0.3.1-preview`.
 - Release package: `com.aegis.apa` (APA). The two installations have separate data.
 - Debug and source checks require no release credentials. Release APK/AAB packaging requires complete local signing properties and an existing keystore.
 - Ignored `keystore.properties` contains storeFile, storePassword, keyAlias, keyPassword. Optional `-Papa.signingProperties=local-file` selects another properties file; quote the whole argument in PowerShell. Relative storeFile paths resolve from the app module.

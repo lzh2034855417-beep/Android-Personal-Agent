@@ -6,6 +6,36 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class VerificationModelTest {
+    // Catches UTF-16 truncation dropping supplementary characters from every editable note.
+    @Test fun notesRetainFiveHundredCodePointsAtConstructionAndCopy() {
+        val input = "😀".repeat(500) + "x"
+        val expected = "😀".repeat(500)
+        val change = VerificationFixtures.change().copy(description = input, rollback = input, sideEffects = input)
+        assertEquals(expected, change.description)
+        assertEquals(expected, change.rollback)
+        assertEquals(expected, change.sideEffects)
+        assertEquals(expected, VerificationFixtures.context().copy(scenarioNote = input).scenarioNote)
+    }
+
+    // Catches keeping isolated surrogates, stripping real pairs, or leaving control characters.
+    @Test fun malformedSurrogatesBecomeReplacementCharactersAndControlsBecomeSpaces() {
+        val input = "\uD800a\uDC00\uD83D\uDE00\uD800\uD800\uDC00\u0000\n\u0085"
+        val expected = "\uFFFDa\uFFFD😀\uFFFD\uD800\uDC00   "
+        assertEquals(expected, VerificationFixtures.record().copy(title = input).title)
+        val change = VerificationFixtures.change().copy(description = input, rollback = input, sideEffects = input)
+        assertEquals(expected, change.description)
+        assertEquals(expected, change.rollback)
+        assertEquals(expected, change.sideEffects)
+        assertEquals(expected, VerificationFixtures.context().copy(scenarioNote = input).scenarioNote)
+    }
+
+    // Catches claiming grapheme limits: combining marks each consume their own code point.
+    @Test fun chineseAndCombiningMarksUseCodePointLimits() {
+        assertEquals("中".repeat(80), VerificationFixtures.record().copy(title = "中".repeat(81)).title)
+        assertEquals("e\u0301".repeat(40), VerificationFixtures.record().copy(title = "e\u0301".repeat(41)).title)
+        assertEquals("a".repeat(79) + "e", VerificationFixtures.record().copy(title = "a".repeat(79) + "e\u0301").title)
+    }
+
     @Test
     fun changeEditInvalidatesRetest() {
         // Catches retaining a retest after its adjustment evidence changes.

@@ -25,12 +25,38 @@ class VerificationStoreTest {
     private fun record(store: VerificationStore, id: String = "record-1") = VerificationFixtures.record().copy(
         id = id, scopeId = requireNotNull(store.load().scopeId))
 
+    // A previously unseen id is still stale when its intent predates a successful clear.
+    @Test fun oldMutationTokenCannotInsertUnseenRecordAfterClear() {
+        val store = store(); val candidate = record(store)
+        val token = store.mutationToken()
+        assertNull(store().clear().failure)
+        assertEquals(VerificationStorageFailure.WRITE_FAILED, store.upsert(candidate, token).failure)
+        assertTrue(store.load().records.isEmpty())
+    }
+
+    @Test fun failedClearDoesNotInvalidateExistingMutationToken() {
+        val store = store(); val candidate = record(store); val token = store.mutationToken()
+        val blocker = File(folder.root, "verification.enc.pending").apply { assertTrue(mkdir()) }
+        assertEquals(VerificationStorageFailure.WRITE_FAILED, store.clear().failure)
+        assertTrue(blocker.delete())
+        assertNull(store.upsert(candidate, token).failure)
+        assertEquals(listOf(candidate), store.load().records)
+    }
+
+    @Test fun tokenFromDifferentArchiveCannotAuthorizeWrite() {
+        val store = store(); val candidate = record(store)
+        val other = store(File(folder.root, "other.enc"))
+        assertNull(other.load().failure)
+        assertEquals(VerificationStorageFailure.WRITE_FAILED, store.upsert(candidate, other.mutationToken()).failure)
+        assertTrue(store.load().records.isEmpty())
+    }
+
     @Test fun `intermediate preview v1 encrypted archive loads and remains editable`() {
         file().writeBytes(encrypt(VerificationFixtures.legacyPreviewBytes()))
         val store = store()
         assertEquals(listOf(VerificationFixtures.record()), store.load().records)
         val edited = VerificationFixtures.record().copy(revision = 3, title = "Edited preview")
-        assertNull(store.upsert(edited).failure)
+        assertNull(store.upsert(edited, store.mutationToken()).failure)
         assertEquals(listOf(edited), store().load().records)
     }
 
@@ -93,7 +119,7 @@ class VerificationStoreTest {
         val scope = store.load().scopeId
         assertFalse(scope.isNullOrBlank())
         val record = record(store)
-        assertNull(store.upsert(record).failure)
+        assertNull(store.upsert(record, store.mutationToken()).failure)
         val raw = file().readBytes()
         assertFalse(String(raw, Charsets.ISO_8859_1).contains("com.example.app"))
         assertFalse(String(raw, Charsets.ISO_8859_1).contains("Disable optional sync"))
@@ -107,19 +133,19 @@ class VerificationStoreTest {
     @Test fun `twenty first and oversized record leave ciphertext unchanged`() {
         val store = store()
         val first = record(store)
-        (1..20).forEach { assertNull(store.upsert(first.copy(id = "r$it")).failure) }
+        (1..20).forEach { assertNull(store.upsert(first.copy(id = "r$it"), store.mutationToken()).failure) }
         val original = file().readBytes()
-        assertEquals(VerificationStorageFailure.LIMIT, store.upsert(first.copy(id = "r21")).failure)
+        assertEquals(VerificationStorageFailure.LIMIT, store.upsert(first.copy(id = "r21"), store.mutationToken()).failure)
         assertArrayEquals(original, file().readBytes())
         val huge = first.copy(id = "r1", revision = first.revision + 1,
             target = VerificationTarget.AppGroup((1..40).map { "p$it" + "中".repeat(500) }))
-        assertEquals(VerificationStorageFailure.LIMIT, store.upsert(huge).failure)
+        assertEquals(VerificationStorageFailure.LIMIT, store.upsert(huge, store.mutationToken()).failure)
         assertArrayEquals(original, file().readBytes())
     }
 
     @Test fun `authentication damage and wrong key differ from unavailable key`() {
         val store = store()
-        assertNull(store.upsert(record(store)).failure)
+        assertNull(store.upsert(record(store), store.mutationToken()).failure)
         val original = file().readBytes()
         val wrong = KeyGenerator.getInstance("AES").apply { init(128) }.generateKey()
         assertEquals(VerificationStorageFailure.DAMAGED, VerificationStore(file(), { wrong }, { now }).load().failure)
@@ -128,7 +154,7 @@ class VerificationStoreTest {
         file().writeBytes(original.also { it[it.lastIndex] = (it.last().toInt() xor 1).toByte() })
         assertEquals(VerificationStorageFailure.DAMAGED, store.load().failure)
         val damaged = file().readBytes()
-        assertEquals(VerificationStorageFailure.DAMAGED, store.upsert(VerificationFixtures.record()).failure)
+        assertEquals(VerificationStorageFailure.DAMAGED, store.upsert(VerificationFixtures.record(), store.mutationToken()).failure)
         assertArrayEquals(damaged, file().readBytes())
         assertNull(store.clear().failure)
         assertTrue(store.load().records.isEmpty())
@@ -140,7 +166,7 @@ class VerificationStoreTest {
         val unknown = VerificationArchive.encode(scope, emptyList()).also { ByteBuffer.wrap(it).putInt(2) }
         file().writeBytes(encrypt(unknown))
         val original = file().readBytes()
-        assertEquals(VerificationStorageFailure.UNSUPPORTED, store.upsert(VerificationFixtures.record()).failure)
+        assertEquals(VerificationStorageFailure.UNSUPPORTED, store.upsert(VerificationFixtures.record(), store.mutationToken()).failure)
         assertArrayEquals(original, file().readBytes())
         file().writeBytes(ByteArray(1024 * 1024 + 29))
         assertEquals(VerificationStorageFailure.LIMIT, store.load().failure)
@@ -152,7 +178,7 @@ class VerificationStoreTest {
     @Test fun `pending directory blocks writes and deletion without changing original`() {
         val store = store()
         val first = record(store)
-        assertNull(store.upsert(first).failure)
+        assertNull(store.upsert(first, store.mutationToken()).failure)
         val original = file().readBytes()
         assertTrue(File(folder.root, "verification.enc.pending").mkdir())
         assertEquals(VerificationStorageFailure.WRITE_FAILED, store.delete(first.id).failure)
@@ -163,7 +189,7 @@ class VerificationStoreTest {
     @Test fun `expiration cleanup preserves scope and failure preserves file`() {
         val store = store()
         val first = record(store)
-        assertNull(store.upsert(first).failure)
+        assertNull(store.upsert(first, store.mutationToken()).failure)
         val original = file().readBytes()
         now = first.createdAt.plusSeconds(30 * 86400)
         val blocker = File(folder.root, "verification.enc.pending")
@@ -183,16 +209,16 @@ class VerificationStoreTest {
         val first = record(store)
         val executor = Executors.newSingleThreadExecutor()
         try {
-            val saved = executor.submit<VerificationLoadResult> { store.upsert(first) }
+            val saved = executor.submit<VerificationLoadResult> { store.upsert(first, store.mutationToken()) }
             val deleted = executor.submit<VerificationLoadResult> { store.delete(first.id) }
             assertNull(saved.get(5, TimeUnit.SECONDS).failure)
             assertNull(deleted.get(5, TimeUnit.SECONDS).failure)
-            assertEquals(VerificationStorageFailure.WRITE_FAILED, store.upsert(first).failure)
-            assertEquals(VerificationStorageFailure.WRITE_FAILED, store.upsert(first.copy(revision = 99)).failure)
+            assertEquals(VerificationStorageFailure.WRITE_FAILED, store.upsert(first, store.mutationToken()).failure)
+            assertEquals(VerificationStorageFailure.WRITE_FAILED, store.upsert(first.copy(revision = 99), store.mutationToken()).failure)
             assertTrue(store.load().records.isEmpty())
-            assertNull(store.upsert(first.copy(id = "new")).failure)
+            assertNull(store.upsert(first.copy(id = "new"), store.mutationToken()).failure)
             assertNull(store.clear().failure)
-            assertEquals(VerificationStorageFailure.WRITE_FAILED, store.upsert(first.copy(id = "new")).failure)
+            assertEquals(VerificationStorageFailure.WRITE_FAILED, store.upsert(first.copy(id = "new"), store.mutationToken()).failure)
             assertTrue(store.load().records.isEmpty())
         } finally { executor.shutdownNow() }
     }
@@ -204,28 +230,28 @@ class VerificationStoreTest {
         val gate = CountDownLatch(1)
         val executor = Executors.newFixedThreadPool(2)
         try {
-            val a = executor.submit<VerificationLoadResult> { gate.await(); firstStore.upsert(first) }
-            val b = executor.submit<VerificationLoadResult> { gate.await(); secondStore.upsert(first.copy(id = "record-2")) }
+            val a = executor.submit<VerificationLoadResult> { gate.await(); firstStore.upsert(first, firstStore.mutationToken()) }
+            val b = executor.submit<VerificationLoadResult> { gate.await(); secondStore.upsert(first.copy(id = "record-2"), secondStore.mutationToken()) }
             gate.countDown()
             assertNull(a.get(5, TimeUnit.SECONDS).failure)
             assertNull(b.get(5, TimeUnit.SECONDS).failure)
             assertEquals(setOf("record-1", "record-2"), firstStore.load().records.map { it.id }.toSet())
             assertNull(firstStore.delete(first.id).failure)
-            assertEquals(VerificationStorageFailure.WRITE_FAILED, secondStore.upsert(first).failure)
+            assertEquals(VerificationStorageFailure.WRITE_FAILED, secondStore.upsert(first, secondStore.mutationToken()).failure)
         } finally { executor.shutdownNow() }
     }
 
     @Test fun `stale revisions scope and creation mutation preserve latest record`() {
         val store = store()
         val first = record(store)
-        assertNull(store.upsert(first).failure)
+        assertNull(store.upsert(first, store.mutationToken()).failure)
         val latest = first.copy(revision = 3, title = "latest")
-        assertNull(store.upsert(latest).failure)
+        assertNull(store.upsert(latest, store.mutationToken()).failure)
         val original = file().readBytes()
         listOf(first, latest, latest.copy(revision = 4, scopeId = "other"),
             latest.copy(revision = 4, createdAt = now), latest.copy(revision = 4, schemaVersion = 2),
             latest.copy(revision = 4, ruleVersion = 2)).forEach {
-            assertEquals(VerificationStorageFailure.WRITE_FAILED, store.upsert(it).failure)
+            assertEquals(VerificationStorageFailure.WRITE_FAILED, store.upsert(it, store.mutationToken()).failure)
             assertArrayEquals(original, file().readBytes())
         }
         assertEquals(listOf(latest), store.load().records)
@@ -236,7 +262,7 @@ class VerificationStoreTest {
         val first = record(store)
         now = first.createdAt.plusSeconds(30 * 86400)
         val original = file().readBytes()
-        assertEquals(VerificationStorageFailure.WRITE_FAILED, store.upsert(first).failure)
+        assertEquals(VerificationStorageFailure.WRITE_FAILED, store.upsert(first, store.mutationToken()).failure)
         assertArrayEquals(original, file().readBytes())
         assertTrue(store.load().records.isEmpty())
     }
@@ -254,7 +280,7 @@ class VerificationStoreTest {
     @Test fun `failed clear preserves archive and does not poison future revision`() {
         val store = store()
         val first = record(store)
-        assertNull(store.upsert(first).failure)
+        assertNull(store.upsert(first, store.mutationToken()).failure)
         val original = file().readBytes()
         val blocker = File(folder.root, "verification.enc.pending")
         assertTrue(blocker.mkdir())
@@ -262,14 +288,14 @@ class VerificationStoreTest {
         assertArrayEquals(original, file().readBytes())
         assertTrue(blocker.delete())
         val edited = first.copy(revision = 3, title = "still editable")
-        assertNull(store.upsert(edited).failure)
+        assertNull(store.upsert(edited, store.mutationToken()).failure)
         assertEquals(listOf(edited), store.load().records)
     }
 
     @Test fun `clear preserves healthy ciphertext when key is temporarily unavailable`() {
         val initial = store()
         val first = record(initial)
-        assertNull(initial.upsert(first).failure)
+        assertNull(initial.upsert(first, initial.mutationToken()).failure)
         val original = file().readBytes()
         var requests = 0
         val unavailable = VerificationStore(file(), {

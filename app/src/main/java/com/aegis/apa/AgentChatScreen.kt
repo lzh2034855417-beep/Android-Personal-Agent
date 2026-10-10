@@ -9,11 +9,16 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import com.aegis.apa.agent.*
 import com.aegis.apa.model.*
 import com.aegis.apa.localization.*
@@ -53,9 +58,16 @@ fun AgentChatScreen(
     conversationExpired: Boolean = false,
     onStopAnalysis: () -> Unit = {},
     onPrepareRetry: () -> Unit = {},
-    onOpenVerification: () -> Unit = {}
+    onOpenVerification: () -> Unit = {},
+    onOpenGuidedDiagnostic: () -> Unit = {},
+    reportImportStatus: String? = null,
+    rootAuthorizationPending: Boolean = false
 ) {
     val appLanguage = LocalAppLanguage.current
+    var infoExpanded by rememberSaveable { mutableStateOf(false) }
+    val clearActionLabel = stringResource(R.string.agent_clear)
+    val settingsActionLabel = stringResource(R.string.common_settings)
+    val infoActionLabel = if (appLanguage == AppLanguage.EN) "Info" else "说明"
     var selectedLevel by state.selectedLevel
     var includeUsageReport by state.includeUsageReport
     var includeAppReport by state.includeAppReport
@@ -127,8 +139,11 @@ fun AgentChatScreen(
             if (scrolling) state.followLatest = index == 0 && offset == 0
         }
     }
-    LaunchedEffect(effectiveSelectedLevel) {
-        if (selectedLevel != effectiveSelectedLevel) selectedLevel = effectiveSelectedLevel
+    LaunchedEffect(selectedLevel, shizukuAdviceAuthorized, rootAdviceAuthorized, rootAuthorizationPending) {
+        val refreshedSelection = AdviceCapabilityPolicy.selectionAfterAccessRefresh(
+            selectedLevel, shizukuAdviceAuthorized, rootAdviceAuthorized, rootAuthorizationPending
+        )
+        if (selectedLevel != refreshedSelection) selectedLevel = refreshedSelection
     }
 
     Column(
@@ -136,36 +151,47 @@ fun AgentChatScreen(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         androidx.compose.material3.Card(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().testTag("agent_chat_header"),
             colors = androidx.compose.material3.CardDefaults.cardColors(
                 containerColor = colors.surfaceContainerHigh
             )
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(text = "APA Agent", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(text = "APA Agent", style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
                         text = "$providerLabel · ${if (CloudProviderCatalog.find(ApiSession.provider) != null) {
                             if (appLanguage == AppLanguage.EN) "Configured" else "已配置"
                         } else if (appLanguage == AppLanguage.EN) "On-device analysis" else "本地分析"}",
                         color = colors.primary,
-                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium
+                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis
                     )
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(
+                    IconButton(
+                        modifier = Modifier.size(48.dp).semantics { contentDescription = clearActionLabel },
                         onClick = onClearConversation,
                         enabled = (messages.isNotEmpty() || conversationStorageError) && !isOnlineAnalyzing && !conversationLoading && !conversationSaving
-                    ) { Text(stringResource(R.string.agent_clear)) }
-                    TextButton(onClick = onOpenSettings) { Text(stringResource(R.string.common_settings)) }
-                }
+                    ) { Icon(painterResource(android.R.drawable.ic_menu_delete),
+                        contentDescription = null) }
+                    IconButton(onClick = onOpenSettings,
+                        modifier = Modifier.size(48.dp).semantics { contentDescription = settingsActionLabel }) {
+                        Icon(painterResource(android.R.drawable.ic_menu_preferences),
+                            contentDescription = null)
+                    }
+                    IconButton(onClick = { infoExpanded = !infoExpanded },
+                        modifier = Modifier.size(48.dp).semantics { contentDescription = infoActionLabel }) {
+                        Icon(painterResource(android.R.drawable.ic_menu_info_details),
+                            contentDescription = null)
+                    }
             }
         }
 
+        if (infoExpanded || conversationLoading || conversationSaving || conversationStorageError || conversationExpired) {
         Text(
             text = when {
                 conversationLoading -> if (appLanguage == AppLanguage.EN) "Restoring conversation…" else "正在恢复对话…"
@@ -180,9 +206,12 @@ fun AgentChatScreen(
             style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
             color = if (conversationStorageError) colors.error else colors.onSurfaceVariant
         )
+        }
+        if (infoExpanded) {
         TextButton(onClick = onOpenVerification) {
             Text(if (appLanguage == AppLanguage.EN) "Local verification records · clearing chat keeps records"
                 else "本地验证记录 · 清空聊天会保留记录")
+        }
         }
         val retryQuestion = com.aegis.apa.agent.AgentRetryPolicy.question(messages)
         if (isOnlineAnalyzing || retryQuestion != null) {
@@ -205,21 +234,17 @@ fun AgentChatScreen(
             }
         }
 
-        if (!state.followLatest && messages.isNotEmpty()) {
-            TextButton(onClick = { state.followLatest = true; state.firstVisibleIndex = 0; state.firstVisibleOffset = 0 }) {
-                Text(if (appLanguage == AppLanguage.EN) "Latest messages" else "最新消息")
-            }
-        }
         LaunchedEffect(state.followLatest) {
             if (state.followLatest) chatScrollState.scrollToItem(0)
         }
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
         LazyColumn(
             modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth().testTag("chat_timeline"),
+                .fillMaxSize().testTag("chat_timeline"),
             state = chatScrollState,
             reverseLayout = true,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(bottom = if (!state.followLatest && messages.isNotEmpty()) 48.dp else 0.dp)
         ) {
             if (isOnlineAnalyzing) item(key = "pending") {
                 Card(modifier = Modifier.fillMaxWidth(0.9f)) {
@@ -298,6 +323,15 @@ fun AgentChatScreen(
                 }
             }
 
+        }
+        if (!state.followLatest && messages.isNotEmpty()) {
+            Surface(modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp),
+                shape = MaterialTheme.shapes.medium, tonalElevation = 3.dp) {
+                TextButton(onClick = { state.followLatest = true; state.firstVisibleIndex = 0; state.firstVisibleOffset = 0 }) {
+                    Text(if (appLanguage == AppLanguage.EN) "Latest messages" else "最新消息")
+                }
+            }
+        }
         }
 
         Card(
@@ -383,6 +417,7 @@ fun AgentChatScreen(
                 }
                 PowerDiagnosticPanel(
                     state = powerDiagnosticState,
+                    reportImportStatus = reportImportStatus,
                     snapshot = powerDiagnostic,
                     observationStart = batteryObservationStart,
                     observationResult = batteryObservationResult,
@@ -398,7 +433,8 @@ fun AgentChatScreen(
                     onRemove = onRemovePowerDiagnostic,
                     showDiagnosticDetails = false,
                     onCopyPackage = onCopyPackage,
-                    onOpenVerification = onOpenVerification
+                    onOpenVerification = onOpenVerification,
+                    onOpenGuidedDiagnostic = onOpenGuidedDiagnostic
                 )
             }
         }

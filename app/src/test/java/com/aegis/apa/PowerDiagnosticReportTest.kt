@@ -23,6 +23,27 @@ import java.time.Instant
 
 class PowerDiagnosticReportTest {
     @Test
+    fun standaloneWakeLockIsPublishedAsUnverifiedEvidenceInBothLanguages() {
+        val snapshot = PowerDiagnosticPipeline.analyze(
+            sections = listOf(RawDiagnosticSection("batterystats", DiagnosticSourceStatus.AVAILABLE,
+                """
+                    Statistics since last charge:
+                      Uid u0a123:
+                        Wake lock example: 24m 0s partial (2 times)
+                """.trimIndent())),
+            inputSource = DiagnosticInputSource.BUGREPORT,
+            sampledAt = Instant.EPOCH
+        )
+        val chinese = PowerDiagnosticReportBuilder.build(snapshot)
+        val english = PowerDiagnosticReportBuilder.build(snapshot, language = AppLanguage.EN)
+        assertTrue(chinese.contains("持有唤醒锁约 24 分钟"))
+        assertTrue(chinese.contains("待验证"))
+        assertTrue(english.contains("Wake lock held for about 24 min"))
+        assertTrue(english.contains("unverified"))
+        assertFalse(english.contains("Manual Scene action:"))
+    }
+
+    @Test
     fun reportPublishesValidatedSinceChargeDrainRate() {
         val snapshot = PowerDiagnosticPipeline.analyze(
             sections = listOf(
@@ -169,7 +190,7 @@ class PowerDiagnosticReportTest {
 
         assertTrue(report.contains("来源：系统 Bug Report"))
         assertTrue(report.contains("【耗电总量排行】"))
-        assertTrue(report.contains("【同窗口后台异常证据】"))
+        assertTrue(report.contains("【后台风险提示与同窗口证据】"))
         assertTrue(report.contains("最高建议：限制"))
         assertTrue(report.contains("Scene 手动操作：在 Scene 中只限制后台活动。"))
         assertTrue(report.contains("风险：消息可能延迟。"))
@@ -261,7 +282,7 @@ class PowerDiagnosticReportTest {
 
         assertTrue(report.contains("【后台耗电排行】"))
         assertTrue(report.contains("系统估算后台耗电 1485.0 mAh"))
-        assertTrue(report.contains("【系统调度观察】"))
+        assertTrue(report.contains("【待验证后台／调度线索】"))
         assertTrue(report.contains("真实唤醒累计 5234 次"))
         assertTrue(report.contains("定时任务累计 28916 次"))
         assertFalse(report.contains("唤醒/闹钟计数最高"))
@@ -360,6 +381,51 @@ class PowerDiagnosticReportTest {
         listOf("系统估算", "后台状态累计", "值得优先核对", "可能造成", "回退", "复测", "未解析").forEach {
             assertFalse("unexpected Chinese diagnostic template: $it", report.contains(it))
         }
+    }
+
+    @Test
+    fun englishReportPublishesFindingsWhenNoLocalVerdictWasReached() {
+        // sampleSnapshot() keeps the default localVerdict = null while carrying findings, which is
+        // exactly the branch an English report once dropped silently before emitting anything.
+        val snapshot = sampleSnapshot()
+
+        val report = PowerDiagnosticReportBuilder.build(snapshot, language = AppLanguage.EN)
+
+        assertFalse("English report must not be empty: $report", report.isBlank())
+        assertTrue("Missing localized finding heading: $report", report.contains("Power-use signal"))
+        assertTrue("Missing package evidence: $report", report.contains("Packages: com.tencent.mm"))
+        assertTrue("Missing localized evidence label: $report", report.contains("Evidence: "))
+        assertTrue("Missing localized confidence label: $report", report.contains("Confidence: "))
+        assertTrue("Missing localized advice label: $report", report.contains("Advice level: "))
+        assertTrue("Missing localized limit label: $report", report.contains("Limit: "))
+        listOf(
+            "证据不足",
+            "未生成应用限制或冻结建议",
+            "包名：",
+            "解释：",
+            "置信度：",
+            "建议级别：",
+            "限制：",
+            "Scene 建议："
+        ).forEach { chineseTemplate ->
+            assertFalse(
+                "English report leaked Chinese template copy '$chineseTemplate': $report",
+                report.contains(chineseTemplate)
+            )
+        }
+    }
+
+    @Test
+    fun englishReportStatesInsufficientEvidenceRatherThanEmittingNothing() {
+        val snapshot = sampleSnapshot().copy(findings = emptyList())
+
+        val report = PowerDiagnosticReportBuilder.build(snapshot, language = AppLanguage.EN)
+
+        assertTrue(
+            "Empty-findings English report must state the gap: $report",
+            report.contains("Evidence is insufficient")
+        )
+        assertFalse(report.contains("当前证据不足"))
     }
 
     private fun snapshotWithCandidates(candidates: List<RankedPowerCandidate>) = PowerDiagnosticSnapshot(

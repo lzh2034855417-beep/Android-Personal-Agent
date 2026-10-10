@@ -1,6 +1,7 @@
 package com.aegis.apa.tool
 
 import com.aegis.apa.model.DiagnosticSourceStatus
+import com.aegis.apa.model.RootAccessState
 import java.util.Locale
 import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
@@ -39,6 +40,13 @@ fun interface DiagnosticCommandRunner {
 }
 
 object RootCommandRunner : DiagnosticCommandRunner {
+    /** Fixed identity probe only: never reads a report or changes system settings. */
+    fun checkAuthorization(cancellationRequested: () -> Boolean = { false }): RootAccessState {
+        val execution = execute("id -u", 8_000, 1_024, cancellationRequested)
+        checkCollectionCancellation(cancellationRequested)
+        return classifyRootAuthorization(execution)
+    }
+
     override fun run(command: AllowedRootCommand): RootCommandResult =
         run(command, cancellationRequested = { false })
 
@@ -205,3 +213,15 @@ internal fun waitForRootProcess(
 }
 
 private const val ROOT_PROCESS_POLL_MILLIS = 100L
+
+internal fun classifyRootAuthorization(execution: ProcessOutput?): RootAccessState = when {
+    execution == null -> RootAccessState.UNAVAILABLE
+    execution.timedOut -> RootAccessState.TIMED_OUT
+    execution.truncated -> RootAccessState.FAILED
+    execution.exitCode == 0 && execution.output.trim() == "0" -> RootAccessState.AUTHORIZED
+    execution.exitCode == 0 && execution.output.trim().toLongOrNull()?.let { it > 0 } == true -> RootAccessState.DENIED
+    execution.exitCode != 0 && execution.output.lowercase(Locale.ROOT).let {
+        "permission denied" in it || "not allowed" in it || "access denied" in it
+    } -> RootAccessState.DENIED
+    else -> RootAccessState.FAILED
+}

@@ -24,8 +24,11 @@ fun VerificationPanel(
     onClose: (String, Long, VerificationCloseReason) -> Unit,
     onDelete: (String) -> Unit,
     onClear: () -> Unit,
-    explanationCredentials: () -> StoredApiKey? = { null },
-    capabilityAccess: AgentCapabilityAccess = AgentCapabilityAccess(false, false)
+    onRetrySave: (String, Long) -> Unit,
+    onDiscardUnsaved: (String, Long) -> Unit,
+    explanation: VerificationExplanationUiState = VerificationExplanationUiState(),
+    onExplanationPreview: () -> Unit = {}, onExplanationDismiss: () -> Unit = {},
+    onExplanationNotes: (Boolean) -> Unit = {}, onExplanationSend: () -> Unit = {}, onExplanationStop: () -> Unit = {}
 ) {
     var create by remember { mutableStateOf(false) }
     var clear by remember { mutableStateOf(false) }
@@ -50,7 +53,7 @@ fun VerificationPanel(
                 VerificationStorageFailure.WRITE_FAILED -> verificationText("保存失败，旧归档保持原样。", "Save failed; the previous archive is preserved.")
             }, color = MaterialTheme.colorScheme.error)
         }
-        if (state.unsavedRecord != null) Text(verificationText("未保存：当前修改尚未持久保存，退出后可能丢失。",
+        if (state.unsavedRecord != null && !state.saving) Text(verificationText("未保存：当前修改尚未持久保存，退出后可能丢失。",
             "Not saved: current changes are not durable and may be lost after exit."), color = MaterialTheme.colorScheme.error)
         if (selected == null) {
             Button(onClick = { create = true }, enabled = enabled && currentDiagnostic?.let {
@@ -89,10 +92,10 @@ fun VerificationPanel(
         } else {
             TextButton(onClick = { onSelect(null) }) { Text(verificationText("返回记录列表", "Back to records")) }
             VerificationRecordDetail(selected, currentDiagnostic, enabled,
-                onChange, onRetest, onClose, onDelete, Modifier.weight(1f), explanationCredentials,
-                AdviceCapabilityPolicy.effectiveLevel(
-                    if (capabilityAccess.rootAuthorized) "Level 2" else if (capabilityAccess.shizukuAuthorized) "Level 1" else "Level 0",
-                    capabilityAccess.shizukuAuthorized, capabilityAccess.rootAuthorized))
+                onChange, onRetest, onClose, onDelete,
+                state.unsavedRecord?.id == selected.id, !state.loading && !state.saving,
+                onRetrySave, onDiscardUnsaved, Modifier.weight(1f), explanation,
+                onExplanationPreview, onExplanationDismiss, onExplanationNotes, onExplanationSend, onExplanationStop)
         }
     }
     if (create && currentDiagnostic != null) VerificationSampleForm(currentDiagnostic, null, enabled,

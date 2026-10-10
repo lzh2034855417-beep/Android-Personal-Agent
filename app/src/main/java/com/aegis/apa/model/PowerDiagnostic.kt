@@ -14,6 +14,7 @@ enum class DiagnosticSourceStatus {
 enum class EvidenceField {
     UID_PACKAGES,
     POWER_MAH,
+    OVERALL_POWER_MAH,
     FOREGROUND_TIME,
     WAKELOCK_TIME,
     WAKEUP_ALARMS,

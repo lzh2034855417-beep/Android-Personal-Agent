@@ -30,7 +30,7 @@ object VerificationFixtures {
     fun snapshot() = PowerDiagnosticSnapshot(
         sampledAtInstant = end.plusSeconds(60),
         collectionDurationMillis = 10,
-        sources = listOf("batterystats", "alarm", "jobscheduler").associateWith {
+        sources = listOf("packages", "batterystats", "alarm", "jobscheduler").associateWith {
             DiagnosticSourceResult(it, DiagnosticSourceStatus.AVAILABLE, "raw error must not persist")
         },
         apps = listOf(AppPowerEvidence(

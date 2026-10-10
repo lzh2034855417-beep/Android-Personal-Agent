@@ -5,7 +5,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-val apaVersionName = "0.3.0"
+val apaVersionName = "0.3.1"
 val signingProperties = Properties()
 val signingPropertiesFile = rootProject.file(providers.gradleProperty("apa.signingProperties").getOrElse("keystore.properties"))
 
@@ -41,7 +41,7 @@ android {
         applicationId = "com.aegis.apa"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
+        versionCode = 6
         versionName = apaVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

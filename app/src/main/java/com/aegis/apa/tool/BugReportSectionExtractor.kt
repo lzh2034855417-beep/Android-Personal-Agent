@@ -2,6 +2,7 @@ package com.aegis.apa.tool
 
 import com.aegis.apa.model.DiagnosticSourceStatus
 import java.io.FilterInputStream
+import java.io.BufferedInputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.InputStreamReader
@@ -25,7 +26,15 @@ sealed interface BugReportReadResult {
         val sections: List<RawDiagnosticSection>,
         val verificationHeaderFields: Map<String, String> = emptyMap()
     ) : BugReportReadResult
-    data class Rejected(val reason: BugReportRejectReason) : BugReportReadResult
+    data class Rejected(val reason: BugReportRejectReason) : BugReportReadResult {
+        // Debug context is not part of the rejection's semantic identity.
+        var diagnosticDetail: String? = null
+            private set
+
+        constructor(reason: BugReportRejectReason, diagnosticDetail: String?) : this(reason) {
+            this.diagnosticDetail = diagnosticDetail
+        }
+    }
     data object Cancelled : BugReportReadResult
 }
 
@@ -63,22 +72,52 @@ object BugReportSectionExtractor {
         displayName: String?,
         limits: BugReportReadLimits = BugReportReadLimits(),
         isCancelled: () -> Boolean = { false }
+    ): BugReportReadResult = extract(input, displayName, {}, limits, isCancelled)
+
+    fun extract(
+        input: InputStream,
+        displayName: String?,
+        onBytesRead: (Long) -> Unit,
+        limits: BugReportReadLimits = BugReportReadLimits(),
+        isCancelled: () -> Boolean = { false }
     ): BugReportReadResult {
         if (isCancelled()) return BugReportReadResult.Cancelled
-        if (!limits.areValid()) return BugReportReadResult.Rejected(BugReportRejectReason.UNSUPPORTED_FORMAT)
+        if (!limits.areValid()) return BugReportReadResult.Rejected(
+            BugReportRejectReason.UNSUPPORTED_FORMAT, "limits=invalid"
+        )
 
-        val buffered = PushbackInputStream(input, zipSignature.size)
+        var bytesRead = 0L
+        var lastReportedBytes = 0L
+        val measured = object : FilterInputStream(input) {
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
+                `in`.read(buffer, offset, length).also { count ->
+                    if (count > 0) {
+                        bytesRead += count
+                        if (bytesRead - lastReportedBytes >= 1024 * 1024) {
+                            lastReportedBytes = bytesRead
+                            onBytesRead(bytesRead)
+                        }
+                    }
+                }
+        }
+        val buffered = PushbackInputStream(BufferedInputStream(measured, 64 * 1024), zipSignature.size)
         val prefix = ByteArray(zipSignature.size)
         val prefixSize = readPrefix(buffered, prefix, isCancelled)
         if (prefixSize < 0) return BugReportReadResult.Cancelled
         if (prefixSize == 0) return BugReportReadResult.Rejected(BugReportRejectReason.EMPTY)
         buffered.unread(prefix, 0, prefixSize)
 
-        return if (prefixSize == zipSignature.size && prefix.contentEquals(zipSignature)) {
+        val hasZipSignature = prefixSize == zipSignature.size && prefix.contentEquals(zipSignature)
+        val result = if (hasZipSignature) {
             extractZip(buffered, limits, isCancelled)
         } else {
             extractPlainText(buffered, displayName, limits, isCancelled)
         }
+        if (bytesRead > lastReportedBytes) onBytesRead(bytesRead)
+        return if (result is BugReportReadResult.Rejected) {
+            BugReportReadResult.Rejected(result.reason, "signature=${if (hasZipSignature) "zip" else "not_zip"}" +
+                (result.diagnosticDetail?.let { ";$it" } ?: ""))
+        } else result
     }
 
     private fun extractPlainText(
@@ -88,7 +127,9 @@ object BugReportSectionExtractor {
         isCancelled: () -> Boolean
     ): BugReportReadResult {
         if (!isTextName(displayName)) {
-            return BugReportReadResult.Rejected(BugReportRejectReason.UNSUPPORTED_FORMAT)
+            return BugReportReadResult.Rejected(
+                BugReportRejectReason.UNSUPPORTED_FORMAT, "text=name_unsupported"
+            )
         }
         return when (
             val read = readSectionsStreaming(
@@ -102,7 +143,9 @@ object BugReportSectionExtractor {
             CandidateRead.Cancelled -> BugReportReadResult.Cancelled
             CandidateRead.EntryTooLarge -> BugReportReadResult.Rejected(BugReportRejectReason.ENTRY_TOO_LARGE)
             CandidateRead.TotalTooLarge -> BugReportReadResult.Rejected(BugReportRejectReason.TOTAL_TOO_LARGE)
-            CandidateRead.Unsupported -> BugReportReadResult.Rejected(BugReportRejectReason.UNSUPPORTED_FORMAT)
+            CandidateRead.Unsupported -> BugReportReadResult.Rejected(
+                BugReportRejectReason.UNSUPPORTED_FORMAT, "text=nul_limit"
+            )
             is CandidateRead.Empty -> BugReportReadResult.Rejected(BugReportRejectReason.EMPTY)
             is CandidateRead.Sections -> BugReportReadResult.Success(read.value, read.verificationHeaderFields)
         }
@@ -121,11 +164,28 @@ object BugReportSectionExtractor {
         var sawNestedArchive = false
         var reportSections: List<RawDiagnosticSection>? = null
         var verificationHeaderFields: Map<String, String> = emptyMap()
-        var hardwareSection: RawDiagnosticSection? = null
+        // Multiple bootlogs can contribute different fields within one archive.
+        // Retain only whitelisted values, with the first observation winning conflicts.
+        val hardwareFields = linkedMapOf<String, String>()
+
+        fun retainHardware(output: String) {
+            for ((label, pattern) in hardwareFieldPatterns) {
+                pattern.find(output)?.groupValues?.get(1)?.let { value ->
+                    hardwareFields.putIfAbsent(label, value)
+                }
+            }
+        }
 
         fun completedReport(): BugReportReadResult.Success? = reportSections?.let { sections ->
+            val hardwareSection = hardwareFields.takeIf { it.isNotEmpty() }?.let { fields ->
+                RawDiagnosticSection(
+                    source = "hardware",
+                    status = DiagnosticSourceStatus.AVAILABLE,
+                    output = fields.entries.joinToString("\n") { (label, value) -> "$label = $value" }
+                )
+            }
             BugReportReadResult.Success(
-                if (hardwareSection == null) sections else sections + hardwareSection!!,
+                if (hardwareSection == null) sections else sections + hardwareSection,
                 verificationHeaderFields
             )
         }
@@ -168,7 +228,7 @@ object BugReportSectionExtractor {
                                     reportSections = nested.sections.filterNot { it.source == "hardware" }
                                     verificationHeaderFields = nested.verificationHeaderFields
                                     nested.sections.firstOrNull { it.source == "hardware" }?.let { nestedHardware ->
-                                        hardwareSection = nestedHardware
+                                        retainHardware(nestedHardware.output)
                                     }
                                 }
                             }
@@ -204,11 +264,7 @@ object BugReportSectionExtractor {
                             is HardwareRead.Lines -> {
                                 hardwareBytes += read.bytesRead
                                 if (read.output.isNotBlank()) {
-                                    hardwareSection = RawDiagnosticSection(
-                                        source = "hardware",
-                                        status = DiagnosticSourceStatus.AVAILABLE,
-                                        output = read.output
-                                    )
+                                    retainHardware(read.output)
                                 }
                             }
                         }
@@ -254,7 +310,9 @@ object BugReportSectionExtractor {
                             return rejectUnlessComplete(BugReportRejectReason.TOTAL_TOO_LARGE)
                         }
                         CandidateRead.Unsupported -> {
-                            return rejectUnlessComplete(BugReportRejectReason.UNSUPPORTED_FORMAT)
+                            return completedReport() ?: BugReportReadResult.Rejected(
+                                BugReportRejectReason.UNSUPPORTED_FORMAT, "text=nul_limit"
+                            )
                         }
                         is CandidateRead.Empty -> {
                             reportBytes += read.bytesRead
@@ -297,19 +355,21 @@ object BugReportSectionExtractor {
         val line = StringBuilder()
         var lineTruncated = false
         var lineHadNul = false
-        var nulCharCount = 0
+        var nulCharCount = 0L
+        var decodedCharCount = 0L
         var inSystemProperties = false
         val verificationHeaders = VerificationHeaderAccumulator()
 
         fun consumeLine() {
             val value = line.toString().removeSuffix("\r")
-            if (value.trim().startsWith("------")) {
-                inSystemProperties = !lineTruncated && !lineHadNul && value.trim() == "------ SYSTEM PROPERTIES ------"
+            val trimmed = value.trim()
+            if (trimmed.startsWith("------")) {
+                inSystemProperties = !lineTruncated && !lineHadNul && trimmed == "------ SYSTEM PROPERTIES ------"
             } else if (inSystemProperties) {
                 verificationHeaders.consume(value, incomplete = lineTruncated || lineHadNul)
             }
-            if (!lineTruncated && markerSource(value) != null) inSystemProperties = false
             val markerSource = if (lineTruncated) null else markerSource(value)
+            if (markerSource != null) inSystemProperties = false
             if (markerSource != null) {
                 currentSource = markerSource.takeIf(allowedSources::contains)
                 currentSource?.let { outputs.putIfAbsent(it, StringBuilder()) }
@@ -327,7 +387,7 @@ object BugReportSectionExtractor {
                         truncated += source
                     } else {
                         if (separatorLength == 1) output.append('\n')
-                        output.append(value.take(available))
+                        output.append(value, 0, minOf(value.length, available))
                         if (lineTruncated || value.length > available) truncated += source
                     }
                 }
@@ -341,24 +401,40 @@ object BugReportSectionExtractor {
         return try {
             val reader = InputStreamReader(bounded, Charsets.UTF_8)
             val chars = CharArray(16 * 1024)
+            fun appendSlice(start: Int, end: Int) {
+                val size = end - start
+                val retained = minOf(size, MAX_BUFFERED_LINE_CHARS - line.length)
+                if (retained > 0) line.append(chars, start, retained)
+                if (retained < size) lineTruncated = true
+            }
             while (true) {
                 val count = reader.read(chars)
                 if (count < 0) break
+                decodedCharCount += count
+                var sliceStart = 0
                 for (index in 0 until count) {
                     when (val char = chars[index]) {
                         '\u0000' -> {
+                            appendSlice(sliceStart, index)
+                            sliceStart = index + 1
                             lineHadNul = true
                             nulCharCount += 1
-                            if (nulCharCount > MAX_TOLERATED_NUL_CHARS) return CandidateRead.Unsupported
                         }
-                        '\n' -> consumeLine()
-                        else -> {
-                            if (line.length < MAX_BUFFERED_LINE_CHARS) line.append(char)
-                            else lineTruncated = true
+                        '\n' -> {
+                            appendSlice(sliceStart, index)
+                            sliceStart = index + 1
+                            consumeLine()
                         }
                     }
                 }
+                appendSlice(sliceStart, count)
             }
+            // OEM reports can contain sparse NUL padding across hundreds of MB.
+            // Judge the complete size-bounded text, not an absolute count or a
+            // padding-heavy prefix; retain rejection for high-density contamination.
+            if (nulCharCount > MAX_TOLERATED_NUL_CHARS &&
+                nulCharCount * NUL_DENSITY_DENOMINATOR > decodedCharCount
+            ) return CandidateRead.Unsupported
             if (line.isNotEmpty() || lineTruncated) consumeLine()
             if (bounded.bytesRead == 0L || outputs.isEmpty()) {
                 CandidateRead.Empty(bounded.bytesRead)
@@ -478,8 +554,10 @@ object BugReportSectionExtractor {
     }
 
     private fun markerSource(line: String): String? {
-        val raw = dumSysMarker.matchEntire(line.trim())?.groupValues?.get(1)
-            ?: serviceMarker.matchEntire(line.trim())?.groupValues?.get(1)
+        val trimmed = line.trim()
+        if (!trimmed.startsWith("------") && !trimmed.startsWith("DUMP OF SERVICE", ignoreCase = true)) return null
+        val raw = dumSysMarker.matchEntire(trimmed)?.groupValues?.get(1)
+            ?: serviceMarker.matchEntire(trimmed)?.groupValues?.get(1)
             ?: return null
         return when (raw.lowercase(Locale.ROOT)) {
             "package", "packages" -> "packages"
@@ -619,4 +697,5 @@ object BugReportSectionExtractor {
     private const val MAX_BUFFERED_LINE_CHARS = 64 * 1024
     private const val MAX_HARDWARE_LINE_CHARS = 512
     private const val MAX_TOLERATED_NUL_CHARS = 1_024
+    private const val NUL_DENSITY_DENOMINATOR = 100L // At most 1% beyond the small-report allowance.
 }
