@@ -169,11 +169,7 @@ object BugReportSectionExtractor {
         val hardwareFields = linkedMapOf<String, String>()
 
         fun retainHardware(output: String) {
-            for ((label, pattern) in hardwareFieldPatterns) {
-                pattern.find(output)?.groupValues?.get(1)?.let { value ->
-                    hardwareFields.putIfAbsent(label, value)
-                }
-            }
+            output.lineSequence().forEach { collectHardwareLine(it, hardwareFields) }
         }
 
         fun completedReport(): BugReportReadResult.Success? = reportSections?.let { sections ->
@@ -245,13 +241,14 @@ object BugReportSectionExtractor {
                         zip.closeEntry()
                         continue
                     }
-                    if (isHardwareLogEntry(entry.name)) {
+                    if (isHardwareLogEntry(entry.name) || RamReportCompatibility.isAttachment(entry.name)) {
                         when (
                             val read = readHardwareLinesStreaming(
                                 input = zip,
                                 entryLimit = limits.maxEntryBytes,
                                 totalRemaining = limits.maxSkippedBytes - hardwareBytes,
-                                isCancelled = isCancelled
+                                isCancelled = isCancelled,
+                                attachmentName = entry.name
                             )
                         ) {
                             HardwareRead.Cancelled -> return BugReportReadResult.Cancelled
@@ -368,11 +365,7 @@ object BugReportSectionExtractor {
             if (!lineTruncated && !lineHadNul &&
                 (value.contains("DDR", ignoreCase = true) || value.contains("UFS", ignoreCase = true) ||
                     value.contains("Manufacturer ID", ignoreCase = true))) {
-                hardwareFieldPatterns.forEach { (label, pattern) ->
-                    if (label !in hardwareFields) {
-                        pattern.find(value)?.groupValues?.get(1)?.let { hardwareFields[label] = it }
-                    }
-                }
+                collectHardwareLine(value, hardwareFields)
             }
             if (trimmed.startsWith("------")) {
                 inSystemProperties = !lineTruncated && !lineHadNul &&
@@ -490,26 +483,35 @@ object BugReportSectionExtractor {
         input: InputStream,
         entryLimit: Long,
         totalRemaining: Long,
-        isCancelled: () -> Boolean
+        isCancelled: () -> Boolean,
+        attachmentName: String? = null
     ): HardwareRead {
         if (totalRemaining <= 0) return HardwareRead.TotalTooLarge
+        if (attachmentName != null && RamReportCompatibility.isAttachment(attachmentName)) {
+            val bounded = CheckedInputStream(input, minOf(entryLimit, 4096L), totalRemaining, isCancelled)
+            return try {
+                val text = bounded.readBytes().toString(Charsets.UTF_8)
+                HardwareRead.Lines(RamReportCompatibility.attachmentFields(attachmentName, text), bounded.bytesRead)
+            } catch (_: CancelledReadException) {
+                HardwareRead.Cancelled
+            } catch (error: LimitReadException) {
+                if (error.reason == BugReportRejectReason.ENTRY_TOO_LARGE) HardwareRead.EntryTooLarge
+                else HardwareRead.TotalTooLarge
+            }
+        }
         val fields = linkedMapOf<String, String>()
         val line = StringBuilder()
         var lineTruncated = false
+        var lineHadNul = false
 
         fun consumeLine() {
             val value = line.toString().removeSuffix("\r").trim()
-            if (!lineTruncated) {
-                hardwareFieldPatterns.forEach { (label, pattern) ->
-                    if (label !in fields) {
-                        pattern.find(value)?.groupValues?.get(1)?.let { fieldValue ->
-                            fields[label] = fieldValue
-                        }
-                    }
-                }
+            if (!lineTruncated && !lineHadNul) {
+                collectHardwareLine(value, fields)
             }
             line.clear()
             lineTruncated = false
+            lineHadNul = false
         }
 
         val bounded = CheckedInputStream(input, entryLimit, totalRemaining, isCancelled)
@@ -522,7 +524,7 @@ object BugReportSectionExtractor {
                 for (index in 0 until count) {
                     when (val char = chars[index]) {
                         '\n' -> consumeLine()
-                        '\u0000' -> Unit
+                        '\u0000' -> lineHadNul = true
                         else -> {
                             if (line.length < MAX_HARDWARE_LINE_CHARS) line.append(char)
                             else lineTruncated = true
@@ -545,18 +547,19 @@ object BugReportSectionExtractor {
         }
     }
 
+    private fun collectHardwareLine(line: String, fields: MutableMap<String, String>) {
+        RamReportCompatibility.bootFields(line).forEach { (label, value) -> fields.putIfAbsent(label, value) }
+        for ((label, pattern) in hardwareFieldPatterns) {
+            if (label !in fields) pattern.find(line)?.groupValues?.get(1)?.let { fields[label] = it }
+        }
+    }
+
     private val hardwareFieldPatterns = listOf(
         // Qualcomm boot records pair the mode-register vendor and device type,
         // without a DDR prefix. Keep this ID separate from extended JEDEC IDs.
-        "DDR MR Manufacturer ID" to Regex(
-            "(?:^|\\n)\\s*(?:[0-9]+\\s+)?B\\s*-\\s*[0-9]+\\s*-\\s*Manufacturer ID\\s*=\\s*(0x[0-9a-f]+),\\s*Device Type\\s*=\\s*0x[0-9a-f]+\\s*(?=\\r?$|\\n)",
-            setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)
-        ),
         "DDR MR Manufacturer ID" to Regex("\\bDDR MR Manufacturer ID\\s*=\\s*(0x[0-9a-f]+)\\b", RegexOption.IGNORE_CASE),
-        "DDR Device Type" to Regex(
-            "(?:^|\\n)\\s*(?:[0-9]+\\s+)?B\\s*-\\s*[0-9]+\\s*-\\s*Manufacturer ID\\s*=\\s*0x[0-9a-f]+,\\s*Device Type\\s*=\\s*(0x[0-9a-f]+)\\s*(?=\\r?$|\\n)",
-            setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)
-        ),
+        "DDR Qualcomm Device Type" to Regex("\\bDDR Qualcomm Device Type\\s*=\\s*(0x[0-9a-f]+)\\b", RegexOption.IGNORE_CASE),
+        "DDR Vendor Name" to Regex("\\bDDR Vendor Name\\s*=\\s*(Samsung|Hynix|Micron|Nanya|Winbond|Elpida|Qimonda|ESMT)\\b", RegexOption.IGNORE_CASE),
         "DDR Device Type" to Regex(
             "\\bDDR[\\s_]+Device[\\s_]+Type\\s*[:=]\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)\\b",
             RegexOption.IGNORE_CASE

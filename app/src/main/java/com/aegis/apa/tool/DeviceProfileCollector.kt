@@ -268,9 +268,11 @@ object DeviceProfileParser {
             source = HardwareSupplySource.ROOT_SYSFS
         ).takeIf(HardwareSupplyInfo::hasDetails)
         val bugReportHardware = HardwareSupplyInfo(
-            ramVendor = DDR_MR_MANUFACTURER_ID.find(raw)?.groupValues?.get(1)?.let(::deviceTreeDdrVendorFromId)
+            ramVendor = DDR_VENDOR_NAME.find(raw)?.groupValues?.get(1)?.let(::ramVendorFromName)
+                ?: DDR_MR_MANUFACTURER_ID.find(raw)?.groupValues?.get(1)?.let(::modeRegisterDdrVendorFromId)
                 ?: DDR_MANUFACTURER_ID.find(raw)?.groupValues?.get(1)?.let(::ddrVendorFromId),
-            ramType = DDR_DEVICE_TYPE.find(raw)?.groupValues?.get(1)?.let(::decodeDdrType),
+            ramType = DDR_QUALCOMM_DEVICE_TYPE.find(raw)?.groupValues?.get(1)?.let(::decodeQualcommDdrType)
+                ?: DDR_DEVICE_TYPE.find(raw)?.groupValues?.get(1)?.let(::decodeDdrType),
             storageVendor = UFS_INQUIRY_ID.find(raw)?.groupValues?.get(1)?.let {
                 if (it.matches(Regex("(?i)(?:0x)?[0-9a-f]+"))) ufsVendorFromId(it) else normalizeStorageVendor(it)
             },
@@ -310,6 +312,46 @@ object DeviceProfileParser {
             "FF" -> "美光 (Micron)"
             else -> ddrVendorFromId(raw)
         }
+    }
+
+    private fun ramVendorFromName(raw: String): String? = when (raw.lowercase(Locale.ROOT)) {
+        "samsung" -> "三星 (Samsung)"
+        "hynix" -> "海力士 (SK hynix)"
+        "micron" -> "美光 (Micron)"
+        "nanya" -> "南亚 (Nanya)"
+        "winbond" -> "华邦 (Winbond)"
+        "elpida" -> "Elpida"
+        "qimonda" -> "Qimonda"
+        "esmt" -> "ESMT"
+        else -> null
+    }
+
+    private fun modeRegisterDdrVendorFromId(raw: String): String? {
+        val id = raw.removePrefix("0x").removePrefix("0X").toIntOrNull(16)?.takeIf { it in 1..255 } ?: return null
+        return when (id) {
+            1 -> ramVendorFromName("Samsung")
+            2 -> ramVendorFromName("Qimonda")
+            3 -> ramVendorFromName("Elpida")
+            5 -> ramVendorFromName("Nanya")
+            6 -> ramVendorFromName("Hynix")
+            8 -> ramVendorFromName("Winbond")
+            9 -> ramVendorFromName("ESMT")
+            255 -> ramVendorFromName("Micron")
+            else -> "DDR MR ID 0x${id.toString(16).uppercase(Locale.ROOT)}"
+        }
+    }
+
+    private fun decodeQualcommDdrType(raw: String): String? = when (raw.removePrefix("0x").removePrefix("0X").toIntOrNull(16)) {
+        1 -> "LPDDR1"
+        2 -> "LPDDR2"
+        3 -> "DDR2"
+        4 -> "DDR3"
+        5 -> "LPDDR3"
+        6 -> "LPDDR4"
+        7 -> "LPDDR4X"
+        8 -> "LPDDR5"
+        9 -> "LPDDR5X"
+        else -> null
     }
 
     private fun ddrVendorFromId(raw: String): String? {
@@ -378,6 +420,12 @@ object DeviceProfileParser {
     )
     private val DDR_MR_MANUFACTURER_ID = Regex(
         "\\bDDR MR Manufacturer ID\\s*=\\s*(0x[0-9a-f]+)\\b", RegexOption.IGNORE_CASE
+    )
+    private val DDR_VENDOR_NAME = Regex(
+        "\\bDDR Vendor Name\\s*=\\s*(Samsung|Hynix|Micron|Nanya|Winbond|Elpida|Qimonda|ESMT)\\b", RegexOption.IGNORE_CASE
+    )
+    private val DDR_QUALCOMM_DEVICE_TYPE = Regex(
+        "\\bDDR Qualcomm Device Type\\s*=\\s*(0x[0-9a-f]+)\\b", RegexOption.IGNORE_CASE
     )
     private val DDR_MANUFACTURER_ID = Regex(
         "\\bDDR[\\s_]+Manufacturer[\\s_]+ID\\s*[:=]\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)\\b",

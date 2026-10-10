@@ -17,6 +17,72 @@ import java.util.zip.ZipOutputStream
 
 class BugReportSectionExtractorTest {
     @Test
+    fun qualcommDecimalBootRecordsKeepTheirOwnTypeNumbering() {
+        for ((type, expected) in listOf(5 to "LPDDR3", 6 to "LPDDR4", 8 to "LPDDR5")) {
+            val result = BugReportSectionExtractor.extract(zipOf(
+                "bugreport-device.txt" to reportText,
+                "bootlog.txt" to "B - 624403 - Manufacturer ID = 255, Device Type = $type"
+            ).inputStream(), "bugreport.zip") as BugReportReadResult.Success
+            val info = parsedHardware(result)
+            assertEquals("美光 (Micron)", info?.ramVendor)
+            assertEquals(expected, info?.ramType)
+        }
+    }
+
+    @Test
+    fun onePlusDdrAttachmentsUseTheirOwnDecimalAndNamedFields() {
+        for ((path, body, expected) in listOf(
+            Triple("FS/sys/project_info/ddr_manufacture_info", "255\n", "美光 (Micron)"),
+            Triple("FS/sys/project_info/ddr_manufacture_info", "6\n", "海力士 (SK hynix)"),
+            Triple("FS/sys/project_info/component_info/ddr", "VER:\t12GB\nMANU:\tSamsung 18nm 1.0\n", "三星 (Samsung)")
+        )) {
+            val result = BugReportSectionExtractor.extract(zipOf("bugreport-device.txt" to reportText,
+                path to body).inputStream(), "bugreport.zip") as BugReportReadResult.Success
+            assertEquals(expected, parsedHardware(result)?.ramVendor)
+            assertEquals(null, parsedHardware(result)?.ramType)
+        }
+    }
+
+    @Test
+    fun samsungDdrAttachmentUsesDdrvAndDoesNotInferTypeFromDsf() {
+        val result = BugReportSectionExtractor.extract(zipOf("bugreport-device.txt" to reportText,
+            "FS/sys/class/sec/sec_hw_param/ddr_info" to "\"DDRV\":\"HYN\",\"DSF\":\"5.0\""
+        ).inputStream(), "bugreport.zip") as BugReportReadResult.Success
+        assertEquals("海力士 (SK hynix)", parsedHardware(result)?.ramVendor)
+        assertEquals(null, parsedHardware(result)?.ramType)
+    }
+
+    @Test
+    fun unrelatedComponentsAndInvalidRamAttachmentsAreIgnored() {
+        for ((path, body) in listOf(
+            "FS/sys/project_info/component_info/lcd" to "MANU: Samsung",
+            "FS/sys/project_info/ddr_manufacture_info" to "256",
+            "FS/sys/project_info/ddr_manufacture_info" to "6\u0000",
+            "FS/sys/class/sec/sec_hw_param/ddr_info" to "\"DDRV\":\"NA\"",
+            "bootlog.txt" to "Manufacturer ID = 255, Device Type = 8",
+            "bootlog.txt" to "B - 123 - Manufacturer ID = 256, Device Type = 8"
+        )) {
+            val result = BugReportSectionExtractor.extract(zipOf("bugreport-device.txt" to reportText,
+                path to body).inputStream(), "bugreport.zip") as BugReportReadResult.Success
+            assertTrue(result.sections.none { it.source == "hardware" })
+        }
+    }
+
+    @Test
+    fun ramAttachmentsRespectTinyReadBoundsAndCancellation() {
+        val data = zipOf("FS/sys/project_info/ddr_manufacture_info" to "1".repeat(4097),
+            "bugreport-device.txt" to reportText)
+        val tooLarge = BugReportSectionExtractor.extract(data.inputStream(), "bugreport.zip")
+        assertEquals(BugReportReadResult.Rejected(BugReportRejectReason.ENTRY_TOO_LARGE), tooLarge)
+        assertEquals(BugReportReadResult.Cancelled, BugReportSectionExtractor.extract(
+            data.inputStream(), "bugreport.zip", isCancelled = { true }))
+    }
+
+    private fun parsedHardware(result: BugReportReadResult.Success): com.aegis.apa.tool.HardwareSupplyInfo? =
+        com.aegis.apa.tool.DeviceProfileParser.parse(result.sections.single { it.source == "hardware" }.output,
+            com.aegis.apa.tool.DeviceProfileAccess.STANDARD).hardwareSupplyInfo
+
+    @Test
     fun k60BootRecordWithoutDdrPrefixReadsMicronModeRegisterId() {
         val record = "135\tB -   1247450 - Manufacturer ID = 0xff, Device Type = 0x8"
         for (name in listOf("bootlog_copy.txt", "dumpstate_board.txt", "bugreport-device.txt")) {
@@ -969,6 +1035,21 @@ class BugReportSectionExtractorTest {
         )
 
         assertEquals(BugReportReadResult.Cancelled, result)
+    }
+
+    @Test
+    fun rejectsNulContaminatedBootRecordWithoutLosingOtherHardware() {
+        val result = BugReportSectionExtractor.extract(
+            input = zipOf(
+                "bugreport.txt" to reportText,
+                "FS/data/vendor/bootlog.txt" to
+                    "B - 123 - Manufacturer ID = 2\u000055, Device Type = 8\nUFS INQUIRY ID = 0x06"
+            ).inputStream(),
+            displayName = "bugreport.zip"
+        ) as BugReportReadResult.Success
+        val hardware = result.sections.first { it.source == "hardware" }.output
+        assertTrue(!hardware.contains("DDR"))
+        assertTrue(hardware.contains("UFS"))
     }
 
     private fun rejected(reason: BugReportRejectReason) = BugReportReadResult.Rejected(reason)

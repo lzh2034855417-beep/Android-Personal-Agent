@@ -310,3 +310,11 @@ After the approved branch was locally synchronized to `D:/AndroidPersonalAgent`,
 - 新增三个来源的实际形状回归先失败后通过。仅接受完整高通启动记录前缀与配对数值，将模式寄存器厂商编号独立标记，避免混用扩展 JEDEC 编号。生产解析器对用户原始 ZIP 验收通过：RAM 美光 (Micron)／LPDDR5、三星 UFS 4.0、本机身份匹配、实际耗电 962–1006 mAh。类型码不推断 LPDDR5X 营销规格；原日志正文与个人信息未加入 Git。
 - `testDebugUnitTest lintDebug lintRelease assembleRelease --offline --console=plain` 通过，761 项 JVM 测试，0 failures/errors。正式签名验证通过、K60 Pro 覆盖安装成功、冷启动 `Status: ok`。需重新导入报告更新硬件缓存，实际页面尚待用户确认。
 - 最新 APK SHA-256：`CF307BD750EE8775FA0B571E9F5A90C9E4C911760B761D8567BCF0330CBC805F`。保留数据，手机 Download 未放 APK，未公开发布。
+
+### 跨厂商 RAM 报告格式补充（2026-10-10）
+
+- 按公开源码补充一加十进制 DDR 节点／MANU、三星 DDRV 和高通十进制配对记录。厂商编号与类型按来源解析，未知编号保留；不从 DSF 版本推断类型。来源和覆盖边界见 HARDWARE_REPORT_COMPATIBILITY.md。
+- 正向样例先失败后通过；启动日志 NUL 拼号回归先失败后修复。白名单节点的 4 KiB 读取上限、取消、越界编号、乱码及无关组件有回归覆盖。
+- 最终 testDebugUnitTest、lintDebug、lintRelease、assembleDebug、assembleDebugAndroidTest、assembleRelease 全部通过：767 项 JVM 测试，0 failures/errors；两种 Lint 均 0 错误。未运行仪器测试。
+- 最终构建生产解析器复测用户 K60 Pro 原 ZIP 通过：本机身份匹配、美光 RAM／LPDDR5、三星 UFS 4.0、实际耗电 962–1006 mAh。一加、三星为源码格式合成样例，尚无这些品牌真机报告验收。
+- 正式签名验证通过，原证书不变。APK SHA-256：43429A0DEBB2023C82EBD2DF8F8087E755B6D84FFDD60DC6411DD0F8BC98D79B。K60 Pro 覆盖安装成功、冷启动 Status: ok，保留数据；手机 Download 未放安装包，未公开发布。
