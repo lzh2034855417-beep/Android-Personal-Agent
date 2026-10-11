@@ -333,3 +333,9 @@ After the approved branch was locally synchronized to `D:/AndroidPersonalAgent`,
 - AgentInputDismissUiTest 在 K60 Pro 实际运行通过：长按、外部点击退出、草稿保留、再次输入、键盘收起后返回不离开聊天页。红米阻止 ActivityScenario 后台启动，测试采用项目已有的显式前台 ComponentActivity 启动方式；最初锁屏／通知栏阻挡的两次等待已中止，不计为通过。
 - 全量 769 项 JVM 测试、Debug/Release Lint 与正式包构建通过；正式签名核验通过。最终测试 APK 的构建与设备执行通过，不将其视为全量仪器测试验收。
 - 正式包 SHA-256：676C10DB59EDCBCD0668BFF5DCDCCC55795101D4D51BFB9AFE63C180274F9E03。K60 正式版覆盖安装 Success、冷启动 Status: ok，数据保留，未在手机 Download 留 APK，未公开发布。
+
+### Agent 长按菜单退出动画调整（2026-10-11）
+
+- 菜单打开时第一次外部触摸仅取消原生菜单协程会话，不同时清焦点或隐藏键盘；第二次外部触摸退出编辑。保持原生剪贴板菜单，草稿不清空。
+- 771 项 JVM 测试通过，0 failures/errors；Debug/Release Lint 与仪器 APK、正式签名 Release APK 构建通过。新增测试验证会话关闭、重复打开及页面退出清理，更新真机测试断言。
+- 当前 adb 未检测到设备，本次未运行真机仪器测试，菜单退出动画的实际流畅度尚待手机验收；未安装、未更新手机 Download。旧正式包保留，新包另存 APA-v0.3.1-paste-menu-test.apk。

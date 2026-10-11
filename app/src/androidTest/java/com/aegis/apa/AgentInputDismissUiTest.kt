@@ -50,6 +50,10 @@ class AgentInputDismissUiTest {
         input.performTouchInput { longClick() }
         input.assertIsFocused()
         rule.onNodeWithTag("agent_chat_header").performTouchInput { click(topLeft + androidx.compose.ui.geometry.Offset(8f, 8f)) }
+        // Closing the menu must not also collapse the keyboard and resize the page.
+        input.assertIsFocused()
+        rule.runOnIdle { assertEquals("保留草稿", state.draft.value) }
+        rule.onNodeWithTag("agent_chat_header").performTouchInput { click(topLeft + androidx.compose.ui.geometry.Offset(8f, 8f)) }
         input.assertIsNotFocused()
         rule.runOnIdle { assertEquals("保留草稿", state.draft.value) }
         input.performClick()

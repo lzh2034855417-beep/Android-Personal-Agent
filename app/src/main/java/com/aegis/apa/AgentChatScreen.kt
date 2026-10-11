@@ -14,6 +14,9 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.foundation.text.contextmenu.provider.LocalTextContextMenuToolbarProvider
+import androidx.compose.foundation.text.contextmenu.provider.TextContextMenuProvider
+import androidx.compose.foundation.text.contextmenu.provider.TextContextMenuDataProvider
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -79,10 +82,23 @@ fun AgentChatScreen(
     val appLanguage = LocalAppLanguage.current
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
+    val nativeMenu = LocalTextContextMenuToolbarProvider.current
+    val menuSession = remember(nativeMenu) { ChatTextMenuSession() }
+    val dismissibleMenu = remember(nativeMenu, menuSession) {
+        nativeMenu?.let { delegate ->
+            object : TextContextMenuProvider {
+                override suspend fun showTextContextMenu(dataProvider: TextContextMenuDataProvider) {
+                    menuSession.show { delegate.showTextContextMenu(dataProvider) }
+                }
+            }
+        }
+    }
     var inputFocused by remember { mutableStateOf(false) }
     var inputBounds by remember { mutableStateOf<Rect?>(null) }
     var pageOrigin by remember { mutableStateOf(Offset.Zero) }
     fun dismissInput() {
+        // Let the native toolbar finish first; keep the IME and layout stable.
+        if (menuSession.dismiss()) return
         focusManager.clearFocus(force = true)
         keyboard?.hide()
     }
@@ -480,6 +496,7 @@ fun AgentChatScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                CompositionLocalProvider(LocalTextContextMenuToolbarProvider provides dismissibleMenu) {
                 OutlinedTextField(
                     value = userMessage,
                     onValueChange = { userMessage = it },
@@ -490,6 +507,7 @@ fun AgentChatScreen(
                     enabled = !isOnlineAnalyzing && !conversationLoading,
                     maxLines = 4
                 )
+                }
                 Button(
                     onClick = { submitQuestion(userMessage.trim()) },
                     enabled = userMessage.isNotBlank() && !isOnlineAnalyzing && !conversationLoading
