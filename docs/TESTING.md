@@ -339,3 +339,20 @@ After the approved branch was locally synchronized to `D:/AndroidPersonalAgent`,
 - 菜单打开时第一次外部触摸仅取消原生菜单协程会话，不同时清焦点或隐藏键盘；第二次外部触摸退出编辑。保持原生剪贴板菜单，草稿不清空。
 - 771 项 JVM 测试通过，0 failures/errors；Debug/Release Lint 与仪器 APK、正式签名 Release APK 构建通过。新增测试验证会话关闭、重复打开及页面退出清理，更新真机测试断言。
 - 当前 adb 未检测到设备，本次未运行真机仪器测试，菜单退出动画的实际流畅度尚待手机验收；未安装、未更新手机 Download。旧正式包保留，新包另存 APA-v0.3.1-paste-menu-test.apk。
+
+### 小米 15 非诊断二进制段落（2026-10-12）
+
+- 用户外层 ZIP 为 176,147,096 字节，包含嵌套 bugreport ZIP；主文本为 186,695,363 字节，其中约 2,948,033 个 NUL。原生产提取器返回 UNSUPPORTED_FORMAT / signature=zip;text=nul_limit。主要 NUL 位于非白名单 Wi-Fi 服务，不能把它当作整个诊断报告无效。
+- 新增嵌套非白名单服务与污染数值回归先失败。服务标记支持含 `/` 与 `:` 的 Binder 实例名，以退出上一诊断段落；NUL 密度仅统计诊断白名单原始字符数，含 NUL 的诊断行不拼接、不保留，并标记该来源 TRUNCATED。修正旧测试中删除 NUL 后重建数字的期待。大小、取消、嵌套深度、路径和段落上限保持。
+- 最终 Release 生产类以默认配置复测原 ZIP 成功：Xiaomi / 24129PN74C / API 36；132 个合并应用条目，其中 120 个带耗电值、106 个有包名映射；周期 7,361,185 ms，实际耗电 1426 mAh。batterystats 与 packages 均未截断；唤醒锁时长仍为 NOT_PARSED。
+- 生产硬件解析读出 DDR MR Manufacturer ID 0x6（SK hynix）、Qualcomm Device Type 0x8（LPDDR5 类型码）、MICRON UFS 4.0。类型码不推断 LPDDR5X 营销规格；异机报告不覆盖当前手机硬件缓存。
+- 同一 Release 生产类复测 iQOO 原 ZIP 仍成功；775 项 JVM 测试 0 failures/errors/skips，Debug/Release Lint 0 错误；Debug、仪器及原签名 Release 包构建通过。未将原始报告加入仓库、未调用模型、未执行小米 15 实机界面测试。
+
+### iQOO V2425A 大报告导入（2026-10-12）
+
+- 用户原 ZIP 的主报告为 208,572,166 字节。原生产提取器在 192 MiB 限制下返回 ENTRY_TOO_LARGE；临时仅扩大限制虽可导入，但约 35 MB Battery History 占满 12 MiB 保留段落，实际耗电统计未读出。
+- 两项新增回归先失败后通过：超过旧限制的有界流式文本；长历史流水后仍保留统计汇总。默认主报告／总量限制改为 256 MiB，逐行跳过不被诊断解析器消费的 Battery History，其他行长、段落、条目、取消、路径与解压限制保留。
+- 设备页新增导入拒绝、异常和取消提示；成功但没有可识别硬件字段时说明可在 Agent 查看耗电诊断，不把缺少厂商数据当作导入失败。
+- 最终 Release 生产类使用默认限制复测原 ZIP 成功：vivo / V2425A / API 36；182 个耗电条目、157 个有包名映射；耗电窗口 61,137,458 ms，实际耗电 1096 mAh。batterystats 汇总为 998,086 字符，未截断。packages 仍达 10 MiB 限制并保持 TRUNCATED；唤醒锁时长 NOT_PARSED，不能宣称完整归因。
+- 当前提取器未读出 RAM／UFS 厂商字段；扫描原报告没有找到现有明确厂商／编号格式，不能据此推断厂商或硬件质量。报告容量值 2556 mAh 不用于证明锁容、健康度或完整电池容量。
+- 773 项 JVM 测试，0 failures/errors/skips；Debug Lint 0 错误 / 35 警告，Release Lint 0 错误 / 33 警告；Debug、仪器与正式签名 Release APK 构建通过。签名配置沿用主项目，不读取或输出凭据。原始报告未加入仓库，未请求模型、未安装手机、未运行设备仪器测试、未发布。

@@ -13,8 +13,8 @@ import java.util.zip.ZipInputStream
 
 data class BugReportReadLimits(
     val maxEntries: Int = 4_096,
-    val maxEntryBytes: Long = 192L * 1024 * 1024,
-    val maxTotalBytes: Long = 192L * 1024 * 1024,
+    val maxEntryBytes: Long = 256L * 1024 * 1024,
+    val maxTotalBytes: Long = 256L * 1024 * 1024,
     val maxSkippedBytes: Long = 384L * 1024 * 1024,
     val maxSectionChars: Int = 2 * 1024 * 1024,
     val maxBatteryStatsSectionChars: Int = 12 * 1024 * 1024,
@@ -53,7 +53,7 @@ object BugReportSectionExtractor {
     private val zipSignature = byteArrayOf(0x50, 0x4B, 0x03, 0x04)
     private val dumSysMarker = Regex("^------\\s+DUMPSYS\\s+([A-Za-z0-9_.-]+)\\s+.*------\\s*$", RegexOption.IGNORE_CASE)
     private val serviceMarker = Regex(
-        "^DUMP OF SERVICE\\s+(?:(?:CRITICAL|HIGH|NORMAL)\\s+)?([A-Za-z0-9_.-]+):\\s*$",
+        "^DUMP OF SERVICE\\s+(?:(?:CRITICAL|HIGH|NORMAL)\\s+)?([A-Za-z0-9_./:-]+):\\s*$",
         RegexOption.IGNORE_CASE
     )
     private val drivePrefix = Regex("^[A-Za-z]:")
@@ -350,11 +350,14 @@ object BugReportSectionExtractor {
         val outputs = linkedMapOf<String, StringBuilder>()
         val truncated = mutableSetOf<String>()
         var currentSource: String? = null
+        var skippingBatteryHistory = false
         val line = StringBuilder()
         var lineTruncated = false
         var lineHadNul = false
         var nulCharCount = 0L
         var decodedCharCount = 0L
+        var lineNulChars = 0L
+        var lineDecodedChars = 0L
         var inSystemProperties = false
         val verificationHeaders = VerificationHeaderAccumulator()
         val hardwareFields = linkedMapOf<String, String>()
@@ -374,13 +377,35 @@ object BugReportSectionExtractor {
             } else if (inSystemProperties) {
                 verificationHeaders.consume(value, incomplete = lineTruncated || lineHadNul)
             }
-            val markerSource = if (lineTruncated) null else markerSource(value)
+            val markerSource = if (lineTruncated || lineHadNul) null else markerSource(value)
             if (markerSource != null) inSystemProperties = false
             if (markerSource != null) {
+                skippingBatteryHistory = false
                 currentSource = markerSource.takeIf(allowedSources::contains)
                 currentSource?.let { outputs.putIfAbsent(it, StringBuilder()) }
             } else {
                 currentSource?.let { source ->
+                    nulCharCount += lineNulChars
+                    decodedCharCount += lineDecodedChars + 1
+                    // Never turn a contaminated identifier/value into another valid value
+                    // by joining text across NUL bytes. Keep the loss visible in coverage.
+                    if (lineHadNul) {
+                        truncated += source
+                        return@let
+                    }
+                    // History can precede useful statistics by tens of MB on OEM reports.
+                    // The diagnostic parser consumes aggregate statistics, not history events.
+                    // Skip only this known block, retaining all byte/line/section bounds.
+                    if (source == "batterystats" && !lineTruncated && !lineHadNul) {
+                        if (trimmed.startsWith("Battery History") && trimmed.endsWith(":")) {
+                            skippingBatteryHistory = true
+                        } else if (trimmed == "Per-PID Stats:" ||
+                            trimmed.startsWith("Statistics since ") ||
+                            trimmed == "Discharge step durations:") {
+                            skippingBatteryHistory = false
+                        }
+                    }
+                    if (skippingBatteryHistory) return@let
                     val output = outputs.getValue(source)
                     val separatorLength = if (output.isEmpty()) 0 else 1
                     val sectionLimit = when (source) {
@@ -401,6 +426,8 @@ object BugReportSectionExtractor {
             line.clear()
             lineTruncated = false
             lineHadNul = false
+            lineNulChars = 0L
+            lineDecodedChars = 0L
         }
 
         val bounded = CheckedInputStream(input, entryLimit, totalRemaining, isCancelled)
@@ -409,6 +436,7 @@ object BugReportSectionExtractor {
             val chars = CharArray(16 * 1024)
             fun appendSlice(start: Int, end: Int) {
                 val size = end - start
+                lineDecodedChars += size
                 val retained = minOf(size, MAX_BUFFERED_LINE_CHARS - line.length)
                 if (retained > 0) line.append(chars, start, retained)
                 if (retained < size) lineTruncated = true
@@ -416,7 +444,6 @@ object BugReportSectionExtractor {
             while (true) {
                 val count = reader.read(chars)
                 if (count < 0) break
-                decodedCharCount += count
                 var sliceStart = 0
                 for (index in 0 until count) {
                     when (val char = chars[index]) {
@@ -424,7 +451,8 @@ object BugReportSectionExtractor {
                             appendSlice(sliceStart, index)
                             sliceStart = index + 1
                             lineHadNul = true
-                            nulCharCount += 1
+                            lineNulChars += 1
+                            lineDecodedChars += 1
                         }
                         '\n' -> {
                             appendSlice(sliceStart, index)
@@ -435,13 +463,13 @@ object BugReportSectionExtractor {
                 }
                 appendSlice(sliceStart, count)
             }
-            // OEM reports can contain sparse NUL padding across hundreds of MB.
-            // Judge the complete size-bounded text, not an absolute count or a
-            // padding-heavy prefix; retain rejection for high-density contamination.
+            if (line.isNotEmpty() || lineTruncated || lineHadNul) consumeLine()
+            // Unselected vendor services can contain binary dumps. Judge only the
+            // selected diagnostic sections; do not let unrelated text dilute their
+            // contamination ratio. Byte, entry and section bounds still apply.
             if (nulCharCount > MAX_TOLERATED_NUL_CHARS &&
                 nulCharCount * NUL_DENSITY_DENOMINATOR > decodedCharCount
             ) return CandidateRead.Unsupported
-            if (line.isNotEmpty() || lineTruncated) consumeLine()
             if (bounded.bytesRead == 0L || outputs.isEmpty()) {
                 CandidateRead.Empty(bounded.bytesRead)
             } else {
@@ -462,7 +490,7 @@ object BugReportSectionExtractor {
                             },
                             output = output.toString(),
                             truncated = wasTruncated,
-                            detail = if (wasTruncated) "导入段落超过大小限制" else null
+                            detail = if (wasTruncated) "导入段落部分内容超限或含无效字符，已省略" else null
                         )
                     },
                     bounded.bytesRead,

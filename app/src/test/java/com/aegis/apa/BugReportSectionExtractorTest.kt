@@ -17,6 +17,66 @@ import java.util.zip.ZipOutputStream
 
 class BugReportSectionExtractorTest {
     @Test
+    fun nestedXiaomiReportIgnoresBinaryWifiServiceOutsideDiagnosticWhitelist() {
+        val wifi = "DUMP OF SERVICE android.hardware.wifi.IWifi/default:\n" +
+            "\u0000".repeat(20_000) + "\n"
+        val inner = zipOf("bugreport-dada.txt" to (reportText + "\n" + wifi + reportText))
+        val result = BugReportSectionExtractor.extract(zipBytesOf(
+            "bugreport-Xiaomi 15.zip" to inner).inputStream(), "bugreport.zip")
+        assertTrue("Unselected Wi-Fi binary data must not reject diagnostics: $result",
+            result is BugReportReadResult.Success)
+        assertTrue((result as BugReportReadResult.Success).sections.first().output.contains("245.5"))
+    }
+
+    @Test
+    fun nulContaminatedDiagnosticValuesCannotBeJoinedIntoValidNumbers() {
+        val text = "DUMP OF SERVICE batterystats:\n" +
+            "UID u0a123: 24\u00005.5 mAh\n" +
+            "UID u0a124: 10.0 mAh\n"
+        val result = BugReportSectionExtractor.extract(text.byteInputStream(), "bugreport.txt")
+            as BugReportReadResult.Success
+        val battery = result.sections.single()
+        assertTrue(!battery.output.contains("245.5"))
+        assertTrue(battery.output.contains("10.0"))
+        assertEquals(DiagnosticSourceStatus.TRUNCATED, battery.status)
+    }
+
+    @Test
+    fun largeOemReportKeepsStatisticsAfterBatteryHistory() {
+        val history = "  +0ms battery history event\n".repeat(100)
+        val summary = "Statistics since last charge:\n" +
+            "Time on battery: 16h 58m 57s 458ms (100.0%) realtime\n" +
+            "Estimated power use (mAh):\n" +
+            "  Capacity: 2556, Computed drain: 1096, actual drain: 1096\n"
+        val text = "DUMP OF SERVICE batterystats:\nBattery History [Format: 2]:\n" +
+            history + "Per-PID Stats:\n" + summary + "DUMP OF SERVICE alarm:\nAlarm Stats:\n"
+        val result = BugReportSectionExtractor.extract(text.byteInputStream(), "bugreport.txt",
+            BugReportReadLimits(maxBatteryStatsSectionChars = 400)) as BugReportReadResult.Success
+        val battery = result.sections.single { it.source == "batterystats" }
+        assertEquals(DiagnosticSourceStatus.AVAILABLE, battery.status)
+        assertTrue(battery.output.contains("actual drain: 1096"))
+        assertTrue(!battery.output.contains("battery history event"))
+    }
+
+    @Test
+    fun defaultBoundsAcceptAnOemReportLargerThan192MiBWithoutRetainingItsLogs() {
+        val padding = object : InputStream() {
+            var remaining = 199L * 1024 * 1024
+            override fun read(): Int = if (remaining-- > 0) '\n'.code else -1
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                if (remaining <= 0) return -1
+                val count = minOf(remaining, length.toLong()).toInt()
+                java.util.Arrays.fill(buffer, offset, offset + count, '\n'.code.toByte())
+                remaining -= count
+                return count
+            }
+        }
+        val input = java.io.SequenceInputStream(padding, reportText.byteInputStream())
+        val result = BugReportSectionExtractor.extract(input, "bugreport.txt")
+        assertTrue("Expected bounded large report import, got $result", result is BugReportReadResult.Success)
+    }
+
+    @Test
     fun qualcommDecimalBootRecordsKeepTheirOwnTypeNumbering() {
         for ((type, expected) in listOf(5 to "LPDDR3", 6 to "LPDDR4", 8 to "LPDDR5")) {
             val result = BugReportSectionExtractor.extract(zipOf(
@@ -417,7 +477,7 @@ class BugReportSectionExtractorTest {
     }
 
     @Test
-    fun toleratesSparseNulBytesInXiaomiReportText() {
+    fun sparseNulBytesKeepOtherSectionsButDoNotReconstructContaminatedValues() {
         val reportWithSparseNuls = reportText.replace("245.5", "245\u0000.5")
 
         val result = BugReportSectionExtractor.extract(
@@ -426,7 +486,10 @@ class BugReportSectionExtractorTest {
         )
 
         assertTrue(result is BugReportReadResult.Success)
-        assertTrue((result as BugReportReadResult.Success).sections.first().output.contains("245.5"))
+        result as BugReportReadResult.Success
+        assertTrue(!result.sections.first().output.contains("245.5"))
+        assertEquals(DiagnosticSourceStatus.TRUNCATED, result.sections.first().status)
+        assertTrue(result.sections.single { it.source == "alarm" }.output.contains("180 wakeups"))
     }
 
     @Test

@@ -445,6 +445,7 @@ class MainActivity : ComponentActivity() {
                         session.agent.includePowerDiagnosticReport.value = false
                         powerDiagnosticState = PowerDiagnosticUiState.Importing
                         session.reportImportStatus.value = null
+                        hardwareSupplyNotice = null
                         pendingHardwareReport = null
                         var importJob: Job? = null
                         val guidedToken = expectedGuidedKey?.takeIf { it == activeGuidedKey() }?.let { key -> guided.beginWork(key) { importJob?.cancel() } }
@@ -501,6 +502,10 @@ class MainActivity : ComponentActivity() {
                                                     "Report device could not be matched; hardware was not saved to this phone."
                                                     else "报告设备无法与本机确认匹配，未覆盖本机硬件信息。"
                                             }
+                                        } else {
+                                            hardwareSupplyNotice = if (appLanguage == AppLanguage.EN)
+                                                "Report imported. View the power diagnostic in Agent. No recognizable RAM/storage supplier fields were found."
+                                            else "系统报告已导入，可到 Agent 查看耗电诊断；未找到可识别的 RAM／存储厂商字段。"
                                         }
                                         offerGuidedInput(guidedToken, GuidedInput(analyzed, null, null))
                                     }
@@ -509,20 +514,32 @@ class MainActivity : ComponentActivity() {
                                         powerDiagnosticState = PowerDiagnosticUiState.Error(
                                             importTrace.appendTo(RuntimeUiCopy.bugReportReject(imported.reason, appLanguage))
                                         )
+                                        hardwareSupplyNotice = if (appLanguage == AppLanguage.EN)
+                                            "Import failed: ${RuntimeUiCopy.bugReportReject(imported.reason, appLanguage)}"
+                                        else "导入失败：${RuntimeUiCopy.bugReportReject(imported.reason, appLanguage)}"
                                     }
                                     BugReportReadResult.Cancelled -> {
                                         guidedToken?.let { guided.failWork(it, "guided.collection_failed") }
                                         powerDiagnosticState = PowerDiagnosticUiState.Interrupted
+                                        hardwareSupplyNotice = if (appLanguage == AppLanguage.EN)
+                                            "Report import cancelled. Select the report again to retry."
+                                        else "报告导入已取消，请重新选择报告后重试。"
                                     }
                                 }
                             } catch (cancelled: CancellationException) {
                                 powerDiagnosticState = PowerDiagnosticUiState.Interrupted
+                                hardwareSupplyNotice = if (appLanguage == AppLanguage.EN)
+                                    "Report import cancelled. Select the report again to retry."
+                                else "报告导入已取消，请重新选择报告后重试。"
                                 throw cancelled
                             } catch (failure: Exception) {
                                 importTrace.record("stage=exception type=${failure.javaClass.simpleName.take(80)}")
                                 powerDiagnosticState = PowerDiagnosticUiState.Error(
                                     importTrace.appendTo(RuntimeUiCopy.text(RuntimeNotice.BUG_REPORT_READ_FAILED, appLanguage))
                                 )
+                                hardwareSupplyNotice = if (appLanguage == AppLanguage.EN)
+                                    "Import failed: ${RuntimeUiCopy.text(RuntimeNotice.BUG_REPORT_READ_FAILED, appLanguage)}"
+                                else "导入失败：${RuntimeUiCopy.text(RuntimeNotice.BUG_REPORT_READ_FAILED, appLanguage)}"
                             } finally {
                                 readingComplete = true
                                 session.reportImportStatus.value = null
