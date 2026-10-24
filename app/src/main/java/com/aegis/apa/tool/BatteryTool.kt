@@ -1,6 +1,8 @@
 package com.aegis.apa.tool
 
 import com.aegis.apa.model.BatteryInfo
+import com.aegis.apa.localization.AppLanguage
+import com.aegis.apa.localization.DeviceUiCopy
 
 import android.content.Context
 import android.content.Intent
@@ -8,7 +10,13 @@ import android.content.IntentFilter
 import android.os.BatteryManager
 
 object BatteryReportText {
-    fun format(info: BatteryInfo): String = buildString {
+    fun format(info: BatteryInfo, language: AppLanguage = AppLanguage.ZH_CN): String = if (language == AppLanguage.EN) buildString {
+        appendLine("Battery temperature: ${info.temperatureCelsius?.let { "$it°C" } ?: "Unavailable"}")
+        appendLine("Battery voltage: ${info.voltageMilliVolt?.let { "$it mV" } ?: "Unavailable"}")
+        appendLine("Battery health: ${info.health?.let { DeviceUiCopy.batteryHealth(it, language) } ?: "Unavailable"}")
+        appendLine("Power source: ${info.plugged?.let { DeviceUiCopy.plugged(it, language) } ?: "Unavailable"}")
+        appendLine("Battery technology: ${info.technology ?: "Unavailable"}")
+    } else buildString {
         appendLine("电池温度：${info.temperatureCelsius?.let { "$it°C" } ?: "设备未提供"}")
         appendLine("电池电压：${info.voltageMilliVolt?.let { "$it mV" } ?: "设备未提供"}")
         appendLine("电池健康：${info.health ?: "设备未提供"}")

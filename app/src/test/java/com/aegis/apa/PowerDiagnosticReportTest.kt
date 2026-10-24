@@ -1,6 +1,7 @@
 package com.aegis.apa
 
 import com.aegis.apa.agent.PowerDiagnosticReportBuilder
+import com.aegis.apa.localization.AppLanguage
 import com.aegis.apa.model.AdviceLevel
 import com.aegis.apa.model.BatteryDrainWindowEvidence
 import com.aegis.apa.model.DiagnosticConfidence
@@ -21,6 +22,44 @@ import org.junit.Test
 import java.time.Instant
 
 class PowerDiagnosticReportTest {
+    @Test
+    fun largeSharedUidStaysCompactAndKeepsRuntimeAndStateTimeLimits() {
+        val packages = (1..60).map { "com.example.component$it" }
+        val candidate = RankedPowerCandidate(1000, packages, packages.map { "组件${it.substringAfterLast("component")}" },
+            listOf("系统估算耗电 110.0 mAh"), DiagnosticConfidence.LOW, AdviceLevel.OBSERVE, "仅供观察")
+        val snapshot = snapshotWithCandidates(listOf(candidate)).copy(system = SystemPowerEvidence(
+            batteryDrainWindow = BatteryDrainWindowEvidence(21 * 3_600_000L, 4374.0, 962.0, true, 1006.0)))
+        val zh = PowerDiagnosticReportBuilder.build(snapshot)
+        val en = PowerDiagnosticReportBuilder.build(snapshot, language = AppLanguage.EN)
+        assertTrue(zh.contains("UID 1000"))
+        assertTrue(zh.contains("等60项"))
+        assertFalse(zh.contains("com.example.component60"))
+        assertTrue(zh.contains("不是连续亮屏或剩余续航"))
+        assertTrue(en.contains("not continuous screen-on or remaining runtime"))
+        assertTrue(zh.length < 3000)
+    }
+
+    @Test
+    fun standaloneWakeLockIsPublishedAsUnverifiedEvidenceInBothLanguages() {
+        val snapshot = PowerDiagnosticPipeline.analyze(
+            sections = listOf(RawDiagnosticSection("batterystats", DiagnosticSourceStatus.AVAILABLE,
+                """
+                    Statistics since last charge:
+                      Uid u0a123:
+                        Wake lock example: 24m 0s partial (2 times)
+                """.trimIndent())),
+            inputSource = DiagnosticInputSource.BUGREPORT,
+            sampledAt = Instant.EPOCH
+        )
+        val chinese = PowerDiagnosticReportBuilder.build(snapshot)
+        val english = PowerDiagnosticReportBuilder.build(snapshot, language = AppLanguage.EN)
+        assertTrue(chinese.contains("持有唤醒锁约 24 分钟"))
+        assertTrue(chinese.contains("待验证"))
+        assertTrue(english.contains("Wake lock held for about 24 min"))
+        assertTrue(english.contains("unverified"))
+        assertFalse(english.contains("Manual Scene action:"))
+    }
+
     @Test
     fun reportPublishesValidatedSinceChargeDrainRate() {
         val snapshot = PowerDiagnosticPipeline.analyze(
@@ -168,7 +207,7 @@ class PowerDiagnosticReportTest {
 
         assertTrue(report.contains("来源：系统 Bug Report"))
         assertTrue(report.contains("【耗电总量排行】"))
-        assertTrue(report.contains("【同窗口后台异常证据】"))
+        assertTrue(report.contains("【后台风险提示与同窗口证据】"))
         assertTrue(report.contains("最高建议：限制"))
         assertTrue(report.contains("Scene 手动操作：在 Scene 中只限制后台活动。"))
         assertTrue(report.contains("风险：消息可能延迟。"))
@@ -260,11 +299,168 @@ class PowerDiagnosticReportTest {
 
         assertTrue(report.contains("【后台耗电排行】"))
         assertTrue(report.contains("系统估算后台耗电 1485.0 mAh"))
-        assertTrue(report.contains("【系统调度观察】"))
+        assertTrue(report.contains("【待验证后台／调度线索】"))
         assertTrue(report.contains("真实唤醒累计 5234 次"))
         assertTrue(report.contains("定时任务累计 28916 次"))
         assertFalse(report.contains("唤醒/闹钟计数最高"))
     }
+
+    @Test
+    fun reportShowsFriendlyAppNameBeforePackageName() {
+        val candidate = RankedPowerCandidate(
+            uid = 10123,
+            packageNames = listOf("com.tencent.mm"),
+            displayNames = listOf("微信"),
+            facts = listOf("系统估算耗电 315.0 mAh"),
+            confidence = DiagnosticConfidence.MEDIUM,
+            maxAdviceLevel = AdviceLevel.OBSERVE,
+            reason = "优先核对线索。"
+        )
+        val report = PowerDiagnosticReportBuilder.build(snapshotWithCandidates(listOf(candidate)))
+
+        assertTrue(report.contains("1. 微信（com.tencent.mm）"))
+        assertTrue(report.contains("包名：com.tencent.mm"))
+    }
+
+    @Test
+    fun sharedUidReportUsesFriendlyGroupNameWithoutPretendingItIsOneApp() {
+        val candidate = RankedPowerCandidate(
+            uid = 1000,
+            packageNames = listOf("android", "com.miui.powerkeeper", "com.miui.securitycenter"),
+            displayNames = listOf("Android 系统", "电量和性能", "手机管家"),
+            facts = listOf("系统估算耗电 62.7 mAh"),
+            confidence = DiagnosticConfidence.MEDIUM,
+            maxAdviceLevel = AdviceLevel.OBSERVE,
+            reason = "共享 UID，只能观察。"
+        )
+        val report = PowerDiagnosticReportBuilder.build(snapshotWithCandidates(listOf(candidate)))
+
+        assertTrue(report.contains("系统组件组（Android 系统、电量和性能、手机管家）"))
+        assertTrue(report.contains("包名：android, com.miui.powerkeeper, com.miui.securitycenter"))
+    }
+
+    @Test
+    fun unresolvedApplicationFallsBackToPackageName() {
+        val candidate = RankedPowerCandidate(
+            uid = 10123,
+            packageNames = listOf("com.example.unknown"),
+            facts = listOf("系统估算耗电 10.0 mAh"),
+            confidence = DiagnosticConfidence.LOW,
+            maxAdviceLevel = AdviceLevel.OBSERVE,
+            reason = "仅供观察。"
+        )
+        val report = PowerDiagnosticReportBuilder.build(snapshotWithCandidates(listOf(candidate)))
+
+        assertTrue(report.contains("1. com.example.unknown"))
+    }
+
+    @Test
+    fun englishReportLocalizesDiagnosticNarrativeAndPreservesRawEvidence() {
+        val candidate = RankedPowerCandidate(
+            uid = 10123,
+            packageNames = listOf("com.tencent.mm"),
+            displayNames = listOf("微信"),
+            facts = listOf(
+                "系统估算后台耗电 84.2 mAh，占该应用总耗电 100.0%",
+                "后台状态累计 3 分 13 秒"
+            ),
+            confidence = DiagnosticConfidence.MEDIUM,
+            maxAdviceLevel = AdviceLevel.OBSERVE,
+            reason = "后台耗电排行，值得优先核对；单一系统估算不足以证明异常。",
+            sceneAction = "在 Scene 中只限制该应用的后台活动，先保留通知与前台性能。",
+            risk = "可能造成后台同步或消息提醒延迟。",
+            rollback = "出现功能或通知异常时，把该应用的 Scene 后台策略恢复为默认。",
+            retest = "一次只改这个策略，正常使用一个完整观察时段后重新生成报告对比。"
+        )
+        val snapshot = snapshotWithCandidates(emptyList()).copy(
+            localVerdict = LocalPowerVerdict(
+                type = PowerVerdictType.SUFFICIENT,
+                totalConsumption = emptyList(),
+                backgroundConsumption = listOf(candidate),
+                backgroundSuspects = listOf(candidate),
+                schedulingObservations = emptyList(),
+                nextStep = null,
+                limits = listOf("WAKELOCK_TIME 未解析")
+            )
+        )
+
+        val report = PowerDiagnosticReportBuilder.build(snapshot, language = AppLanguage.EN)
+
+        assertTrue(report.contains("1. 微信 (com.tencent.mm)"))
+        assertTrue(report.contains("Estimated background drain: 84.2 mAh; 100.0% of this app's total drain"))
+        assertTrue(report.contains("Background state time: 3 min 13 sec"))
+        assertTrue(report.contains("Background-drain ranking; check this app first"))
+        assertTrue(report.contains("Confidence: Medium"))
+        assertTrue(report.contains("Maximum advice: observe"))
+        assertTrue(report.contains("Manual Scene action:"))
+        assertTrue(report.contains("Evidence limits: WAKELOCK_TIME was not parsed"))
+        assertTrue(report.contains("Packages: com.tencent.mm"))
+        listOf("系统估算", "后台状态累计", "值得优先核对", "可能造成", "回退", "复测", "未解析").forEach {
+            assertFalse("unexpected Chinese diagnostic template: $it", report.contains(it))
+        }
+    }
+
+    @Test
+    fun englishReportPublishesFindingsWhenNoLocalVerdictWasReached() {
+        // sampleSnapshot() keeps the default localVerdict = null while carrying findings, which is
+        // exactly the branch an English report once dropped silently before emitting anything.
+        val snapshot = sampleSnapshot()
+
+        val report = PowerDiagnosticReportBuilder.build(snapshot, language = AppLanguage.EN)
+
+        assertFalse("English report must not be empty: $report", report.isBlank())
+        assertTrue("Missing localized finding heading: $report", report.contains("Power-use signal"))
+        assertTrue("Missing package evidence: $report", report.contains("Packages: com.tencent.mm"))
+        assertTrue("Missing localized evidence label: $report", report.contains("Evidence: "))
+        assertTrue("Missing localized confidence label: $report", report.contains("Confidence: "))
+        assertTrue("Missing localized advice label: $report", report.contains("Advice level: "))
+        assertTrue("Missing localized limit label: $report", report.contains("Limit: "))
+        listOf(
+            "证据不足",
+            "未生成应用限制或冻结建议",
+            "包名：",
+            "解释：",
+            "置信度：",
+            "建议级别：",
+            "限制：",
+            "Scene 建议："
+        ).forEach { chineseTemplate ->
+            assertFalse(
+                "English report leaked Chinese template copy '$chineseTemplate': $report",
+                report.contains(chineseTemplate)
+            )
+        }
+    }
+
+    @Test
+    fun englishReportStatesInsufficientEvidenceRatherThanEmittingNothing() {
+        val snapshot = sampleSnapshot().copy(findings = emptyList())
+
+        val report = PowerDiagnosticReportBuilder.build(snapshot, language = AppLanguage.EN)
+
+        assertTrue(
+            "Empty-findings English report must state the gap: $report",
+            report.contains("Evidence is insufficient")
+        )
+        assertFalse(report.contains("当前证据不足"))
+    }
+
+    private fun snapshotWithCandidates(candidates: List<RankedPowerCandidate>) = PowerDiagnosticSnapshot(
+        sampledAtInstant = Instant.EPOCH,
+        collectionDurationMillis = 50,
+        sources = emptyMap(),
+        apps = emptyList(),
+        system = SystemPowerEvidence(),
+        findings = emptyList(),
+        inputSource = DiagnosticInputSource.BUGREPORT,
+        localVerdict = LocalPowerVerdict(
+            type = PowerVerdictType.SUFFICIENT,
+            totalConsumption = candidates,
+            backgroundSuspects = emptyList(),
+            nextStep = null,
+            limits = emptyList()
+        )
+    )
 
     private fun sampleSnapshot(title: String = "微信可能频繁唤醒系统") = PowerDiagnosticSnapshot(
         sampledAtInstant = Instant.parse("2026-09-11T00:00:00Z"),

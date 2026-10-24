@@ -3,6 +3,8 @@ package com.aegis.apa.tool
 import android.content.ContentResolver
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.util.Log
+import com.aegis.apa.BuildConfig
 import java.util.Locale
 
 object BugReportImportPolicy {
@@ -25,22 +27,54 @@ object BugReportImportPolicy {
     }
 }
 
-class BugReportImporter(private val resolver: ContentResolver) {
-    fun import(uri: Uri, isCancelled: () -> Boolean = { false }): BugReportReadResult {
+class BugReportImporter(
+    private val resolver: ContentResolver,
+    private val onDiagnostic: (String) -> Unit = {}
+) {
+    fun import(uri: Uri, isCancelled: () -> Boolean = { false }): BugReportReadResult =
+        import(uri, {}, isCancelled)
+
+    fun import(uri: Uri, onBytesRead: (Long) -> Unit, isCancelled: () -> Boolean): BugReportReadResult {
         if (!BugReportImportPolicy.acceptsUriScheme(uri.scheme)) {
+            diagnostic("stage=scheme accepted=false")
             return BugReportReadResult.Rejected(BugReportRejectReason.UNSUPPORTED_FORMAT)
         }
+        diagnostic("stage=metadata_query")
+        val metadataStarted = System.nanoTime()
         val displayName = queryDisplayName(uri)
-        if (!BugReportImportPolicy.accepts(resolver.getType(uri), displayName)) {
+        val mime = resolver.getType(uri)
+        val accepted = BugReportImportPolicy.accepts(mime, displayName)
+        val safeMime = mime?.take(120)?.replace(Regex("[^A-Za-z0-9/;=+._ -]"), "?")
+        val zipName = displayName?.endsWith(".zip", ignoreCase = true)
+        val txtName = displayName?.endsWith(".txt", ignoreCase = true)
+        diagnostic("stage=metadata mime=$safeMime zipName=$zipName txtName=$txtName accepted=$accepted")
+        if (BuildConfig.DEBUG) Log.d("APA-ReportImport", "stage=metadata elapsed_ms=${(System.nanoTime() - metadataStarted) / 1_000_000}")
+        if (!accepted) {
             return BugReportReadResult.Rejected(BugReportRejectReason.UNSUPPORTED_FORMAT)
         }
+        diagnostic("stage=open_stream")
+        val readStarted = System.nanoTime()
         return resolver.openInputStream(uri)?.use { input ->
             BugReportSectionExtractor.extract(
                 input = input,
                 displayName = displayName,
+                onBytesRead = onBytesRead,
                 isCancelled = isCancelled
-            )
+            ).also { result ->
+                diagnostic("stage=extract result=${when (result) {
+                    is BugReportReadResult.Rejected -> result.reason.name + " detail=" + result.diagnosticDetail
+                    is BugReportReadResult.Success -> "SUCCESS"
+                    BugReportReadResult.Cancelled -> "CANCELLED"
+                }} elapsed_ms=${(System.nanoTime() - readStarted) / 1_000_000}")
+            }
         } ?: BugReportReadResult.Rejected(BugReportRejectReason.EMPTY)
+    }
+
+    private fun diagnostic(message: String) {
+        if (BuildConfig.DEBUG) {
+            onDiagnostic(message)
+            Log.d("APA-ReportImport", message)
+        }
     }
 
     private fun queryDisplayName(uri: Uri): String? = runCatching {

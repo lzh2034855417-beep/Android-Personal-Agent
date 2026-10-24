@@ -10,6 +10,35 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DeviceProfileParserTest {
+    @Test fun deviceTreeManufacturerUsesLpddrModeRegisterIds() {
+        for ((id, vendor) in listOf("00000001" to "三星 (Samsung)",
+            "00000006" to "海力士 (SK hynix)", "000000ff" to "美光 (Micron)")) {
+            val profile = DeviceProfileParser.parse("DDR_VENDOR_HEX=$id", DeviceProfileAccess.ROOT)
+            assertEquals(vendor, profile.hardwareSupplyInfo?.ramVendor)
+        }
+    }
+
+    @Test
+    fun systemNodesExposeRamVendorWithoutBugReport() {
+        val profile = com.aegis.apa.tool.DeviceProfileParser.parse(
+            "DDR_VENDOR_HEX=000001ce\nDDR_TYPE_HEX=00000008\nSTORAGE=SKhynix|HN8T271EJKX152",
+            com.aegis.apa.tool.DeviceProfileAccess.ROOT
+        )
+        assertEquals("三星 (Samsung)", profile.hardwareSupplyInfo?.ramVendor)
+        assertEquals("LPDDR5", profile.hardwareSupplyInfo?.ramType)
+        assertEquals("SK hynix", profile.hardwareSupplyInfo?.storageVendor)
+    }
+
+    @Test
+    fun emptyZeroAndMalformedSupplierNodesDoNotGuessAVendor() {
+        for (value in listOf("", "00000000", "garbage", "001ce\u0000", "123456789")) {
+            val profile = com.aegis.apa.tool.DeviceProfileParser.parse(
+                "DDR_VENDOR_HEX=$value", com.aegis.apa.tool.DeviceProfileAccess.ROOT
+            )
+            assertNull(profile.hardwareSupplyInfo?.ramVendor)
+        }
+    }
+
     @Test
     fun parsesSm8850CpuPoliciesAndThermalSensors() {
         val raw = """
@@ -24,6 +53,8 @@ class DeviceProfileParserTest {
             CPU_ONLINE=0-7
             POLICY=policy0|0 1 2 3 4 5|384000|3628800|schedutil
             POLICY=policy6|6 7|768000|4608000|walt
+            DDR_TYPE_HEX=00000008
+            STORAGE=SKhynix|HN8T271EJKX152
             THERMAL=cpu-0-0-usr|42123
             THERMAL=battery|32000
             SERIAL=must-not-be-retained
@@ -54,6 +85,67 @@ class DeviceProfileParserTest {
         assertTrue(profile.toReportText().contains("设备名称：Xiaomi 17 Pro Max"))
         assertFalse(profile.toReportText().contains("2509FPN0BC"))
         assertFalse(profile.toReportText().contains("popsicle"))
+        assertTrue(profile.toReportText().contains("内存规格：LPDDR5"))
+        assertTrue(profile.toReportText().contains("存储厂商：SK hynix"))
+        assertTrue(profile.toReportText().contains("存储型号：HN8T271EJKX152"))
+    }
+
+    @Test
+    fun parsesMemoryAndStorageSuppliersFromAndroidBootLog() {
+        val profile = DeviceProfileParser.parse(
+            raw = """
+                DDR Device Type = 0x9
+                DDR Manufacturer ID = 0x01CE, DDR Rank0 = 1
+                Total DDR Size = 16384 MB
+                UFS INQUIRY ID = 0x06
+                UFS Spec Version = 4.1
+            """.trimIndent(),
+            access = DeviceProfileAccess.STANDARD
+        )
+
+        val hardware = profile.hardwareSupplyInfo!!
+        assertEquals("三星 (Samsung)", hardware.ramVendor)
+        assertEquals("LPDDR5X", hardware.ramType)
+        assertEquals("SK hynix", hardware.storageVendor)
+        assertEquals("UFS 4.1", hardware.storageSpec)
+    }
+
+    @Test
+    fun preservesUnknownSupplierIdsForSafeFeedback() {
+        val profile = DeviceProfileParser.parse(
+            raw = """
+                MANUFACTURER=Xiaomi
+                MODEL=2509FPN0BC
+                ANDROID=17
+                DDR Manufacturer ID = 0xBEEF, serial=must-not-be-retained
+                UFS INQUIRY ID = 0x7A
+            """.trimIndent(),
+            access = DeviceProfileAccess.STANDARD
+        )
+
+        val hardware = profile.hardwareSupplyInfo!!
+        assertEquals("JEDEC ID 0xBEEF", hardware.ramVendor)
+        assertEquals("UFS inquiry ID 0x007A", hardware.storageVendor)
+        val feedback = HardwareSupplierFeedback.format(
+            deviceName = "Xiaomi 17 Pro Max",
+            androidVersion = "17",
+            hardware = hardware,
+            appVersion = "0.2.0-preview"
+        )!!
+        assertTrue(feedback.contains("RAM 厂商：JEDEC ID 0xBEEF"))
+        assertTrue(feedback.contains("ROM 厂商：UFS inquiry ID 0x007A"))
+        assertFalse(feedback.contains("must-not-be-retained"))
+        assertFalse(feedback.contains("serial="))
+    }
+
+    @Test
+    fun zeroSupplierIdsRemainMissingInsteadOfBecomingFeedback() {
+        val profile = DeviceProfileParser.parse(
+            raw = "DDR Manufacturer ID = 0x0000\nUFS INQUIRY ID = 0x00",
+            access = DeviceProfileAccess.STANDARD
+        )
+
+        assertNull(profile.hardwareSupplyInfo)
     }
 
     @Test

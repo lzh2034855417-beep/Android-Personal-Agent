@@ -7,10 +7,51 @@ import com.aegis.apa.model.DisplayInfo
 import com.aegis.apa.model.RamInfo
 import com.aegis.apa.model.StorageInfo
 import com.aegis.apa.model.UsageSummary
+import com.aegis.apa.localization.AppLanguage
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class Level0ReportBuilderTest {
+    @Test
+    fun englishLevel0ReportLocalizesNarrativeAndPreservesEvidence() {
+        val report = Level0ReportBuilder.build(
+            sampledAt = "2026-10-01 12:00:00 +08:00",
+            deviceInfo = DeviceInfo(com.aegis.apa.tool.DeviceNameResolver.resolve(com.aegis.apa.model.DeviceIdentifiers("Xiaomi", "17 Pro Max")), "17", 37),
+            batteryInfo = BatteryInfo(
+                level = 70,
+                status = "正在放电",
+                currentMilliAmp = -420,
+                temperatureCelsius = 36.5,
+                health = "良好",
+                plugged = "未外接电源",
+                technology = "Li-poly"
+            ),
+            displayInfo = DisplayInfo(1200, 2608, 480, 120f, 120f),
+            ramInfo = RamInfo(16_000_000_000L, 8_000_000_000L, false),
+            storageInfo = StorageInfo(512_000_000_000L, 256_000_000_000L),
+            usageSummary = UsageSummary(
+                accessGranted = true,
+                foregroundTimeMillis = 7_200_000L,
+                topApps = listOf(com.aegis.apa.model.UsageApp("private.app", "PRIVATE_APP_SENTINEL", 7_200_000L))
+            ),
+            securityPatch = "2026-09-01",
+            socName = "Qualcomm SM8850",
+            supportedAbis = listOf("arm64-v8a"),
+            includeUsageReport = true,
+            language = AppLanguage.EN
+        )
+
+        assertTrue(report.contains("[Sample scope]"))
+        assertTrue(report.contains("Data access: standard Android APIs (Level 0)"))
+        assertTrue(report.contains("Battery status: Discharging"))
+        assertTrue(report.contains("Battery health: Good"))
+        assertTrue(report.contains("PRIVATE_APP_SENTINEL"))
+        assertTrue(report.contains("Qualcomm SM8850"))
+        listOf("本次采样范围", "设备与系统", "电池即时状态", "设备未提供", "小时", "分钟").forEach {
+            assertFalse("unexpected Chinese template: $it", report.contains(it))
+        }
+    }
     @Test
     fun usageSelectionControlsGrantedDataAndExcludesAdvancedGrade() {
         fun report(includeUsage: Boolean = false) = Level0ReportBuilder.build(

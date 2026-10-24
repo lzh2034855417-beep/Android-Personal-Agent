@@ -8,6 +8,8 @@ import com.aegis.apa.tool.DisplayReportText
 import com.aegis.apa.model.RamInfo
 import com.aegis.apa.model.StorageInfo
 import com.aegis.apa.model.UsageSummary
+import com.aegis.apa.localization.AppLanguage
+import com.aegis.apa.localization.DeviceUiCopy
 
 object Level0ReportBuilder {
     fun build(
@@ -21,7 +23,32 @@ object Level0ReportBuilder {
         securityPatch: String?,
         socName: String?,
         supportedAbis: List<String>,
-        includeUsageReport: Boolean = false
+        includeUsageReport: Boolean = false,
+        language: AppLanguage = AppLanguage.ZH_CN
+    ): String = if (language == AppLanguage.EN) {
+        buildEnglish(
+            sampledAt, deviceInfo, batteryInfo, displayInfo, ramInfo, storageInfo,
+            usageSummary, securityPatch, socName, supportedAbis, includeUsageReport
+        )
+    } else {
+        buildChinese(
+            sampledAt, deviceInfo, batteryInfo, displayInfo, ramInfo, storageInfo,
+            usageSummary, securityPatch, socName, supportedAbis, includeUsageReport
+        )
+    }
+
+    private fun buildChinese(
+        sampledAt: String,
+        deviceInfo: DeviceInfo,
+        batteryInfo: BatteryInfo,
+        displayInfo: DisplayInfo,
+        ramInfo: RamInfo,
+        storageInfo: StorageInfo,
+        usageSummary: UsageSummary,
+        securityPatch: String?,
+        socName: String?,
+        supportedAbis: List<String>,
+        includeUsageReport: Boolean
     ): String = buildString {
         appendLine("【本次采样范围】")
         appendLine("采样时间：$sampledAt")
@@ -78,6 +105,77 @@ object Level0ReportBuilder {
             }
         }
     }
+
+    private fun buildEnglish(
+        sampledAt: String,
+        deviceInfo: DeviceInfo,
+        batteryInfo: BatteryInfo,
+        displayInfo: DisplayInfo,
+        ramInfo: RamInfo,
+        storageInfo: StorageInfo,
+        usageSummary: UsageSummary,
+        securityPatch: String?,
+        socName: String?,
+        supportedAbis: List<String>,
+        includeUsageReport: Boolean
+    ): String = buildString {
+        appendLine("[Sample scope]")
+        appendLine("Sample time: $sampledAt")
+        appendLine("Data access: standard Android APIs (Level 0)")
+        appendLine("Note: values below are from this live sample; missing fields are not inferred.")
+        appendLine()
+
+        appendLine("[Device and system]")
+        appendLine("Device: ${deviceInfo.model}")
+        appendLine("Android: ${deviceInfo.androidVersion}")
+        appendLine("Security patch: ${securityPatch.orUnavailableEnglish()}")
+        appendLine("Chip: ${socName.orUnavailableEnglish()}")
+        appendLine("Supported ABIs: ${supportedAbis.takeIf { it.isNotEmpty() }?.joinToString() ?: "Unavailable"}")
+        appendLine()
+
+        appendLine("[Display experience]")
+        append(DisplayReportText.format(displayInfo, AppLanguage.EN))
+        appendLine()
+
+        appendLine("[Current battery state]")
+        appendLine("Current charge: ${batteryInfo.levelText}")
+        appendLine("Battery status: ${DeviceUiCopy.batteryStatus(batteryInfo.status, AppLanguage.EN)}")
+        appendLine("Instant current: ${batteryInfo.currentMilliAmp?.let { "$it mA" } ?: "Unavailable"}")
+        appendLine("Remaining charge: ${batteryInfo.remainingMilliAmpHour?.let { "$it mAh" } ?: "Unavailable"}")
+        appendLine("Remaining energy: ${batteryInfo.remainingMilliWattHour?.let { "$it mWh" } ?: "Unavailable"}")
+        append(BatteryReportText.format(batteryInfo, AppLanguage.EN))
+        appendLine()
+
+        appendLine("[Resource state]")
+        appendLine("Memory: ${formatBytes(ramInfo.availableBytes)} available / ${formatBytes(ramInfo.totalBytes)} total")
+        appendLine("System low-memory flag: ${if (ramInfo.isLowMemory) "Yes" else "No"}")
+        appendLine("Storage: ${formatBytes(storageInfo.availableBytes)} available / ${formatBytes(storageInfo.totalBytes)} total")
+        appendLine()
+
+        appendLine("[Optional usage habits]")
+        if (!includeUsageReport) {
+            appendLine("Not selected for this request; usage habits are not sent.")
+            return@buildString
+        }
+        usageSummary.rangeText(AppLanguage.EN)?.let { appendLine("Range: $it") }
+        if (usageSummary.isPartial) appendLine("Data limit: some foreground/background events are missing, so durations may be low.")
+        if (!usageSummary.accessGranted) {
+            appendLine("Usage Access is not granted; the basic report is still available.")
+            appendLine("To summarize today's foreground app use, grant APA Usage Access in system settings.")
+        } else {
+            appendLine("Total foreground app use today: ${usageSummary.foregroundTimeMillis?.let { DeviceUiCopy.duration(it, AppLanguage.EN) } ?: "Unavailable"}")
+            appendLine("Note: foreground time is estimated from system events. Records may be missing or delayed, multi-window durations may overlap, and this is not exact screen-on time or evidence of app content or background behavior.")
+            if (usageSummary.topApps.isEmpty()) {
+                appendLine("Foreground usage ranking: Unavailable")
+            } else {
+                usageSummary.topApps.forEachIndexed { index, app ->
+                    appendLine("${index + 1}. ${app.label}: ${DeviceUiCopy.duration(app.foregroundTimeMillis, AppLanguage.EN)}")
+                }
+            }
+        }
+    }
+
+    private fun String?.orUnavailableEnglish(): String = this?.takeIf { it.isNotBlank() } ?: "Unavailable"
 
     private fun String?.orUnavailable(): String = this?.takeIf { it.isNotBlank() } ?: "设备未提供"
 

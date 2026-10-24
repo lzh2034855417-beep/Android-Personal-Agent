@@ -16,11 +16,14 @@ data class RootBatteryInfo(
 }
 
 object RootBatteryTool {
-    fun read(): RootBatteryInfo {
-        val result = RootCommandRunner.runBatteryHealth()
+    fun read(cancellationRequested: () -> Boolean = { false }): RootBatteryInfo {
+        checkCollectionCancellation(cancellationRequested)
+        val result = RootCommandRunner.runBatteryHealth(cancellationRequested)
+        checkCollectionCancellation(cancellationRequested)
         return when (result.status) {
-            DiagnosticSourceStatus.AVAILABLE,
+            DiagnosticSourceStatus.AVAILABLE -> RootBatteryParser.parse(result.output)
             DiagnosticSourceStatus.TRUNCATED -> RootBatteryParser.parse(result.output)
+                .copy(error = result.detail ?: "输出过长或不完整，已截断")
             DiagnosticSourceStatus.TIMED_OUT -> emptyInfo("Root 授权超时")
             DiagnosticSourceStatus.PERMISSION_DENIED -> emptyInfo(result.detail ?: "Root 授权被拒绝或执行失败")
             else -> emptyInfo("Root 授权被拒绝或执行失败")

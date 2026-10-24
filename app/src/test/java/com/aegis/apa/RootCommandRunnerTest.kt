@@ -80,6 +80,27 @@ class RootCommandRunnerTest {
     }
 
     @Test
+    fun cancellationThatArrivesAsProcessExitsIsStillCancellation() {
+        var cancelled = false
+        val process = object : Process() {
+            var destroyed = false
+            override fun getOutputStream() = ByteArrayOutputStream()
+            override fun getInputStream() = ByteArrayInputStream(byteArrayOf())
+            override fun getErrorStream() = ByteArrayInputStream(byteArrayOf())
+            override fun waitFor() = 0
+            override fun waitFor(timeout: Long, unit: TimeUnit): Boolean {
+                cancelled = true
+                return true
+            }
+            override fun exitValue() = 0
+            override fun destroy() { destroyed = true }
+            override fun destroyForcibly(): Process { destroyed = true; return this }
+        }
+        val outcome = waitForRootProcess(process, 8_000) { cancelled }
+        assertEquals(RootProcessWaitOutcome.CANCELLED, outcome)
+    }
+
+    @Test
     fun interruptedWaitDestroysTheActiveProcessAndBecomesCancellation() {
         val process = WaitingProcess(interruptOnWait = true)
 

@@ -7,6 +7,7 @@ import com.aegis.apa.agent.StoredApiKey
 import com.aegis.apa.agent.AgentFailure
 import com.aegis.apa.agent.AgentFailureException
 import com.aegis.apa.agent.ModelHttpException
+import com.aegis.apa.localization.AppLanguage
 import org.junit.Test
 import java.net.SocketTimeoutException
 
@@ -42,6 +43,46 @@ class AgentErrorMessageTest {
         assertEquals(
             "暂时无法连接模型服务，请检查网络后重试，或在设置中切换其他已配置的模型。",
             message
+        )
+    }
+
+    @Test
+    fun englishFailuresStayEnglishAndKeepUsefulRecoveryInstructions() {
+        assertEquals(
+            "Save an API Key in Settings before sending.",
+            AgentErrorMessage.from(AgentFailureException(AgentFailure.MISSING_KEY), AppLanguage.EN)
+        )
+        assertEquals(
+            "The model service changed. Send your question again.",
+            AgentErrorMessage.from(AgentFailureException(AgentFailure.PROVIDER_CHANGED), AppLanguage.EN)
+        )
+        assertEquals(
+            "The model service did not accept the API Key. Check or save it again in Settings.",
+            AgentErrorMessage.from(ModelHttpException(401), AppLanguage.EN)
+        )
+        assertEquals(
+            "The model service quota is exhausted or requests are too frequent. Check the balance and quota, then try again later.",
+            AgentErrorMessage.from(ModelHttpException(429), AppLanguage.EN)
+        )
+        assertEquals(
+            "The model service is temporarily unavailable. Try again later or switch to another configured service.",
+            AgentErrorMessage.from(ModelHttpException(503), AppLanguage.EN)
+        )
+        assertEquals(
+            "The model request failed (HTTP 418). Check the configuration or try again later.",
+            AgentErrorMessage.from(ModelHttpException(418), AppLanguage.EN)
+        )
+    }
+
+    @Test
+    fun englishNetworkAndUnexpectedFailuresHidePrivateExceptionDetails() {
+        assertEquals(
+            "Could not reach the model service. Check the network, try again, or switch to another configured model in Settings.",
+            AgentErrorMessage.from(SocketTimeoutException("private-host/10.0.0.8"), AppLanguage.EN)
+        )
+        assertEquals(
+            "Online analysis failed. Try again later.",
+            AgentErrorMessage.from(IllegalStateException("sk-secret-sentinel"), AppLanguage.EN)
         )
     }
 }

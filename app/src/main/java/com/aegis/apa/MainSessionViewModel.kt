@@ -1,8 +1,21 @@
 package com.aegis.apa
 
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import com.aegis.apa.agent.ConversationMessageState
+import com.aegis.apa.agent.ConversationPersistence
 import com.aegis.apa.agent.AgentConversationMessage
 import com.aegis.apa.agent.MessageRole
 import com.aegis.apa.model.AppDetails
@@ -14,7 +27,11 @@ import com.aegis.apa.model.BatteryObservationValidity
 import com.aegis.apa.model.DeviceSnapshot
 import com.aegis.apa.model.PowerDiagnosticSnapshot
 import com.aegis.apa.tool.DeviceProfileSnapshot
+import com.aegis.apa.tool.HardwareSupplyInfo
 import com.aegis.apa.tool.RootBatteryInfo
+import com.aegis.apa.tool.RootCommandRunner
+import com.aegis.apa.model.RootAccessState
+import com.aegis.apa.localization.AppLanguage
 
 sealed interface PowerDiagnosticUiState {
     data object Idle : PowerDiagnosticUiState
@@ -29,17 +46,30 @@ sealed interface PowerDiagnosticUiState {
 class MainSessionViewModel(
     private val savedStateHandle: SavedStateHandle = SavedStateHandle()
 ) : ViewModel() {
+    private var appLanguage = AppLanguage.ZH_CN
     val agent = AgentPageState()
     val snapshot = mutableStateOf<DeviceSnapshot?>(null)
     val selectedAppDetails = mutableStateOf<AppDetails?>(null)
     val rootBatteryInfo = mutableStateOf<RootBatteryInfo?>(null)
     val rootBatteryReading = mutableStateOf(false)
+    val rootAccessState = mutableStateOf(RootAccessState.UNKNOWN)
+    private var rootAuthorizationGeneration = 0L
+    private var rootAuthorizationRetryRequested = false
+    private var rootAuthorizationJob: Job? = null
     val deviceProfile = mutableStateOf<DeviceProfileSnapshot?>(null)
     val deviceProfileReading = mutableStateOf(false)
-    val messages = mutableStateOf<List<AgentConversationMessage>>(emptyList())
+    val hardwareSupplyInfo = mutableStateOf<HardwareSupplyInfo?>(null)
+    val messages = ConversationMessageState()
+    val conversationLoading = mutableStateOf(true)
+    val conversationStorageError = mutableStateOf(false)
+    val conversationExpired = mutableStateOf(false)
+    val conversationSaving = mutableStateOf(false)
+    private var conversationInitialized = false
+    private var pendingConversationWrites = 0
     val analyzing = mutableStateOf(false)
     val powerDiagnostic = mutableStateOf<PowerDiagnosticSnapshot?>(null)
     val powerDiagnosticState = mutableStateOf<PowerDiagnosticUiState>(PowerDiagnosticUiState.Idle)
+    val reportImportStatus = mutableStateOf<String?>(null)
     private var chargingObserved = false
     private var observationContinuity = BatteryObservationContinuity.PROCESS_OBSERVED
     private var persistentCheckpointReconciled = false
@@ -57,10 +87,117 @@ class MainSessionViewModel(
     private var onlineAnalysis = false
     private var consumedSharedBugReportUri: String? = null
 
+    fun requestRootAuthorizationRefresh() { rootAuthorizationRetryRequested = true }
+
+    internal fun beginRootAuthorizationCheck(allowRetry: Boolean): Long? {
+        if (rootAccessState.value == RootAccessState.CHECKING) return null
+        if (!allowRetry && !rootAuthorizationRetryRequested && rootAccessState.value in setOf(
+                RootAccessState.DENIED, RootAccessState.TIMED_OUT, RootAccessState.FAILED
+            )) return null
+        rootAuthorizationRetryRequested = false
+        rootAccessState.value = RootAccessState.CHECKING
+        return ++rootAuthorizationGeneration
+    }
+
+    internal fun completeRootAuthorizationCheck(token: Long, result: RootAccessState): Boolean {
+        if (token != rootAuthorizationGeneration || rootAccessState.value != RootAccessState.CHECKING) return false
+        require(result != RootAccessState.UNKNOWN && result != RootAccessState.CHECKING)
+        rootAccessState.value = result
+        return true
+    }
+
+    internal fun cancelRootAuthorizationCheck(token: Long) {
+        if (token == rootAuthorizationGeneration && rootAccessState.value == RootAccessState.CHECKING) {
+            rootAuthorizationGeneration++
+            rootAccessState.value = RootAccessState.UNKNOWN
+        }
+    }
+
+    internal fun markRootUnavailable() {
+        rootAuthorizationGeneration++
+        rootAccessState.value = RootAccessState.UNAVAILABLE
+        rootAuthorizationJob?.cancel()
+    }
+
+    /** One in-flight probe survives rotation; denied/timed-out probes require explicit retry. */
+    fun refreshRootAuthorization(hasRootInterface: Boolean, allowRetry: Boolean = false) {
+        if (!hasRootInterface) { markRootUnavailable(); return }
+        if (rootAuthorizationJob?.isActive == true) return
+        val token = beginRootAuthorizationCheck(allowRetry) ?: return
+        rootAuthorizationJob = viewModelScope.launch {
+            try {
+                val job = checkNotNull(currentCoroutineContext()[Job])
+                val result = withContext(Dispatchers.IO) {
+                    RootCommandRunner.checkAuthorization { !job.isActive }
+                }
+                completeRootAuthorizationCheck(token, result)
+            } catch (cancelled: CancellationException) {
+                cancelRootAuthorizationCheck(token)
+                throw cancelled
+            } catch (_: Exception) {
+                completeRootAuthorizationCheck(token, RootAccessState.FAILED)
+            }
+        }
+    }
+
+    fun initializeConversation(persistence: ConversationPersistence) {
+        if (conversationInitialized) return
+        conversationInitialized = true
+        viewModelScope.launch {
+            try {
+                val restored = persistence.load()
+                messages.value = restored.messages
+                conversationStorageError.value = restored.failed
+                conversationExpired.value = restored.expired
+                messages.onChanged = { snapshot ->
+                    pendingConversationWrites++
+                    conversationSaving.value = true
+                    persistence.save(snapshot) { success ->
+                        conversationStorageError.value = !success
+                        if (success) conversationExpired.value = false
+                        pendingConversationWrites--
+                        conversationSaving.value = pendingConversationWrites > 0
+                    }
+                }
+                if (messages.value.lastOrNull()?.role == MessageRole.USER) {
+                    messages.value = messages.value + AgentConversationMessage(
+                        MessageRole.ERROR,
+                        if (appLanguage == AppLanguage.EN) "The previous analysis was interrupted. Send the question again."
+                        else "上次分析未完成，请重新发送问题。",
+                        source = "LOCAL · INTERRUPTED"
+                    )
+                }
+            } finally { conversationLoading.value = false }
+        }
+    }
+
+    fun clearConversation() {
+        if (messages.value.isEmpty()) messages.onChanged?.invoke(emptyList())
+        else messages.value = emptyList()
+    }
+
+    fun setLanguage(language: AppLanguage) {
+        if (appLanguage == language) return
+        appLanguage = language
+        batteryObservationNotice.value = when {
+            batteryObservationResult.value != null -> BatteryObservationAnalyzer.explanation(
+                batteryObservationResult.value!!.validity,
+                language
+            )
+            batteryObservationStart.value != null && chargingObserved -> chargingObservedNotice()
+            batteryObservationStart.value != null -> observationStartedNotice()
+            else -> null
+        }
+    }
+
     fun consumeSharedBugReport(uri: String): Boolean {
         if (uri == consumedSharedBugReportUri) return false
         consumedSharedBugReportUri = uri
         return true
+    }
+
+    fun replaceImportedHardwareSupplyInfo(info: HardwareSupplyInfo?) {
+        hardwareSupplyInfo.value = info
     }
 
     fun completePowerDiagnostic(snapshot: PowerDiagnosticSnapshot) {
@@ -71,10 +208,10 @@ class MainSessionViewModel(
 
     fun startBatteryObservation(point: BatteryObservationPoint): Boolean {
         if (batteryObservationStart.value != null) {
-            batteryObservationNotice.value = "续航观察已经在进行中。"
+            batteryObservationNotice.value = if (appLanguage == AppLanguage.EN) "A battery observation is already running." else "续航观察已经在进行中。"
             return false
         }
-        val error = BatteryObservationAnalyzer.startError(point)
+        val error = BatteryObservationAnalyzer.startError(point, appLanguage)
         if (error != null) {
             batteryObservationNotice.value = error
             return false
@@ -84,14 +221,14 @@ class MainSessionViewModel(
         chargingObserved = false
         observationContinuity = BatteryObservationContinuity.PROCESS_OBSERVED
         saveObservationResult(null)
-        batteryObservationNotice.value = "观察已开始。保持设备不充电，建议正常使用至少 30 分钟。"
+        batteryObservationNotice.value = observationStartedNotice()
         return true
     }
 
     fun finishBatteryObservation(point: BatteryObservationPoint, userReportedCharging: Boolean) {
         val start = batteryObservationStart.value
         if (start == null) {
-            batteryObservationNotice.value = "还没有开始续航观察。"
+            batteryObservationNotice.value = if (appLanguage == AppLanguage.EN) "No battery observation has been started." else "还没有开始续航观察。"
             return
         }
         val result = BatteryObservationAnalyzer.finish(
@@ -110,13 +247,13 @@ class MainSessionViewModel(
             batteryObservationResult.value = result
             saveObservationResult(result)
         }
-        batteryObservationNotice.value = BatteryObservationAnalyzer.explanation(result.validity)
+        batteryObservationNotice.value = BatteryObservationAnalyzer.explanation(result.validity, appLanguage)
     }
 
     fun markBatteryObservationChargingObserved() {
         if (batteryObservationStart.value == null) return
         chargingObserved = true
-        batteryObservationNotice.value = "观察期间检测到连接电源；本次数据已作废，结束后请重新开始。"
+        batteryObservationNotice.value = chargingObservedNotice()
     }
 
     fun reconcileBatteryObservation(point: BatteryObservationPoint?, chargingWasObserved: Boolean = false) {
@@ -144,9 +281,9 @@ class MainSessionViewModel(
         observationContinuity = BatteryObservationContinuity.USER_CONFIRMED_AFTER_RESTORE
         saveObservationResult(null)
         batteryObservationNotice.value = if (chargingWasObserved) {
-            "已恢复观察起点，但期间记录到连接电源；本次数据已作废。"
+            if (appLanguage == AppLanguage.EN) "The observation start was restored, but power was connected during it, so this measurement is invalid." else "已恢复观察起点，但期间记录到连接电源；本次数据已作废。"
         } else {
-            "已恢复观察起点。结束时请确认期间是否充过电；结果将标为用户确认的粗略测量。"
+            if (appLanguage == AppLanguage.EN) "The observation start was restored. When finishing, confirm whether the phone was charged; the result will be marked as a user-confirmed rough measurement." else "已恢复观察起点。结束时请确认期间是否充过电；结果将标为用户确认的粗略测量。"
         }
     }
 
@@ -180,9 +317,12 @@ class MainSessionViewModel(
         analyzing.value = false
         messages.value = messages.value + AgentConversationMessage(
             role = MessageRole.ERROR,
-            content = if (onlineAnalysis)
+            content = if (appLanguage == AppLanguage.EN) {
+                if (onlineAnalysis) "This analysis is shown as interrupted. The online request may still be processing; retrying sends another request."
+                else "This analysis was interrupted. Send the question again."
+            } else if (onlineAnalysis) {
                 "本次分析显示已中断。在线请求可能仍在处理，重试会再次发送。"
-            else "本次分析已中断，请重新发送。",
+            } else "本次分析已中断，请重新发送。",
             source = "LOCAL · INTERRUPTED"
         )
     }
@@ -244,6 +384,14 @@ class MainSessionViewModel(
         if (result == null) savedStateHandle.remove<String>(RESULT_CONTINUITY_KEY)
     }
 
+    private fun observationStartedNotice(): String =
+        if (appLanguage == AppLanguage.EN) "Observation started. Keep the phone unplugged and use it normally for at least 30 minutes."
+        else "观察已开始。保持设备不充电，建议正常使用至少 30 分钟。"
+
+    private fun chargingObservedNotice(): String =
+        if (appLanguage == AppLanguage.EN) "Power was connected during the observation. This measurement is invalid; finish it and start again."
+        else "观察期间检测到连接电源；本次数据已作废，结束后请重新开始。"
+
     private companion object {
         const val RESULT_START_PREFIX = "battery_observation_result_start"
         const val RESULT_END_PREFIX = "battery_observation_result_end"
@@ -253,11 +401,14 @@ class MainSessionViewModel(
 }
 
 class AgentPageState {
-    val selectedLevel = mutableStateOf("Level 0")
+    val selectedLevel = mutableStateOf<String?>(null)
     val includeUsageReport = mutableStateOf(false)
     val includeAppReport = mutableStateOf(false)
     val includePowerDiagnosticReport = mutableStateOf(false)
     val reportPickerExpanded = mutableStateOf(false)
     val draft = mutableStateOf("")
-    var lastAutoScrollMessageCount = -1
+    var visibleMessageCount by mutableIntStateOf(30)
+    var followLatest by mutableStateOf(true)
+    var firstVisibleIndex = 0
+    var firstVisibleOffset = 0
 }

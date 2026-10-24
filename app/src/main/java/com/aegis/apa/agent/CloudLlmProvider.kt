@@ -2,8 +2,6 @@ package com.aegis.apa.agent
 
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 
 data class CloudProviderConfig(
     val name: String,
@@ -55,19 +53,36 @@ object CloudProviderCatalog {
     fun find(name: String): CloudProviderConfig? = providers.firstOrNull { it.name == name }
 }
 
-private fun allowsAdvancedAdvice(selectedLevel: String): Boolean =
-    selectedLevel.startsWith("Level 1") || selectedLevel.startsWith("Level 2")
+private fun allowsAdvancedAdvice(selectedLevel: String?): Boolean =
+    selectedLevel?.startsWith("Level 1") == true || selectedLevel?.startsWith("Level 2") == true
+
+private val unsafeDeviceCommandPatterns = listOf(
+    Regex("\\badb\\s+shell\\b", RegexOption.IGNORE_CASE),
+    Regex("\\bsu\\s+-c\\b", RegexOption.IGNORE_CASE),
+    Regex("\\bpm\\s+(?:disable(?:-user)?|suspend|hide|uninstall)\\b", RegexOption.IGNORE_CASE),
+    Regex("\\bcmd\\s+package\\b", RegexOption.IGNORE_CASE),
+    Regex("\\bam\\s+force-stop\\b", RegexOption.IGNORE_CASE),
+    Regex("\\bsettings\\s+put\\b", RegexOption.IGNORE_CASE)
+)
+
+private fun containsUnsafeDeviceCommand(content: String): Boolean =
+    unsafeDeviceCommandPatterns.any { pattern -> pattern.containsMatchIn(content) }
 
 internal fun sanitizeCloudAnalysisResponse(
     content: String,
-    selectedLevel: String,
+    selectedLevel: String?,
     powerIntent: PowerQuestionIntent = PowerQuestionIntent.OTHER,
-    reportAttached: Boolean = false
+    reportAttached: Boolean = false,
+    deviceAdviceMode: Boolean = true,
+    language: com.aegis.apa.localization.AppLanguage = com.aegis.apa.localization.AppLanguage.ZH_CN
 ): String {
     val healthFiltered = if (powerIntent == PowerQuestionIntent.BATTERY_HEALTH) {
         val irrelevantPrefixes = listOf(
             "耗电窗口：", "高耗电应用：", "后台耗电排行：", "系统调度观察：",
-            "scene 建议：", "普通设置建议：", "耗电总量排行："
+            "scene 建议：", "普通设置建议：", "耗电总量排行：",
+            "drain window:", "main consumption:", "total consumption:",
+            "background consumption:", "background judgement:", "background judgment:",
+            "scheduling observations:", "scene advice:", "ordinary settings advice:"
         )
         content.lineSequence()
             .filterNot { line ->
@@ -82,41 +97,103 @@ internal fun sanitizeCloudAnalysisResponse(
         content
     }
     val reportSafe = if (reportAttached) {
-        val reportTerms = listOf("bug report", "报告", "系统报告", "系统耗电诊断", "报告包")
-        val requestTerms = listOf("生成", "导入", "上传", "提供", "重新", "再次", "再做", "再抓")
-        healthFiltered.lineSequence()
-            .filterNot { line ->
-                reportTerms.any { term -> line.contains(term, ignoreCase = true) } &&
-                    requestTerms.any { term -> line.contains(term, ignoreCase = true) }
-            }
+        CloudResponseSafetyPolicy.segments(healthFiltered)
+            .filterNot(CloudResponseSafetyPolicy::requestsAttachedReport)
             .joinToString("\n")
             .trim()
     } else {
         healthFiltered
     }
+    if (!deviceAdviceMode) return sanitizeGeneralChatResponse(reportSafe, language)
     if (allowsAdvancedAdvice(selectedLevel)) return reportSafe
     val advancedTerms = listOf(
         "scene", "adb", "shizuku", "root", "kernelsu", "ksu", "magisk",
         "lsposed", "xposed", "zygisk", "shell", "冻结", "限频", "命令", "刷入"
     )
-    return reportSafe.split(Regex("(?<=[。！？!?；;])|\\R+"))
-        .map(String::trim)
-        .filter(String::isNotEmpty)
-        .filterNot { segment -> advancedTerms.any { term -> segment.contains(term, ignoreCase = true) } }
+    return CloudResponseSafetyPolicy.segments(reportSafe)
+        .filterNot { segment ->
+            containsUnsafeDeviceCommand(segment) ||
+                CloudResponseSafetyPolicy.containsAdvancedAction(segment) ||
+                advancedTerms.any { term -> segment.contains(term, ignoreCase = true) }
+        }
         .joinToString("\n")
         .trim()
 }
 
+private fun sanitizeGeneralChatResponse(
+    content: String,
+    language: com.aegis.apa.localization.AppLanguage
+): String {
+    val advancedTerms = listOf(
+        "adb", "shizuku", "root", "scene", "shell", "magisk", "kernelsu", "ksu",
+        "冻结", "限频", "刷入", "停用", "禁用", "pm disable", "su -c"
+    )
+    val actionTerms = listOf(
+        "执行", "运行", "输入", "复制以下", "使用以下", "可以用", "冻结", "限频", "刷入", "停用", "禁用",
+        "卸载", "删除", "修改", "强停", "run ", "execute ", "use ", "enter ", "paste ", "disable ",
+        "freeze ", "flash ", "uninstall ", "delete ", "modify "
+    )
+    val safe = CloudResponseSafetyPolicy.segments(content)
+        .filterNot { segment ->
+            containsUnsafeDeviceCommand(segment) ||
+                CloudResponseSafetyPolicy.containsAdvancedAction(segment) ||
+                advancedTerms.any { term -> segment.contains(term, ignoreCase = true) } &&
+                actionTerms.any { term -> segment.contains(term, ignoreCase = true) }
+        }
+        .joinToString("\n")
+        .trim()
+    return safe.ifBlank {
+        if (language == com.aegis.apa.localization.AppLanguage.EN) {
+            "No device capability level is selected, so I cannot provide executable ADB, Shizuku, Root, freezing, or throttling steps. Select and authorize the appropriate level before requesting device actions."
+        } else {
+            "当前未选择设备能力等级，我不能提供可执行的 ADB、Shizuku、Root、冻结或限频操作。请选择相应等级并完成授权后再进行设备分析。"
+        }
+    }
+}
+
 internal fun buildCloudAnalysisPrompt(
-    context: DeviceContext,
+    context: DeviceContext?,
     userQuestion: String,
-    selectedLevel: String,
-    levelReport: String,
+    selectedLevel: String?,
+    levelReport: String?,
     appReport: String?,
-    powerDiagnosticReport: String?
+    powerDiagnosticReport: String?,
+    language: com.aegis.apa.localization.AppLanguage = com.aegis.apa.localization.AppLanguage.ZH_CN
 ): String = buildString {
     val powerIntent = PowerAnalysisPreflight.classify(userQuestion)
+    val deviceAdviceMode = context != null || selectedLevel != null || levelReport != null ||
+        appReport != null || powerDiagnosticReport != null
     val advancedAdviceAllowed = allowsAdvancedAdvice(selectedLevel)
+    if (language == com.aegis.apa.localization.AppLanguage.EN) {
+        appendLine("[User question]")
+        appendLine(userQuestion)
+        appendLine()
+        appendLine("[Selected capability]")
+        appendLine(selectedLevel ?: "No device report attached")
+        appendLine()
+        context?.let { device ->
+            appendLine("[Device snapshot]")
+            appendLine("Device: ${device.deviceModel}")
+            appendLine("Android: ${device.androidVersion}")
+            appendLine("Charge: ${device.batteryLevel?.let { "$it%" } ?: "unavailable"}")
+            appendLine("RAM: ${device.availableRamBytes} B available / ${device.totalRamBytes} B total")
+            appendLine("Storage: ${device.availableStorageBytes} B available / ${device.totalStorageBytes} B total")
+            appendLine("Launchable apps: ${device.launchableAppCount}")
+        }
+        levelReport?.let { appendLine("[Device report]\n$it") }
+        appReport?.takeIf { powerIntent != PowerQuestionIntent.BATTERY_HEALTH }?.let { appendLine("[App report]\n$it") }
+        powerDiagnosticReport?.takeIf { powerIntent != PowerQuestionIntent.BATTERY_HEALTH }?.let {
+            val safeReport = if (advancedAdviceAllowed) it else it.lineSequence()
+                .filterNot { line -> line.contains("Scene", ignoreCase = true) }.joinToString("\n")
+            appendLine("[System power diagnostic]\n$safeReport")
+        }
+        if (deviceAdviceMode) {
+            appendLine(AgentResponseFocusPolicy.task(powerIntent, powerDiagnosticReport != null, language))
+        }
+        appendLine()
+        append("Answer in English. Preserve all raw evidence exactly. Do not infer missing data or exceed the selected capability level.")
+        return@buildString
+    }
     val hasValidatedDrainWindow = powerDiagnosticReport?.let { report ->
         report.contains("统计周期：自上次充满后") && report.contains("平均耗电：")
     } == true
@@ -124,6 +201,12 @@ internal fun buildCloudAnalysisPrompt(
     appendLine("【用户问题】")
     appendLine(userQuestion)
     appendLine()
+    if (!deviceAdviceMode) {
+        appendLine("【模式】")
+        appendLine("普通对话；本次未附带设备报告或设备快照。")
+        return@buildString
+    }
+    appendLine(AgentResponseFocusPolicy.task(powerIntent, powerDiagnosticReport != null, language))
     if (powerIntent == PowerQuestionIntent.BATTERY_HEALTH) {
         appendLine("【回答任务：电池健康与更换判断】")
         if (powerDiagnosticReport != null) {
@@ -133,8 +216,8 @@ internal fun buildCloudAnalysisPrompt(
         appendLine("不要讨论耗电应用、后台排行、调度计数、短时耗电速率或预计续航；这些不能回答电池是否老化。")
         appendLine("没有同时取得可信且单位一致的设计容量与满充容量时，不得计算健康度；没有安全异常或可靠容量证据时，不得断言必须更换。")
         when {
-            selectedLevel.startsWith("Level 2") -> appendLine("只有 Root 报告实际提供设计容量、满充容量和循环次数时才可引用；字段缺失就明确缺失，不得猜测。")
-            selectedLevel.startsWith("Level 1") -> appendLine("ADB / Shizuku 通常不能可靠读取受保护的容量和循环字段，不得假装已经获得；可建议官方电池检测或售后检测。")
+            selectedLevel?.startsWith("Level 2") == true -> appendLine("只有 Root 报告实际提供设计容量、满充容量和循环次数时才可引用；字段缺失就明确缺失，不得猜测。")
+            selectedLevel?.startsWith("Level 1") == true -> appendLine("ADB / Shizuku 通常不能可靠读取受保护的容量和循环字段，不得假装已经获得；可建议官方电池检测或售后检测。")
             else -> appendLine("普通权限缺少循环次数或容量证据时，只建议官方电池检测或售后检测，不提供高级权限操作。")
         }
         appendLine("安全建议只处理鼓包、异常发热、异常关机或电量突降等症状；出现鼓包时应停止充电和继续使用并尽快送检。")
@@ -156,36 +239,34 @@ internal fun buildCloudAnalysisPrompt(
                 } else {
                     appendLine("诊断没有提供经过验证的统计周期平均耗电；没有统计周期平均耗电时不得编造速度，只建议在 APA 内完成一次未充电的应用内续航观察。")
                 }
-                appendLine("即使无法判断速度，仍可解释高耗电应用和后台耗电排行。")
+                appendLine("如果无法判断速度，围绕速率缺口给出一个测量步骤，不转去解释无关的应用排行。")
             }
-            PowerQuestionIntent.ATTRIBUTION -> appendLine("先回答后台耗电排行中哪个应用最值得优先核对；高耗电或后台耗电较高不等同于异常。")
+            PowerQuestionIntent.ATTRIBUTION -> appendLine("只在本地裁决有同窗口后台异常证据时单独解释异常对象，表述为疑似而非已证实；正常应用只保留本地排行，不逐个点评。高耗电或后台耗电较高不等同于异常；相关的本地待验证线索可以单独简短说明，但不能写成异常段落或据此建议限制。")
             PowerQuestionIntent.BATTERY_HEALTH,
             PowerQuestionIntent.OTHER -> Unit
         }
-        appendLine("最多解释 3 个主要耗电对象，必须写出应用名或包名、报告中的原始数值和耗电更偏前台还是后台。")
-        appendLine("后台耗电排行优先指出后台耗电量和占比；单一耗电估算只能作为优先核对线索。")
-        appendLine("系统调度观察必须分别说明真实唤醒与普通定时任务；这些是独立累计计数，系统调度观察不得用于耗电归因，也不得据此生成限制或冻结建议。")
-        appendLine("不得修改报告中的数值，不得把高耗电或后台耗电排行改写成已确认异常。")
-        appendLine("不得超过报告给出的最高建议级别；尤其不得把观察或限制升级为冻结候选。")
-        if (advancedAdviceAllowed) {
-            val capability = if (selectedLevel.startsWith("Level 1")) {
-                "ADB / Shizuku"
+        if (powerIntent == PowerQuestionIntent.ATTRIBUTION) {
+            appendLine("只解释本地裁决支持的异常，优先一个对象；确有必要时最多补充两个并列异常对象。异常须写应用名或包名、报告中的原始数值和同窗口证据，不把排行对象升级成异常。")
+            appendLine("存在异常时，后台耗电排行优先指出后台耗电量和占比；单一耗电估算只能作为优先核对线索。")
+            appendLine("真实唤醒、普通定时任务和后台任务是独立累计计数，系统调度观察不得用于耗电归因，也不得据此生成限制或冻结建议。观察项中的单项后台耗电或唤醒锁是待验证线索，与累计计数区分，不得凑成多项同窗口异常证据。")
+            appendLine("不得修改报告中的数值，不得把高耗电或后台耗电排行改写成已确认异常。")
+            appendLine("不得超过报告给出的最高建议级别；尤其不得把观察或限制升级为冻结候选。")
+            if (advancedAdviceAllowed) {
+                val capability = if (selectedLevel?.startsWith("Level 1") == true) {
+                    "ADB / Shizuku"
+                } else {
+                    "Root / KernelSU"
+                }
+                appendLine("本次为 $capability 能力层，可解释报告给出的一项 Scene 手动操作，并说明预期作用、副作用和回退方法；不得声称已经执行。")
             } else {
-                "Root / KernelSU"
+                appendLine("本次为普通用户能力层，只提供普通 Android 用户可执行的系统设置或观察建议；不要输出任何高级权限工具、命令、冻结或限频建议。")
             }
-            appendLine("本次为 $capability 能力层，可解释报告给出的一项 Scene 手动操作，并说明预期作用、副作用和回退方法；不得声称已经执行。")
-        } else {
-            appendLine("本次为普通用户能力层，只提供普通 Android 用户可执行的系统设置或观察建议；不要输出任何高级权限工具、命令、冻结或限频建议。")
+            appendLine("系统调度数据只有在直接改变结论时才简短写进证据限制，不要单列调度栏目，也不要用累计计数凑篇幅。")
         }
-        appendLine("系统调度数据只有在直接改变结论时才简短写进证据限制，不要单列调度栏目，也不要用累计计数凑篇幅。")
         appendLine("如果证据仍不足，不要复述所有缺失栏目，只给出一个最有价值的下一步；没有内容的字段可以省略。")
-        val outputFields = when (powerIntent) {
-            PowerQuestionIntent.DRAIN_RATE -> "结论：、耗电窗口：、主要耗电：、建议：、证据限制："
-            PowerQuestionIntent.ATTRIBUTION -> "结论：、主要耗电：、后台判断：、建议：、证据限制："
-            PowerQuestionIntent.BATTERY_HEALTH,
-            PowerQuestionIntent.OTHER -> "结论：、依据：、建议："
-        }
-        appendLine("输出使用这些纯文本字段：$outputFields。优先控制在 600 至 800 个中文字符以内，不要重复同一限制。")
+        appendLine("可用纯文本字段：结论：、异常：、建议：、必要限制：。只有结论必需，其余按需省略；没有异常就省略异常段落，不逐项解释正常应用。")
+        appendLine("同一速率、续航估算和窗口只说一次，合并进结论；没有必要动作就不写建议。已有有效速率时，不因缺少历史基线就主动安排新的观察任务。")
+        appendLine("无异常时正文通常控制在 180 个中文字符以内，有异常时以 300 字为目标；必要安全提醒不受该目标限制。不要罗列不影响当前回答的缺失字段，不输出原始字段枚举。")
         appendLine()
     } else {
         appendLine("【回答任务】")
@@ -197,18 +278,22 @@ internal fun buildCloudAnalysisPrompt(
         appendLine()
     }
     appendLine("【本次选择】")
-    appendLine(selectedLevel)
-    appendLine()
-    appendLine("【基础设备快照】")
-    appendLine("设备：${context.deviceModel}")
-    appendLine("系统：${context.androidVersion}")
-    appendLine("电量：${context.batteryLevel?.let { "$it%" } ?: "未获取到"}")
-    appendLine("RAM：可用 ${context.availableRamBytes} B / 总计 ${context.totalRamBytes} B")
-    appendLine("存储：可用 ${context.availableStorageBytes} B / 总计 ${context.totalStorageBytes} B")
-    appendLine("可启动应用数量：${context.launchableAppCount}")
-    appendLine()
-    appendLine("【Level 报告】")
-    appendLine(levelReport)
+    appendLine(selectedLevel ?: "未附带设备报告")
+    context?.let { device ->
+        appendLine()
+        appendLine("【基础设备快照】")
+        appendLine("设备：${device.deviceModel}")
+        appendLine("系统：${device.androidVersion}")
+        appendLine("电量：${device.batteryLevel?.let { "$it%" } ?: "未获取到"}")
+        appendLine("RAM：可用 ${device.availableRamBytes} B / 总计 ${device.totalRamBytes} B")
+        appendLine("存储：可用 ${device.availableStorageBytes} B / 总计 ${device.totalStorageBytes} B")
+        appendLine("可启动应用数量：${device.launchableAppCount}")
+    }
+    levelReport?.let {
+        appendLine()
+        appendLine("【Level 报告】")
+        appendLine(it)
+    }
     appReport?.takeIf { powerIntent != PowerQuestionIntent.BATTERY_HEALTH }?.let {
         appendLine()
         appendLine("【应用报告】")
@@ -230,21 +315,28 @@ internal fun buildCloudAnalysisPrompt(
 
 object CloudLlmProvider {
     fun analyze(
-        context: DeviceContext,
+        context: DeviceContext?,
         userQuestion: String,
-        selectedLevel: String,
-        levelReport: String,
+        selectedLevel: String?,
+        levelReport: String?,
         appReport: String?,
         powerDiagnosticReport: String? = null,
         conversationHistory: List<AgentConversationMessage>,
-        credentials: StoredApiKey
+        credentials: StoredApiKey,
+        language: com.aegis.apa.localization.AppLanguage = com.aegis.apa.localization.AppLanguage.ZH_CN,
+        cancellation: CloudRequestCancellation = CloudRequestCancellation()
     ): AgentReport {
+        cancellation.ensureActive()
         val config = CloudProviderCatalog.find(credentials.provider)
             ?: throw AgentFailureException(AgentFailure.UNKNOWN_PROVIDER)
         if (credentials.apiKey.isBlank()) throw AgentFailureException(AgentFailure.MISSING_KEY)
         if (userQuestion.isBlank()) throw AgentFailureException(AgentFailure.EMPTY_QUESTION)
 
-        val systemPrompt = AgentPromptPolicy.systemPrompt()
+        val hasDeviceEvidence = context != null || levelReport != null || appReport != null ||
+            powerDiagnosticReport != null
+        val adviceScope = AdviceCapabilityPolicy.cloudAdviceScope(selectedLevel, hasDeviceEvidence)
+        val deviceAdviceMode = adviceScope != CloudAdviceScope.GENERAL
+        val systemPrompt = AgentPromptPolicy.systemPrompt(deviceAdviceMode, language)
 
         val prompt = buildCloudAnalysisPrompt(
             context = context,
@@ -252,14 +344,16 @@ object CloudLlmProvider {
             selectedLevel = selectedLevel,
             levelReport = levelReport,
             appReport = appReport,
-            powerDiagnosticReport = powerDiagnosticReport
+            powerDiagnosticReport = powerDiagnosticReport,
+            language = language
         )
 
         val historyMessages = JSONArray()
         CloudHistoryPolicy.select(
             messages = conversationHistory,
             provider = credentials.provider,
-            freshDiagnostic = powerDiagnosticReport != null
+            freshDiagnostic = powerDiagnosticReport != null,
+            adviceScope = adviceScope
         )
             .forEach { message ->
                 historyMessages.put(
@@ -295,29 +389,8 @@ object CloudLlmProvider {
         if (credentials.expiresAt <= System.currentTimeMillis()) {
             throw AgentFailureException(AgentFailure.EXPIRED_KEY)
         }
-        val connection = (URL(config.endpoint).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            setRequestProperty("Content-Type", "application/json")
-            if (config.protocol == "anthropic") {
-                setRequestProperty("x-api-key", credentials.apiKey)
-                setRequestProperty("anthropic-version", "2023-06-01")
-            } else {
-                setRequestProperty("Authorization", "Bearer ${credentials.apiKey}")
-            }
-            connectTimeout = 15_000
-            readTimeout = 60_000
-            doOutput = true
-        }
-
+        val response = CloudHttpTransport.post(config, credentials, body.toString(), cancellation)
         try {
-            connection.outputStream.bufferedWriter(Charsets.UTF_8).use { it.write(body.toString()) }
-            val statusCode = connection.responseCode
-            if (statusCode !in 200..299) {
-                // Do not read or display untrusted error bodies: they may echo request data.
-                runCatching { connection.errorStream?.close() }
-                throw ModelHttpException(statusCode)
-            }
-            val response = CloudResponseReader.read(connection.inputStream)
 
             val json = JSONObject(response)
             val rawContent = if (config.protocol == "anthropic") {
@@ -341,7 +414,9 @@ object CloudLlmProvider {
                 rawContent,
                 selectedLevel,
                 PowerAnalysisPreflight.classify(userQuestion),
-                reportAttached = powerDiagnosticReport != null
+                reportAttached = powerDiagnosticReport != null,
+                deviceAdviceMode = deviceAdviceMode,
+                language = language
             )
             if (content.isBlank()) throw AgentFailureException(AgentFailure.EMPTY_RESPONSE)
             return AgentReport(
@@ -351,8 +426,6 @@ object CloudLlmProvider {
             )
         } catch (_: org.json.JSONException) {
             throw AgentFailureException(AgentFailure.INVALID_RESPONSE)
-        } finally {
-            connection.disconnect()
         }
     }
 }

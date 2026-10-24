@@ -48,4 +48,4 @@ Raw Bug Reports and raw Root output are not sent to model providers. Online requ
 
 APA is maintained as a personal open-source project. [Contributing](CONTRIBUTING.md) · [Build instructions](docs/DEVELOPMENT.md) · [Documentation](docs/README.md) · [Roadmap](ROADMAP.md)
 
-To build a published APK's source, check out its release tag. The default and development branches may differ from the installed release. [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
+`main` uses the 0.3.1 release source as its baseline. To reproduce a specific installed version, check out its release tag; development branches may differ. [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
