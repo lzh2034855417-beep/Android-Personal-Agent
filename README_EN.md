@@ -1,94 +1,51 @@
 # Android Personal Agent (APA)
 
-An experimental Android app that explains battery, heat and resource readings using data the phone actually provides.
+Understand your Android phone's battery use, heat and hardware readings. Free and open source, with no account required. Basic features work without Root or a model API key.
 
-[![Android CI](https://github.com/lzh2034855417-beep/Android-Personal-Agent/actions/workflows/android-ci.yml/badge.svg)](https://github.com/lzh2034855417-beep/Android-Personal-Agent/actions/workflows/android-ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/lzh2034855417-beep/Android-Personal-Agent)](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases/latest)
-[![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)](#build-and-test)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)](#download-and-install)
+[![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[Download the latest APK](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases/latest) · [中文](README.md) · [Documentation](docs/README.md) · [Roadmap](ROADMAP.md) · [Architecture audit](docs/ARCHITECTURE.md) · [Data contract](docs/DATA_MODEL.md) · [Technical debt](docs/TECH_DEBT.md) · [Testing](docs/TESTING.md)
+**[Download the latest APK](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases/latest)** · [中文](README.md) · [User guide (Chinese)](docs/USAGE.md) · [Privacy](docs/PRIVACY.md#english-summary)
 
-> The current stable release is `0.2.0`. Download the APK and read its release notes on [GitHub Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases).
+## What can it help with?
 
-## Features
+| Your question | What APA provides |
+| --- | --- |
+| What is my phone's current state? | Battery level, temperature, RAM, storage and device readings |
+| Which apps consume the most battery? | System-report estimates, background clues and their reporting window |
+| How fast did the battery drop? | Valid system-report statistics or a rough unplugged observation |
+| Who made the RAM or storage? | Identification from readable hardware fields; unavailable fields stay unknown |
+| What does the report mean? | Local explanations, plus optional AI explanations using your own provider |
 
-- Local device/display/battery/RAM/storage readings, limited local rules and previewable PNG report cards, without a model key.
-- Structured device identity: original system identifiers, resolved display name and lookup source. Unknown models fall back to the system value.
-- User-triggered cloud analysis with a personally configured provider key; limited local rules when no valid configuration is available.
-- Root-free Android Bug Report import is the primary app-attribution path; a collapsed two-point battery measurement remains only as an auxiliary interval-rate tool.
-- User-triggered, read-only Root power diagnostics with evidence, confidence and manual Scene recommendations.
-- Optional Usage Access, Shizuku and Root; ordinary Android APIs work independently.
+A high consumption ranking does not prove an anomaly. One temperature or battery reading cannot establish a fault. APA explains missing evidence and does not automatically clean files, freeze apps or modify the system.
 
-APA returns explanations; it does not execute model suggestions or change scheduling, clean files or flash devices. A single snapshot cannot establish battery lifetime or a replacement decision.
+## Download and install
+
+1. Open **[Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases/latest)** and download `APA-vVERSION-release.apk` under **Assets**. The `Source code` archives are not installers.
+2. Open the APK on your phone and follow Android's installation prompts.
+3. Open APA → **Device**. For an update, prefer installing over the existing official app. If Android reports a signature mismatch, report it before uninstalling; uninstalling may remove local records.
+
+Requires **Android 8.0 or newer**. The current stable release is **[0.3.1](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases/tag/v0.3.1)**. Available readings depend on the device, permissions and report contents.
 
 ## Getting started
 
-1. Open Device to inspect local readings without a key or Root.
-2. Open Agent, choose a report and ask a question. Without a configured key, the response uses local rules.
-3. For online analysis, open Settings, choose a provider, enter your key and save it encrypted for seven days. Return to Agent and explicitly send.
-4. Check the report-card preview before choosing a sharing app.
+- **Device readings:** open Device. No additional setup is needed.
+- **App battery consumption:** open Agent, import your phone's Android Bug Report ZIP or TXT, then inspect the result and ask a question. The app includes report-generation instructions.
+- **Optional online AI:** open Settings, choose a provider and save your own API key. Return to Agent, review the attachments and send. Provider charges may apply; local features remain available without a key.
 
-The configured catalog includes DeepSeek, OpenAI, Anthropic, MiMo and Kimi. See [CloudProviderCatalog](app/src/main/java/com/aegis/apa/agent/CloudLlmProvider.kt) for configured model/endpoint values. These defaults are not proof of account availability; this audit made no live provider requests.
+## Before you use it
 
-### System power diagnostics
+Root is optional. Device readings, Bug Report import and rough battery observations do not require it. Shizuku currently supports installation detection and navigation only.
 
-For app attribution, ordinary users should first use **Agent → Select report → System power diagnostics → Import system report**. The collapsed **Auxiliary: rough battery measurement** only answers “how fast did this interval drain?” Unplug first, start it, then leave APA and use the phone normally for at least 30 minutes. APA stores only one local start checkpoint. It can resume after process death or reboot, but the user must confirm whether charging occurred; restored measurements are always labelled rough. Reporting charging or uncertainty invalidates the measurement. This tool does not identify a responsible app.
+Missing vendor fields remain unknown; APA does not infer a hardware vendor from the phone model. Compatibility varies across devices.
 
-Root users may instead use the read-only collector below. APA treats rate measurement and app attribution as different evidence and no longer substitutes a single instantaneous battery snapshot.
+Raw Bug Reports and raw Root output are not sent to model providers. Online requests send selected summaries and permitted conversation content directly to your configured provider. Review attachments before sending. See the [privacy summary](docs/PRIVACY.md#english-summary).
 
-The report panel now includes expandable generation instructions. Some Xiaomi, Redmi and POCO builds generate a Bug Report ZIP after entering `*#*#284#*#*` in the system dialer. On other Android builds, enable Developer options and search Settings for “Take bug report” or the OEM equivalent, then choose an interactive report. OEM menus and output locations vary. Bug reports can contain sensitive data: do not publish them. APA extracts only an allowlisted diagnostic subset locally and does not send the raw file to a model.
+## Feedback and contributions
 
-Use **Agent → Select report → System power diagnostics → Start read-only diagnostics** and grant Root when prompted. APA runs only a fixed allowlist of power-related reads. Unsupported, denied or timed-out sources are reported without discarding successful sections. Results separate facts, interpretation, confidence and manual Scene advice. APA never freezes, throttles or changes settings.
+[Report a problem](https://github.com/lzh2034855417-beep/Android-Personal-Agent/issues/new/choose) with the phone model, Android version, APA version, reproduction steps and sanitized screenshots. **Do not post full Bug Reports, API keys or unique device identifiers.**
 
-After a successful import or collection, APA automatically selects the bounded human-readable diagnostic summary for the next question. The user can deselect it before sending. The raw system report and Root output are neither sent nor retained in session state.
+APA is maintained as a personal open-source project. [Contributing](CONTRIBUTING.md) · [Build instructions](docs/DEVELOPMENT.md) · [Documentation](docs/README.md) · [Roadmap](ROADMAP.md)
 
-## Capability levels
-
-| Level | Implemented | Limits |
-| --- | --- | --- |
-| 0 | Ordinary APIs; optional daily foreground-use estimate | Foreground duration is not screen-on time or health certification |
-| 1 | Shizuku installation detection and launch | No Binder connection, authorization or advanced API integration yet |
-| 2 | Known Root indicators; manually read selected battery/CPU nodes | Manager detection is not authorization; OEM compatibility varies |
-
-App visibility can limit enumeration. Root readings retain separate timestamps and require manual refresh. Local analysis mainly consumes the basic snapshot; choosing an advanced level does not mean all attachments are analyzed locally.
-
-## Data handling
-
-- Basic readings and visible apps are collected **locally on entry and Activity resume**. Usage events are read if Usage Access was granted. Collection and transmission selection are different boundaries.
-- Explicit online Send triggers a direct provider request with a basic snapshot, selected Level report, optional app report and any diagnostic summary that remains selected after import or collection; there is no APA relay server.
-- Deterministic battery-observation answers are generated locally. Configuring a provider key does not automatically send the exact observation timestamps or battery trajectory.
-- A successful system diagnostic selects only its bounded human-readable summary and shows that attachment state clearly. The user can deselect it; the raw Bug Report ZIP and Root output remain local and are released after parsing.
-- Level 0 usage rankings have an independent send toggle, off by default. Granting Usage Access does not select transmission. The base report excludes grades derived from advanced profiles. The report picker explains transmission scope; historical answers may reference earlier data, and clearing the conversation removes that history.
-- Local messages, including Scene summaries, are excluded from cloud history. Switching providers does not forward another provider's history. Up to 12 eligible messages from the same provider can be included, potentially containing previous report details in answers.
-- Keys are encrypted per provider with Android Keystore AES/GCM and expire locally after seven days by default. This does not revoke the provider-issued key.
-- `allowBackup=false` is configured. Legacy cloud backup, Android 31+ cloud backup and device transfer explicitly exclude the credential preferences file. Actual OEM restore behavior remains unverified.
-- An in-memory ViewModel retains Agent drafts, report selections, conversations and diagnostic summaries across page changes and configuration recreation. An active auxiliary battery measurement stores only one start point and an observed-charging flag in a dedicated local preference file; it stores no trajectory, is excluded from backup, and is not a long-term database. Restored measurements use wall-clock time, require explicit charging confirmation and are always downgraded to rough. Force-stop or task removal does not guarantee restoration of the wider session. Recreation interrupts an active analysis with a retry message; no automatic resend occurs. See TESTING for current device-validation coverage.
-
-Do not post keys, account details or unique device identifiers in issues, logs or screenshots. Treat model output as a limited explanation, not a repair verdict.
-
-## Build and test
-
-Android 8/API 26+; compile SDK 36.1, target SDK 36. Use the committed Gradle wrapper and a compatible Android Studio JBR/JDK with the required SDK. Local validation used Android Studio's bundled JBR.
-
-```bash
-./gradlew testDebugUnitTest lintDebug lintRelease assembleDebug assembleDebugAndroidTest
-```
-
-On Windows use `gradlew.bat` and configure JAVA_HOME/ANDROID_HOME. Initial dependency downloads require network; use `--offline` only with a populated cache.
-
-- Debug package: `com.aegis.apa.preview` (APA Preview); APK: `app/build/outputs/apk/debug/APA-v0.2.0-debug.apk`, installed version `0.2.0-preview`.
-- Release package: `com.aegis.apa` (APA). The two installations have separate data.
-- Debug and source checks require no release credentials. Release APK/AAB packaging requires complete local signing properties and an existing keystore.
-- Ignored `keystore.properties` contains storeFile, storePassword, keyAlias, keyPassword. Optional `-Papa.signingProperties=local-file` selects another properties file; quote the whole argument in PowerShell. Relative storeFile paths resolve from the app module.
-- Maintainers must separately increment versions, verify signatures/hashes and complete device checks before publishing. See [Testing](docs/TESTING.md) for evidence and limitations.
-
-## Contributing
-
-This interest-driven project is maintained by an undergraduate in mainland China. Use [GitHub Issues](https://github.com/lzh2034855417-beep/Android-Personal-Agent/issues) for bugs and suggestions. Include model, Android/API, app version/build type, permission state, reproduction steps, expected/actual results and sanitized screenshots. PRs should follow the data contract and report checks and untested paths.
-
-The next milestone closes high-priority audit items before adding Shizuku APIs, streaming or persistence. See ROADMAP and TECH_DEBT for acceptance criteria.
-
-## License
-
-[MIT](LICENSE). See [third-party notices](THIRD_PARTY_NOTICES.md).
+To build a published APK's source, check out its release tag. The default and development branches may differ from the installed release. [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
