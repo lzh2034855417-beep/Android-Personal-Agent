@@ -48,6 +48,6 @@ macOS / Linux：
 
 [架构](ARCHITECTURE.md) · [数据语义](DATA_MODEL.md) · [技术债](TECH_DEBT.md) · [路线图](../ROADMAP.md)
 
-`superpowers/specs/` 与 `superpowers/plans/` 是按当时源码记录的历史设计与实施过程，保留供追溯，不是新用户教程或所有计划均已发布的承诺。
+旧设计与实施草稿已从当前目录移除，需要追溯时查看 Git 历史。架构与测试记录按各自注明的源码和日期阅读，不代表其中所有计划均已发布。
 
 English: build a published release from its matching Git tag. Use the Gradle Wrapper with a compatible JDK and Android SDK. Debug builds need no release signing key. Report JVM, lint, build, instrumentation, device and live-model checks separately.
