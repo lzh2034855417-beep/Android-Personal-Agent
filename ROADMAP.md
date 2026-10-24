@@ -28,6 +28,6 @@
 
 ## 开发资料
 
-[文档索引](docs/README.md) · [技术债记录](docs/TECH_DEBT.md) · [2026-09-27 路线图存档](docs/archive/ROADMAP_2026-09-27.md)
+[文档索引](docs/README.md) · [技术债记录](docs/TECH_DEBT.md)
 
 历史工程资料按当时源码记录。用户关注当前安装版时，优先看对应 Release 与使用指南。
