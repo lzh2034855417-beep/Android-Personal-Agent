@@ -8,6 +8,7 @@
 
 - 新增不读取发布密钥的 GitHub Actions 验证、结构化 Bug/功能请求表单、PR 模板、贡献指南、安全政策和文档索引。
 - README 增加 CI、版本、Android 与许可证状态，以及最新版 APK 入口；仓库元数据改为与当前只读诊断能力一致。
+- `main` 同步至 `v0.3.1` 产品源码，保留使用者文档和仓库治理；CI 补充离线评测工具检查，不包含 0.3.2 开发功能。
 
 ### Documentation
 
@@ -22,7 +23,7 @@
 - 改善 K60 Pro 硬件报告识别，修复 iQOO 大报告和小米 15 非诊断二进制段落的导入。
 - 修复输入框粘贴菜单退出并调整键盘收起顺序。
 
-[下载、校验值与已知限制](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases/tag/v0.3.1) · [对应源码](https://github.com/lzh2034855417-beep/Android-Personal-Agent/tree/v0.3.1)。此记录说明发布标签，不表示默认分支已同步全部产品代码。
+[下载、校验值与已知限制](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases/tag/v0.3.1) · [对应源码](https://github.com/lzh2034855417-beep/Android-Personal-Agent/tree/v0.3.1)。发布记录对应固定标签；main 的同步状态见上方仓库维护记录。
 
 ## [0.3.0] - 2026-10-02
 

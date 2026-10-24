@@ -2,6 +2,7 @@ package com.aegis.apa.tool
 
 import com.aegis.apa.model.DiagnosticSourceStatus
 import java.io.FilterInputStream
+import java.io.BufferedInputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.InputStreamReader
@@ -12,8 +13,8 @@ import java.util.zip.ZipInputStream
 
 data class BugReportReadLimits(
     val maxEntries: Int = 4_096,
-    val maxEntryBytes: Long = 192L * 1024 * 1024,
-    val maxTotalBytes: Long = 192L * 1024 * 1024,
+    val maxEntryBytes: Long = 256L * 1024 * 1024,
+    val maxTotalBytes: Long = 256L * 1024 * 1024,
     val maxSkippedBytes: Long = 384L * 1024 * 1024,
     val maxSectionChars: Int = 2 * 1024 * 1024,
     val maxBatteryStatsSectionChars: Int = 12 * 1024 * 1024,
@@ -21,8 +22,19 @@ data class BugReportReadLimits(
 )
 
 sealed interface BugReportReadResult {
-    data class Success(val sections: List<RawDiagnosticSection>) : BugReportReadResult
-    data class Rejected(val reason: BugReportRejectReason) : BugReportReadResult
+    data class Success(
+        val sections: List<RawDiagnosticSection>,
+        val verificationHeaderFields: Map<String, String> = emptyMap()
+    ) : BugReportReadResult
+    data class Rejected(val reason: BugReportRejectReason) : BugReportReadResult {
+        // Debug context is not part of the rejection's semantic identity.
+        var diagnosticDetail: String? = null
+            private set
+
+        constructor(reason: BugReportRejectReason, diagnosticDetail: String?) : this(reason) {
+            this.diagnosticDetail = diagnosticDetail
+        }
+    }
     data object Cancelled : BugReportReadResult
 }
 
@@ -41,7 +53,7 @@ object BugReportSectionExtractor {
     private val zipSignature = byteArrayOf(0x50, 0x4B, 0x03, 0x04)
     private val dumSysMarker = Regex("^------\\s+DUMPSYS\\s+([A-Za-z0-9_.-]+)\\s+.*------\\s*$", RegexOption.IGNORE_CASE)
     private val serviceMarker = Regex(
-        "^DUMP OF SERVICE\\s+(?:(?:CRITICAL|HIGH|NORMAL)\\s+)?([A-Za-z0-9_.-]+):\\s*$",
+        "^DUMP OF SERVICE\\s+(?:(?:CRITICAL|HIGH|NORMAL)\\s+)?([A-Za-z0-9_./:-]+):\\s*$",
         RegexOption.IGNORE_CASE
     )
     private val drivePrefix = Regex("^[A-Za-z]:")
@@ -60,22 +72,52 @@ object BugReportSectionExtractor {
         displayName: String?,
         limits: BugReportReadLimits = BugReportReadLimits(),
         isCancelled: () -> Boolean = { false }
+    ): BugReportReadResult = extract(input, displayName, {}, limits, isCancelled)
+
+    fun extract(
+        input: InputStream,
+        displayName: String?,
+        onBytesRead: (Long) -> Unit,
+        limits: BugReportReadLimits = BugReportReadLimits(),
+        isCancelled: () -> Boolean = { false }
     ): BugReportReadResult {
         if (isCancelled()) return BugReportReadResult.Cancelled
-        if (!limits.areValid()) return BugReportReadResult.Rejected(BugReportRejectReason.UNSUPPORTED_FORMAT)
+        if (!limits.areValid()) return BugReportReadResult.Rejected(
+            BugReportRejectReason.UNSUPPORTED_FORMAT, "limits=invalid"
+        )
 
-        val buffered = PushbackInputStream(input, zipSignature.size)
+        var bytesRead = 0L
+        var lastReportedBytes = 0L
+        val measured = object : FilterInputStream(input) {
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
+                `in`.read(buffer, offset, length).also { count ->
+                    if (count > 0) {
+                        bytesRead += count
+                        if (bytesRead - lastReportedBytes >= 1024 * 1024) {
+                            lastReportedBytes = bytesRead
+                            onBytesRead(bytesRead)
+                        }
+                    }
+                }
+        }
+        val buffered = PushbackInputStream(BufferedInputStream(measured, 64 * 1024), zipSignature.size)
         val prefix = ByteArray(zipSignature.size)
         val prefixSize = readPrefix(buffered, prefix, isCancelled)
         if (prefixSize < 0) return BugReportReadResult.Cancelled
         if (prefixSize == 0) return BugReportReadResult.Rejected(BugReportRejectReason.EMPTY)
         buffered.unread(prefix, 0, prefixSize)
 
-        return if (prefixSize == zipSignature.size && prefix.contentEquals(zipSignature)) {
+        val hasZipSignature = prefixSize == zipSignature.size && prefix.contentEquals(zipSignature)
+        val result = if (hasZipSignature) {
             extractZip(buffered, limits, isCancelled)
         } else {
             extractPlainText(buffered, displayName, limits, isCancelled)
         }
+        if (bytesRead > lastReportedBytes) onBytesRead(bytesRead)
+        return if (result is BugReportReadResult.Rejected) {
+            BugReportReadResult.Rejected(result.reason, "signature=${if (hasZipSignature) "zip" else "not_zip"}" +
+                (result.diagnosticDetail?.let { ";$it" } ?: ""))
+        } else result
     }
 
     private fun extractPlainText(
@@ -85,7 +127,9 @@ object BugReportSectionExtractor {
         isCancelled: () -> Boolean
     ): BugReportReadResult {
         if (!isTextName(displayName)) {
-            return BugReportReadResult.Rejected(BugReportRejectReason.UNSUPPORTED_FORMAT)
+            return BugReportReadResult.Rejected(
+                BugReportRejectReason.UNSUPPORTED_FORMAT, "text=name_unsupported"
+            )
         }
         return when (
             val read = readSectionsStreaming(
@@ -99,9 +143,11 @@ object BugReportSectionExtractor {
             CandidateRead.Cancelled -> BugReportReadResult.Cancelled
             CandidateRead.EntryTooLarge -> BugReportReadResult.Rejected(BugReportRejectReason.ENTRY_TOO_LARGE)
             CandidateRead.TotalTooLarge -> BugReportReadResult.Rejected(BugReportRejectReason.TOTAL_TOO_LARGE)
-            CandidateRead.Unsupported -> BugReportReadResult.Rejected(BugReportRejectReason.UNSUPPORTED_FORMAT)
+            CandidateRead.Unsupported -> BugReportReadResult.Rejected(
+                BugReportRejectReason.UNSUPPORTED_FORMAT, "text=nul_limit"
+            )
             is CandidateRead.Empty -> BugReportReadResult.Rejected(BugReportRejectReason.EMPTY)
-            is CandidateRead.Sections -> BugReportReadResult.Success(read.value)
+            is CandidateRead.Sections -> BugReportReadResult.Success(read.value, read.verificationHeaderFields)
         }
     }
 
@@ -113,8 +159,36 @@ object BugReportSectionExtractor {
     ): BugReportReadResult {
         var entryCount = 0
         var reportBytes = 0L
+        var hardwareBytes = 0L
         var skippedBytes = 0L
         var sawNestedArchive = false
+        var reportSections: List<RawDiagnosticSection>? = null
+        var verificationHeaderFields: Map<String, String> = emptyMap()
+        // Multiple bootlogs can contribute different fields within one archive.
+        // Retain only whitelisted values, with the first observation winning conflicts.
+        val hardwareFields = linkedMapOf<String, String>()
+
+        fun retainHardware(output: String) {
+            output.lineSequence().forEach { collectHardwareLine(it, hardwareFields) }
+        }
+
+        fun completedReport(): BugReportReadResult.Success? = reportSections?.let { sections ->
+            val hardwareSection = hardwareFields.takeIf { it.isNotEmpty() }?.let { fields ->
+                RawDiagnosticSection(
+                    source = "hardware",
+                    status = DiagnosticSourceStatus.AVAILABLE,
+                    output = fields.entries.joinToString("\n") { (label, value) -> "$label = $value" }
+                )
+            }
+            BugReportReadResult.Success(
+                if (hardwareSection == null) sections else sections + hardwareSection,
+                verificationHeaderFields
+            )
+        }
+
+        fun rejectUnlessComplete(reason: BugReportRejectReason): BugReportReadResult =
+            completedReport() ?: BugReportReadResult.Rejected(reason)
+
         return try {
             ZipInputStream(input).use { zip ->
                 while (true) {
@@ -122,14 +196,14 @@ object BugReportSectionExtractor {
                     val entry = zip.nextEntry ?: break
                     entryCount += 1
                     if (entryCount > limits.maxEntries) {
-                        return BugReportReadResult.Rejected(BugReportRejectReason.TOO_MANY_ENTRIES)
+                        return rejectUnlessComplete(BugReportRejectReason.TOO_MANY_ENTRIES)
                     }
                     if (!isSafeEntryName(entry.name)) {
-                        return BugReportReadResult.Rejected(BugReportRejectReason.UNSAFE_ENTRY_NAME)
+                        return rejectUnlessComplete(BugReportRejectReason.UNSAFE_ENTRY_NAME)
                     }
                     if (!entry.isDirectory && isZipEntry(entry.name)) {
                         sawNestedArchive = true
-                        if (allowNestedReport && isReportZipEntry(entry.name)) {
+                        if (reportSections == null && allowNestedReport && isReportZipEntry(entry.name)) {
                             val nestedInput = NonClosingInputStream(
                                 CheckedInputStream(
                                     input = zip,
@@ -138,19 +212,58 @@ object BugReportSectionExtractor {
                                     isCancelled = isCancelled
                                 )
                             )
-                            return extractZip(
+                            when (val nested = extractZip(
                                 input = nestedInput,
                                 limits = limits,
                                 isCancelled = isCancelled,
                                 allowNestedReport = false
-                            )
+                            )) {
+                                BugReportReadResult.Cancelled -> return BugReportReadResult.Cancelled
+                                is BugReportReadResult.Rejected -> return nested
+                                is BugReportReadResult.Success -> {
+                                    reportSections = nested.sections.filterNot { it.source == "hardware" }
+                                    verificationHeaderFields = nested.verificationHeaderFields
+                                    nested.sections.firstOrNull { it.source == "hardware" }?.let { nestedHardware ->
+                                        retainHardware(nestedHardware.output)
+                                    }
+                                }
+                            }
+                            zip.closeEntry()
+                            continue
                         }
                         when (val skipped = skipBounded(zip, limits.maxSkippedBytes - skippedBytes, isCancelled)) {
                             BoundedSkip.Cancelled -> return BugReportReadResult.Cancelled
                             BoundedSkip.TotalTooLarge -> {
-                                return BugReportReadResult.Rejected(BugReportRejectReason.TOTAL_TOO_LARGE)
+                                return rejectUnlessComplete(BugReportRejectReason.TOTAL_TOO_LARGE)
                             }
                             is BoundedSkip.Bytes -> skippedBytes += skipped.value
+                        }
+                        zip.closeEntry()
+                        continue
+                    }
+                    if (isHardwareLogEntry(entry.name) || RamReportCompatibility.isAttachment(entry.name)) {
+                        when (
+                            val read = readHardwareLinesStreaming(
+                                input = zip,
+                                entryLimit = limits.maxEntryBytes,
+                                totalRemaining = limits.maxSkippedBytes - hardwareBytes,
+                                isCancelled = isCancelled,
+                                attachmentName = entry.name
+                            )
+                        ) {
+                            HardwareRead.Cancelled -> return BugReportReadResult.Cancelled
+                            HardwareRead.EntryTooLarge -> {
+                                return rejectUnlessComplete(BugReportRejectReason.ENTRY_TOO_LARGE)
+                            }
+                            HardwareRead.TotalTooLarge -> {
+                                return rejectUnlessComplete(BugReportRejectReason.TOTAL_TOO_LARGE)
+                            }
+                            is HardwareRead.Lines -> {
+                                hardwareBytes += read.bytesRead
+                                if (read.output.isNotBlank()) {
+                                    retainHardware(read.output)
+                                }
+                            }
                         }
                         zip.closeEntry()
                         continue
@@ -159,7 +272,18 @@ object BugReportSectionExtractor {
                         when (val skipped = skipBounded(zip, limits.maxSkippedBytes - skippedBytes, isCancelled)) {
                             BoundedSkip.Cancelled -> return BugReportReadResult.Cancelled
                             BoundedSkip.TotalTooLarge -> {
-                                return BugReportReadResult.Rejected(BugReportRejectReason.TOTAL_TOO_LARGE)
+                                return rejectUnlessComplete(BugReportRejectReason.TOTAL_TOO_LARGE)
+                            }
+                            is BoundedSkip.Bytes -> skippedBytes += skipped.value
+                        }
+                        zip.closeEntry()
+                        continue
+                    }
+                    if (reportSections != null) {
+                        when (val skipped = skipBounded(zip, limits.maxSkippedBytes - skippedBytes, isCancelled)) {
+                            BoundedSkip.Cancelled -> return BugReportReadResult.Cancelled
+                            BoundedSkip.TotalTooLarge -> {
+                                return completedReport()!!
                             }
                             is BoundedSkip.Bytes -> skippedBytes += skipped.value
                         }
@@ -177,36 +301,41 @@ object BugReportSectionExtractor {
                     ) {
                         CandidateRead.Cancelled -> return BugReportReadResult.Cancelled
                         CandidateRead.EntryTooLarge -> {
-                            return BugReportReadResult.Rejected(BugReportRejectReason.ENTRY_TOO_LARGE)
+                            return rejectUnlessComplete(BugReportRejectReason.ENTRY_TOO_LARGE)
                         }
                         CandidateRead.TotalTooLarge -> {
-                            return BugReportReadResult.Rejected(BugReportRejectReason.TOTAL_TOO_LARGE)
+                            return rejectUnlessComplete(BugReportRejectReason.TOTAL_TOO_LARGE)
                         }
                         CandidateRead.Unsupported -> {
-                            return BugReportReadResult.Rejected(BugReportRejectReason.UNSUPPORTED_FORMAT)
+                            return completedReport() ?: BugReportReadResult.Rejected(
+                                BugReportRejectReason.UNSUPPORTED_FORMAT, "text=nul_limit"
+                            )
                         }
                         is CandidateRead.Empty -> {
                             reportBytes += read.bytesRead
                             zip.closeEntry()
                         }
                         is CandidateRead.Sections -> {
+                            reportBytes += read.bytesRead
+                            reportSections = read.value.filterNot { it.source == "hardware" }
+                            read.value.firstOrNull { it.source == "hardware" }?.let { retainHardware(it.output) }
+                            verificationHeaderFields = read.verificationHeaderFields
                             zip.closeEntry()
-                            return BugReportReadResult.Success(read.value)
                         }
                     }
                 }
             }
-            BugReportReadResult.Rejected(
-                if (sawNestedArchive) BugReportRejectReason.NESTED_ARCHIVE else BugReportRejectReason.EMPTY
-            )
+            completedReport() ?: BugReportReadResult.Rejected(
+                    if (sawNestedArchive) BugReportRejectReason.NESTED_ARCHIVE else BugReportRejectReason.EMPTY
+                )
         } catch (_: CancelledReadException) {
             BugReportReadResult.Cancelled
         } catch (error: LimitReadException) {
-            BugReportReadResult.Rejected(error.reason)
+            rejectUnlessComplete(error.reason)
         } catch (_: ZipException) {
-            BugReportReadResult.Rejected(BugReportRejectReason.CORRUPT_ARCHIVE)
+            rejectUnlessComplete(BugReportRejectReason.CORRUPT_ARCHIVE)
         } catch (_: IOException) {
-            BugReportReadResult.Rejected(BugReportRejectReason.CORRUPT_ARCHIVE)
+            rejectUnlessComplete(BugReportRejectReason.CORRUPT_ARCHIVE)
         }
     }
 
@@ -221,18 +350,62 @@ object BugReportSectionExtractor {
         val outputs = linkedMapOf<String, StringBuilder>()
         val truncated = mutableSetOf<String>()
         var currentSource: String? = null
+        var skippingBatteryHistory = false
         val line = StringBuilder()
         var lineTruncated = false
-        var nulCharCount = 0
+        var lineHadNul = false
+        var nulCharCount = 0L
+        var decodedCharCount = 0L
+        var lineNulChars = 0L
+        var lineDecodedChars = 0L
+        var inSystemProperties = false
+        val verificationHeaders = VerificationHeaderAccumulator()
+        val hardwareFields = linkedMapOf<String, String>()
 
         fun consumeLine() {
             val value = line.toString().removeSuffix("\r")
-            val markerSource = if (lineTruncated) null else markerSource(value)
+            val trimmed = value.trim()
+            if (!lineTruncated && !lineHadNul &&
+                (value.contains("DDR", ignoreCase = true) || value.contains("UFS", ignoreCase = true) ||
+                    value.contains("Manufacturer ID", ignoreCase = true))) {
+                collectHardwareLine(value, hardwareFields)
+            }
+            if (trimmed.startsWith("------")) {
+                inSystemProperties = !lineTruncated && !lineHadNul &&
+                    (trimmed == "------ SYSTEM PROPERTIES ------" ||
+                        trimmed == "------ SYSTEM PROPERTIES (getprop) ------")
+            } else if (inSystemProperties) {
+                verificationHeaders.consume(value, incomplete = lineTruncated || lineHadNul)
+            }
+            val markerSource = if (lineTruncated || lineHadNul) null else markerSource(value)
+            if (markerSource != null) inSystemProperties = false
             if (markerSource != null) {
+                skippingBatteryHistory = false
                 currentSource = markerSource.takeIf(allowedSources::contains)
                 currentSource?.let { outputs.putIfAbsent(it, StringBuilder()) }
             } else {
                 currentSource?.let { source ->
+                    nulCharCount += lineNulChars
+                    decodedCharCount += lineDecodedChars + 1
+                    // Never turn a contaminated identifier/value into another valid value
+                    // by joining text across NUL bytes. Keep the loss visible in coverage.
+                    if (lineHadNul) {
+                        truncated += source
+                        return@let
+                    }
+                    // History can precede useful statistics by tens of MB on OEM reports.
+                    // The diagnostic parser consumes aggregate statistics, not history events.
+                    // Skip only this known block, retaining all byte/line/section bounds.
+                    if (source == "batterystats" && !lineTruncated && !lineHadNul) {
+                        if (trimmed.startsWith("Battery History") && trimmed.endsWith(":")) {
+                            skippingBatteryHistory = true
+                        } else if (trimmed == "Per-PID Stats:" ||
+                            trimmed.startsWith("Statistics since ") ||
+                            trimmed == "Discharge step durations:") {
+                            skippingBatteryHistory = false
+                        }
+                    }
+                    if (skippingBatteryHistory) return@let
                     val output = outputs.getValue(source)
                     val separatorLength = if (output.isEmpty()) 0 else 1
                     val sectionLimit = when (source) {
@@ -245,40 +418,66 @@ object BugReportSectionExtractor {
                         truncated += source
                     } else {
                         if (separatorLength == 1) output.append('\n')
-                        output.append(value.take(available))
+                        output.append(value, 0, minOf(value.length, available))
                         if (lineTruncated || value.length > available) truncated += source
                     }
                 }
             }
             line.clear()
             lineTruncated = false
+            lineHadNul = false
+            lineNulChars = 0L
+            lineDecodedChars = 0L
         }
 
         val bounded = CheckedInputStream(input, entryLimit, totalRemaining, isCancelled)
         return try {
             val reader = InputStreamReader(bounded, Charsets.UTF_8)
             val chars = CharArray(16 * 1024)
+            fun appendSlice(start: Int, end: Int) {
+                val size = end - start
+                lineDecodedChars += size
+                val retained = minOf(size, MAX_BUFFERED_LINE_CHARS - line.length)
+                if (retained > 0) line.append(chars, start, retained)
+                if (retained < size) lineTruncated = true
+            }
             while (true) {
                 val count = reader.read(chars)
                 if (count < 0) break
+                var sliceStart = 0
                 for (index in 0 until count) {
                     when (val char = chars[index]) {
                         '\u0000' -> {
-                            nulCharCount += 1
-                            if (nulCharCount > MAX_TOLERATED_NUL_CHARS) return CandidateRead.Unsupported
+                            appendSlice(sliceStart, index)
+                            sliceStart = index + 1
+                            lineHadNul = true
+                            lineNulChars += 1
+                            lineDecodedChars += 1
                         }
-                        '\n' -> consumeLine()
-                        else -> {
-                            if (line.length < MAX_BUFFERED_LINE_CHARS) line.append(char)
-                            else lineTruncated = true
+                        '\n' -> {
+                            appendSlice(sliceStart, index)
+                            sliceStart = index + 1
+                            consumeLine()
                         }
                     }
                 }
+                appendSlice(sliceStart, count)
             }
-            if (line.isNotEmpty() || lineTruncated) consumeLine()
+            if (line.isNotEmpty() || lineTruncated || lineHadNul) consumeLine()
+            // Unselected vendor services can contain binary dumps. Judge only the
+            // selected diagnostic sections; do not let unrelated text dilute their
+            // contamination ratio. Byte, entry and section bounds still apply.
+            if (nulCharCount > MAX_TOLERATED_NUL_CHARS &&
+                nulCharCount * NUL_DENSITY_DENOMINATOR > decodedCharCount
+            ) return CandidateRead.Unsupported
             if (bounded.bytesRead == 0L || outputs.isEmpty()) {
                 CandidateRead.Empty(bounded.bytesRead)
             } else {
+                if (hardwareFields.isNotEmpty()) {
+                    outputs["hardware"] = StringBuilder(hardwareFields.entries.joinToString("\n") {
+                        (label, field) -> "$label = $field"
+                    })
+                }
                 CandidateRead.Sections(
                     outputs.map { (source, output) ->
                         val wasTruncated = source in truncated
@@ -291,10 +490,11 @@ object BugReportSectionExtractor {
                             },
                             output = output.toString(),
                             truncated = wasTruncated,
-                            detail = if (wasTruncated) "导入段落超过大小限制" else null
+                            detail = if (wasTruncated) "导入段落部分内容超限或含无效字符，已省略" else null
                         )
                     },
-                    bounded.bytesRead
+                    bounded.bytesRead,
+                    verificationHeaders.snapshot()
                 )
             }
         } catch (_: CancelledReadException) {
@@ -307,9 +507,117 @@ object BugReportSectionExtractor {
         }
     }
 
+    private fun readHardwareLinesStreaming(
+        input: InputStream,
+        entryLimit: Long,
+        totalRemaining: Long,
+        isCancelled: () -> Boolean,
+        attachmentName: String? = null
+    ): HardwareRead {
+        if (totalRemaining <= 0) return HardwareRead.TotalTooLarge
+        if (attachmentName != null && RamReportCompatibility.isAttachment(attachmentName)) {
+            val bounded = CheckedInputStream(input, minOf(entryLimit, 4096L), totalRemaining, isCancelled)
+            return try {
+                val text = bounded.readBytes().toString(Charsets.UTF_8)
+                HardwareRead.Lines(RamReportCompatibility.attachmentFields(attachmentName, text), bounded.bytesRead)
+            } catch (_: CancelledReadException) {
+                HardwareRead.Cancelled
+            } catch (error: LimitReadException) {
+                if (error.reason == BugReportRejectReason.ENTRY_TOO_LARGE) HardwareRead.EntryTooLarge
+                else HardwareRead.TotalTooLarge
+            }
+        }
+        val fields = linkedMapOf<String, String>()
+        val line = StringBuilder()
+        var lineTruncated = false
+        var lineHadNul = false
+
+        fun consumeLine() {
+            val value = line.toString().removeSuffix("\r").trim()
+            if (!lineTruncated && !lineHadNul) {
+                collectHardwareLine(value, fields)
+            }
+            line.clear()
+            lineTruncated = false
+            lineHadNul = false
+        }
+
+        val bounded = CheckedInputStream(input, entryLimit, totalRemaining, isCancelled)
+        return try {
+            val reader = InputStreamReader(bounded, Charsets.UTF_8)
+            val chars = CharArray(8 * 1024)
+            while (true) {
+                val count = reader.read(chars)
+                if (count < 0) break
+                for (index in 0 until count) {
+                    when (val char = chars[index]) {
+                        '\n' -> consumeLine()
+                        '\u0000' -> lineHadNul = true
+                        else -> {
+                            if (line.length < MAX_HARDWARE_LINE_CHARS) line.append(char)
+                            else lineTruncated = true
+                        }
+                    }
+                }
+            }
+            if (line.isNotEmpty() || lineTruncated) consumeLine()
+            HardwareRead.Lines(
+                output = fields.entries.joinToString("\n") { (label, value) -> "$label = $value" },
+                bytesRead = bounded.bytesRead
+            )
+        } catch (_: CancelledReadException) {
+            HardwareRead.Cancelled
+        } catch (error: LimitReadException) {
+            when (error.reason) {
+                BugReportRejectReason.ENTRY_TOO_LARGE -> HardwareRead.EntryTooLarge
+                else -> HardwareRead.TotalTooLarge
+            }
+        }
+    }
+
+    private fun collectHardwareLine(line: String, fields: MutableMap<String, String>) {
+        RamReportCompatibility.bootFields(line).forEach { (label, value) -> fields.putIfAbsent(label, value) }
+        for ((label, pattern) in hardwareFieldPatterns) {
+            if (label !in fields) pattern.find(line)?.groupValues?.get(1)?.let { fields[label] = it }
+        }
+    }
+
+    private val hardwareFieldPatterns = listOf(
+        // Qualcomm boot records pair the mode-register vendor and device type,
+        // without a DDR prefix. Keep this ID separate from extended JEDEC IDs.
+        "DDR MR Manufacturer ID" to Regex("\\bDDR MR Manufacturer ID\\s*=\\s*(0x[0-9a-f]+)\\b", RegexOption.IGNORE_CASE),
+        "DDR Qualcomm Device Type" to Regex("\\bDDR Qualcomm Device Type\\s*=\\s*(0x[0-9a-f]+)\\b", RegexOption.IGNORE_CASE),
+        "DDR Vendor Name" to Regex("\\bDDR Vendor Name\\s*=\\s*(Samsung|Hynix|Micron|Nanya|Winbond|Elpida|Qimonda|ESMT)\\b", RegexOption.IGNORE_CASE),
+        "DDR Device Type" to Regex(
+            "\\bDDR[\\s_]+Device[\\s_]+Type\\s*[:=]\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)\\b",
+            RegexOption.IGNORE_CASE
+        ),
+        "DDR Manufacturer ID" to Regex(
+            "\\bDDR[\\s_]+Manufacturer[\\s_]+ID\\s*[:=]\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)\\b",
+            RegexOption.IGNORE_CASE
+        ),
+        "UFS INQUIRY ID" to Regex(
+            "UFS\\s+INQUIRY\\s+ID\\s*[-:=]\\s*(SAMSUNG|SK\\s*HYNIX|HYNIX|MICRON|KIOXIA|TOSHIBA|XBSTOR|0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)\\b",
+            RegexOption.IGNORE_CASE
+        ),
+        "UFS Spec Version" to Regex(
+            "UFS\\s+Spec\\s+Version\\s*[-:=]\\s*([0-9]+(?:\\.[0-9]+)?)",
+            RegexOption.IGNORE_CASE
+        )
+    )
+
+    private sealed interface HardwareRead {
+        data class Lines(val output: String, val bytesRead: Long) : HardwareRead
+        data object Cancelled : HardwareRead
+        data object EntryTooLarge : HardwareRead
+        data object TotalTooLarge : HardwareRead
+    }
+
     private fun markerSource(line: String): String? {
-        val raw = dumSysMarker.matchEntire(line.trim())?.groupValues?.get(1)
-            ?: serviceMarker.matchEntire(line.trim())?.groupValues?.get(1)
+        val trimmed = line.trim()
+        if (!trimmed.startsWith("------") && !trimmed.startsWith("DUMP OF SERVICE", ignoreCase = true)) return null
+        val raw = dumSysMarker.matchEntire(trimmed)?.groupValues?.get(1)
+            ?: serviceMarker.matchEntire(trimmed)?.groupValues?.get(1)
             ?: return null
         return when (raw.lowercase(Locale.ROOT)) {
             "package", "packages" -> "packages"
@@ -328,6 +636,11 @@ object BugReportSectionExtractor {
         val basename = name.substringAfterLast('/').lowercase(Locale.ROOT)
         return basename == "bugreport.txt" ||
             (basename.startsWith("bugreport-") && basename.endsWith(".txt"))
+    }
+
+    private fun isHardwareLogEntry(name: String): Boolean {
+        val basename = name.substringAfterLast('/').lowercase(Locale.ROOT)
+        return basename == "bootlog.txt" || basename == "bootlog_copy.txt" || basename == "dumpstate_board.txt"
     }
 
     private fun isZipEntry(name: String): Boolean =
@@ -384,7 +697,11 @@ object BugReportSectionExtractor {
     }
 
     private sealed interface CandidateRead {
-        data class Sections(val value: List<RawDiagnosticSection>, val bytesRead: Long) : CandidateRead
+        data class Sections(
+            val value: List<RawDiagnosticSection>,
+            val bytesRead: Long,
+            val verificationHeaderFields: Map<String, String>
+        ) : CandidateRead
         data class Empty(val bytesRead: Long) : CandidateRead
         data object Cancelled : CandidateRead
         data object Unsupported : CandidateRead
@@ -438,5 +755,7 @@ object BugReportSectionExtractor {
     private class LimitReadException(val reason: BugReportRejectReason) : IOException()
 
     private const val MAX_BUFFERED_LINE_CHARS = 64 * 1024
+    private const val MAX_HARDWARE_LINE_CHARS = 512
     private const val MAX_TOLERATED_NUL_CHARS = 1_024
+    private const val NUL_DENSITY_DENOMINATOR = 100L // At most 1% beyond the small-report allowance.
 }

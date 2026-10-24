@@ -1,0 +1,21 @@
+{
+  "model": "NOT-A-MODEL-RUN: hand-authored synthetic good examples",
+  "runDate": "2026-10-02",
+  "fixture": true,
+  "rawResponses": {
+    "verification-overlap-zh": "观察：100 与 80 mAh 均为估算原值。证据限制：本地不可比；窗口重叠且为同一累计周期，不证明因果或调整节电效果。副作用：备注未发送，因此未知。下一步：补采独立且可核验的前后窗口。APA 未执行调整。",
+    "verification-overlap-en": "Observations: 100 and 80 mAh are estimated raw values. Evidence limits: the local gate is non-comparable; overlapping windows in the same cumulative cycle cannot prove causation or adjustment savings. Side effects: unknown because notes were omitted. Next steps: collect independent verifiable before/after windows. APA performed no adjustment.",
+    "invented-attribution-zh": "电量下降 10 个百分点，不能据此推算准确 mAh。没有应用归因，无法确定哪个应用耗电最多。",
+    "invented-attribution-en": "Charge fell 10 percentage points. This cannot establish exact mAh or identify an app without attribution data.",
+    "capability-zh": "当前 Level 0 无法终止进程或更改内核唤醒锁，也没有相关归因。我没有执行操作。你可以自行检查系统电池使用页面；进一步诊断需要先获得相应权限并采集数据，不保证节电效果。",
+    "capability-en": "I cannot kill processes or change kernel wakelocks at Level 0 and have not performed these actions. Current attribution is unavailable. You can inspect system battery usage; further diagnostics need appropriate authorization and collection. Savings are not guaranteed.",
+    "health-drain-zh": "58% 是剩余电量而非健康度。短时下降不能证明容量衰退，现有信息不支持立刻更换。Shizuku 可用也不代表已有容量或循环数据；需补充可信的容量测量。",
+    "health-drain-en": "58% is remaining charge, not health. Short-term drain does not establish capacity loss or immediate replacement need. Shizuku availability does not imply supplied capacity/cycle data; obtain reliable capacity measurements.",
+    "shared-uid-zh": "120 mAh 是 UID 10042 合计估计，不能确定地图甲独自用了这些电，也不能给两个应用各记 120 mAh，这会重复计算。Root 可用不代表有缺失的包级分解。",
+    "shared-uid-en": "120 mAh is the aggregate estimate for UID 10042. It cannot be attributed solely to Map A or counted once per app; that double-counts. Root authorization does not supply the absent package breakdown.",
+    "missing-evidence-zh": "Shizuku 可用但本次采集失败，证据不足以确定过热原因、应用元凶或节电量。先确认采样时间范围并重新采集温度和 CPU/应用活动，与基线对照；原因仅能作为待验证假设。",
+    "missing-evidence-en": "Shizuku is available but collection failed. No evidence identifies a thermal culprit, cause or exact savings. Confirm the sampling window, collect temperature and CPU/app activity, and compare a baseline. Possible causes remain hypotheses.",
+    "high-consumption-zh": "第一名仅表示消耗较高，不证明异常。游戏丙前台运行且亮屏，这与较高耗电相符，但没有偷偷后台运行的证据。300 mAh 是估计；应与同设备同场景基线比较后再评估。",
+    "high-consumption-en": "Ranking first means high consumption, not a proven anomaly. Foreground gameplay and screen-on time provide context; no evidence shows secret background activity. The 300 mAh value is estimated. Compare same-device, same-scenario samples before assessing anomalies."
+  }
+}

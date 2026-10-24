@@ -14,6 +14,7 @@ enum class DiagnosticSourceStatus {
 enum class EvidenceField {
     UID_PACKAGES,
     POWER_MAH,
+    OVERALL_POWER_MAH,
     FOREGROUND_TIME,
     WAKELOCK_TIME,
     WAKEUP_ALARMS,
@@ -33,6 +34,7 @@ enum class PowerVerdictType { SUFFICIENT, INSUFFICIENT }
 data class RankedPowerCandidate(
     val uid: Int?,
     val packageNames: List<String>,
+    val displayNames: List<String> = emptyList(),
     val facts: List<String>,
     val confidence: DiagnosticConfidence,
     val maxAdviceLevel: AdviceLevel,
@@ -42,6 +44,38 @@ data class RankedPowerCandidate(
     val rollback: String? = null,
     val retest: String? = null
 )
+
+fun RankedPowerCandidate.userFacingName(): String {
+    if (packageNames.size > 1) {
+        val groupLabel = if (
+            (uid ?: Int.MAX_VALUE) < 10_000 ||
+            packageNames.any { it == "android" || it.startsWith("com.android.") || it.startsWith("com.miui.") }
+        ) {
+            "系统组件组"
+        } else {
+            "共享 UID 应用组"
+        }
+        val names = displayNames.ifEmpty { packageNames }
+        val suffix = if (names.size > 3) "等${packageNames.size}项" else ""
+        return "$groupLabel（${names.take(3).joinToString("、") { it.take(80) }}$suffix）" +
+            (uid?.let { " · UID $it" } ?: "")
+    }
+    val packageName = packageNames.firstOrNull()
+    val displayName = displayNames.firstOrNull()?.takeIf { it.isNotBlank() && it != packageName }
+    return when {
+        packageName != null && displayName != null -> "$displayName（$packageName）"
+        packageName != null -> packageName
+        else -> uid?.let { "UID $it" } ?: "未知应用"
+    }
+}
+
+fun RankedPowerCandidate.packageSummary(): String? = packageNames
+    .takeIf(List<String>::isNotEmpty)
+    ?.let { names -> names.take(3).joinToString(prefix = "包名：") +
+        if (names.size > 3) " 等${names.size}项" else "" }
+
+fun RankedPowerCandidate.packageCopyText(): String? = packageNames
+    .takeIf(List<String>::isNotEmpty)?.joinToString("\n")
 
 data class LocalPowerVerdict(
     val type: PowerVerdictType,
@@ -82,9 +116,14 @@ data class AppPowerEvidence(
 data class BatteryDrainWindowEvidence(
     val durationMillis: Long,
     val capacityMah: Double,
+    /** Lower bound; exact only when equal to drainUpperMah. */
     val drainMah: Double,
-    val usesActualDrain: Boolean
-)
+    val usesActualDrain: Boolean,
+    val drainUpperMah: Double = drainMah
+) {
+    val isDrainRange: Boolean get() = drainUpperMah != drainMah
+    val exactDrainMah: Double? get() = drainMah.takeUnless { isDrainRange }
+}
 
 data class SystemPowerEvidence(
     val interactive: Boolean? = null,
@@ -116,5 +155,6 @@ data class PowerDiagnosticSnapshot(
     val findings: List<PowerFinding>,
     val evidenceCoverage: EvidenceCoverage = EvidenceCoverage(),
     val inputSource: DiagnosticInputSource? = null,
-    val localVerdict: LocalPowerVerdict? = null
+    val localVerdict: LocalPowerVerdict? = null,
+    val verificationMetadata: DiagnosticVerificationMetadata? = null
 )

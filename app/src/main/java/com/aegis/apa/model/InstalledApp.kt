@@ -1,5 +1,7 @@
 package com.aegis.apa.model
 
+import com.aegis.apa.localization.AppLanguage
+
 data class InstalledApp(
     val name: String,
     val packageName: String
@@ -24,6 +26,11 @@ data class DetectedApp(
 
 enum class AppCategory(val displayName: String) {
     ROOT_AND_FRAMEWORK("Root 与框架"),
-    COMMON("常规应用")
+    COMMON("常规应用");
+
+    fun displayName(language: AppLanguage): String = if (language == AppLanguage.EN) when (this) {
+        ROOT_AND_FRAMEWORK -> "Root & frameworks"
+        COMMON -> "Regular apps"
+    } else displayName
 }
 

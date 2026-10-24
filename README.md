@@ -50,4 +50,4 @@
 
 这是个人维护的开源项目，欢迎真实使用反馈和代码贡献。[后续方向](ROADMAP.md) · [贡献指南](CONTRIBUTING.md) · [开发与构建](docs/DEVELOPMENT.md) · [全部文档](docs/README.md)
 
-正式 APK 的源码以对应发布标签为准；默认分支与开发分支可能和安装版不同。[MIT 许可证](LICENSE) · [第三方说明](THIRD_PARTY_NOTICES.md)
+`main` 以 0.3.1 正式版源码为基线；复现特定安装版请使用对应发布标签，开发分支可能不同。[MIT 许可证](LICENSE) · [第三方说明](THIRD_PARTY_NOTICES.md)

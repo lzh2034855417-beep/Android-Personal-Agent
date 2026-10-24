@@ -1,16 +1,72 @@
 # 测试与验证记录
 
-## v0.2.0 正式发布验证（2026-09-27）
+## main 同步 0.3.1 正式源码（2026-10-24）
 
-- 发布范围固定为 `v0.2.0-rc1` 的源码，加上稳定版 Changelog 与 README 元数据；不包含后续 Root 可靠性、友好应用名称或硬件评分开发。
-- `testDebugUnitTest` 共 **243 项，0 failure、0 error、0 skipped**；`lintDebug` 与 `lintRelease` 各 0 错误、25 个非阻断警告。
-- `assembleDebug`、`assembleDebugAndroidTest` 与 `assembleRelease` 均成功；本轮没有运行 `connectedDebugAndroidTest`，不得把测试 APK 编译成功表述为本轮真机自动化通过。
-- 签名 Release APK：`APA-v0.2.0-release.apk`，包名 `com.aegis.apa`，`versionCode 4`，`versionName 0.2.0`。
-- `apksigner verify` 通过：APK Signature Scheme v2、1 个签名者；签名证书 SHA-256 与 GitHub `v0.1.2` Release APK 一致，可覆盖升级。
-- APK SHA-256：`4447EB0A785A57028AEBF6D56AA6820B9610DD45B17B6D965F4671ED54BB0685`。
-- 本轮未调用真实模型服务。TD-02 的 OEM 备份/迁移实测和 TD-03 的仓库 CI/无人干预 UI 自动化仍未关闭；维护者接受这些已披露的兼容与流程风险，不把它们表述为已验证能力。
+- 基线为已发布 `v0.3.1`（`ee238116237c5ed2c2bd92c2eab5166acacf7f0b`）；应用、Gradle 与评测脚本逐路径比较一致，未混入 0.3.2。保留 main 上的使用者文档与仓库治理，未恢复已清理的历史草稿。
+- 在独立同步副本实际运行 `testDebugUnitTest lintDebug lintRelease assembleDebug assembleDebugAndroidTest --offline --no-daemon --console=plain`，并指定不存在的本地签名配置：775 项 JVM，0 failures/errors/skips；Debug/Release Lint 各 0 错误、33 警告；Debug 与 AndroidTest APK 编译成功。
+- `python -m unittest discover -s scripts/ai_eval -p 'test_*.py'` 实际执行 18 项通过；78 个本地文档链接/锚点检查通过，无未解决合并冲突，独立复核未发现阻断问题。
+- CI 保留当前单任务布局，新增上述离线 Python 检查，未新增模拟器运行。此次未执行手机安装、真机/模拟器仪器、真实私有报告重放、在线模型或正式签名打包；历史设备结果只代表其记录时的构建。公开 0.3.1 APK 与标签未改动。
 
-下文按日期保留开发期验证记录；若构建产物、警告数量或发布状态与本节冲突，以本节的正式发布验证为准。
+以下为历史开发记录，按各节标明的日期、提交和执行范围阅读，不代表所有项目在本次同步中重新验收。
+
+## 问题驱动诊断向导全链路验收（2026-10-09，开发副本）
+
+**已实现**：待机掉电／使用发热本地规则、显式回答／样本确认、版本化内存会话、单一手动主动作，以及独立可选解释的预览／确认／备注默认关闭／取消／过期结果保护。向导只在页面 ViewModel 内存保留，配置变化保留，进程死亡重新开始；最多两份已确认摘要。热读数按各自来源和时间描述性并列，不进入耗电比较、不计算散热改善或健康百分比；生产窗口起止未知不能计算调整效果。
+
+**合成验证**：新增 `GuidedDiagnosticPipelineTest` 十项，从真实 Bug Report extractor/parser → adapter → 两套 evaluate → payload，覆盖选区／actual=0／重复区段拒绝、不完整映射／共享 UID、未知窗口／归属／回答门控、本地主动作不可替换、报告热状态优先级、备注及标识隐私、温度不进耗电比较和记录缺失／保存失败不伪造成功。正向验证动作只使用显式标注的合成窗口元数据；真实生产报告没有该能力。两份完整报告的解释载荷可超限，测试验证拒绝发送且不截断本地事实。
+
+最终审查修复补充十项 JVM 测试：Activity 共用初始化器保留主动选择的无 Key 会话；整体耗电使用独立 `OVERALL_POWER_MAH` 覆盖，不升级应用 `POWER_MAH`；真实进程／恢复观察经 adapter→发热规则→payload 保留未知充电窗口及粗略掉电速度；共用主动作／手动重试／主动刷新事件分发与基础快照交付边界验证实际分发次数、完整版本键、在途任务和两样本替换上限。任务已结束但会话未结束时可主动刷新；已识别系统警告仍优先，实际结束会话不可复活。新读数仍须预览确认，无自动采样／重试。确认勾选项改为合并语义的带标签行，仪器断言检查标签及 checkbox role，仅编译未上机。
+
+门控敏感性 RED：临时仅在测试的 adapter→rule 边界给真实 ROOT 样本伪造匹配的明确窗口和无充电状态；10 项中 1 项预期行为断言失败（期待 `idle.observe_condition`，实际 `idle.verify_background`）。移除变异后 10/10 通过。它证明断言能抓住错误窗口授权，不是发现或提交了生产缺陷。首次夹具运行的三项失败已纠正（重复支持标题应拒绝、缺失可选来源单独保留、双完整报告应超限），不计作产品行为 RED。
+
+最终离线命令使用现有 Android Studio JBR、Gradle 缓存与 wrapper，在 `C:/Users/ROG/Documents/APA/work/current` 执行：
+
+```powershell
+$env:JAVA_HOME = 'C:/Program Files/Android/Android Studio/jbr'
+$env:GRADLE_USER_HOME = 'C:/Users/ROG/.gradle'
+./gradlew.bat testDebugUnitTest lintDebug lintRelease assembleDebug assembleDebugAndroidTest --offline
+$env:TEMP = 'C:/Users/ROG/Documents/APA/work/current/.superpowers/sdd/2026-10-03-guided-diagnostics/eval-temp'
+$env:TMP = $env:TEMP
+& 'C:/Users/ROG/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe' -B -X utf8 -m unittest discover -s scripts/ai_eval -p 'test_*.py' -v
+```
+
+最终审查修复后的 Gradle 退出 0（36 秒），`:app:testDebugUnitTest` 实际执行；新鲜 XML 为 **693 项／90 套件，0 failure/error/skipped**，时间范围 `2026-10-09T15:47:34.297Z` 至 `15:47:38.101Z`。原 pipeline 十项保留；本轮新增十项，另强化既有重复动作断言。Python **18/18** 通过，临时目录运行后为空。Debug 与 Android 仪器 APK 均重新构建，仪器 Kotlin 源码实际编译；这些结果不代表设备运行。
+
+Lint XML：Debug **0 错误／35 警告**；Release **0 错误／33 警告**。共同警告为 `GradleDependency` 3、`ModifierParameter` 4、`OldTargetApi` 1、`RedundantLabel` 1、`UnusedResources` 12、`UseKtx` 9、`UseTomlInstead` 3；Debug 另有 `NewerVersionAvailable` 2（既有机型名称库／Compose 插件依赖）。这些位置在原有构建配置、Manifest、资源、聊天／诊断界面和偏好／分享工具；没有 `Guided*.kt`、两套新规则或新 pipeline 文件告警。未升级依赖或添加 suppression。报告：`app/build/test-results/testDebugUnitTest/TEST-*.xml`、`app/build/reports/tests/testDebugUnitTest/index.html`、`app/build/reports/lint-results-{debug,release}.{xml,html,sarif}`。
+
+本地 APK：`app/build/outputs/apk/debug/APA-v0.3.0-debug.apk`（SHA-256 `A94974BB80785DB097491C591B2EB7361A158BDC220BB7422821425792ACC28E`）；已编译仪器 APK：`app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`（`4F12741BC663B10F8FBFD3F7DF8B615BA125374807EA290C4D9AA507E037A26C`）。均未安装／发布。
+
+**设备验证：未运行**。发布前需另行授权执行 OEM／Root 输出、真实 Keystore、MainActivity 回调时序、旋转／后台返回／退出／取消／删除／进程死亡、小屏／大字体／IME／滚动／读屏与中英文，以及实际 Android 解码器及两种协议仪器测试。分别用缺失和冲突样本做人工可用性验收，确认用户能说明未知项与下一步。
+
+**真实模型验证：未运行**。离线十二例是手工合成契约；格式 PASS 和合法 ID 不能证明准确，全部人工事实核查仍待执行。未来授权模型运行须保留精确载荷及原始响应，分别记录格式错误和人工事实错误的分母与未审数量，见 [guided-diagnostics-evaluation](guided-diagnostics-evaluation.md)。本轮不连接设备／服务、不下载依赖、不推送或发布；此开发副本验证不能替代主目录同步后的独立复验。
+
+## 双语回答过滤与离线评测（2026-10-02）
+
+- 基线 `7547b7c`，分支 `codex/bilingual-ai-evals`。补齐英文及混合语言的 L0/普通聊天高级动作过滤、已附报告重复索取过滤和英文健康任务字段清洗；按句段保留普通设置、否定性提醒与报告事实。
+- 新增 19 项 JVM 回归。独立审查提出的应用停用、非 com 包名、普通后台数据设置、名词解释、混合语言否定、报告上传事件、项目符号及中文“报告提供了”均先复现失败再修复。过滤仍是保守词法规则，不保证拦截所有改写或证明证据准确。
+- 全量 JVM **381 项，65 个套件，0 failure/error/skipped**；Debug 与仪器测试 APK 构建成功；Debug/Release Lint 各 0 错误、35 个既有警告。仪器测试未上机执行，远端 CI 未运行。
+- 新增 12 个合成中英文场景（6 类风险）、标准库离线检查器和强制人工评分准则；CI 增加工具单测。Python **14 项通过**，包含 ISO 周日期先失败后修复的严格日期校验。
+- 手工好样例退出 0：12/12 覆盖、0 个词法标记、12 项人工待审；手工坏样例退出 1：12/12 覆盖、4 例共 10 个标记、12 项人工待审。另 8 个语义错误样例仍可词法 CLEAR，明确展示自动筛查的局限。它们不是模型运行，不代表任何准确率。
+- 真实评测要求保存精确系统提示词、最终模型消息、历史、参数、应用版本，以及分别保存原始/显示回答。本轮没有读取 Key、请求真实模型、安装手机、推送或发布。复核后的补丁无剩余重要审查意见。
+
+## AI 定向回答约束（2026-10-02）
+
+- 基线 `61034e7`，分支 `codex/focused-ai-output`。用户确认方向：回答优先点名有证据支持的对象，引用数值/单位/来源/窗口，只给一个优先动作，并说明副作用、验证与设置回退；不能靠加重语气伪装确定性。
+- 中英文共用定向策略：区分总耗电、后台耗电与同窗口异常，服从本地裁决及最高建议级别；并列或证据不足时不强行选“元凶”，不编造置信度百分比、基线、阈值或设置路径。健康、速率、归因和普通设备问题分别约束；未附报告的自由聊天不套诊断格式。
+- 英文健康任务和中文一致：不发送无关应用/耗电诊断正文；英文 L0 诊断正文不夹带 Scene 操作。速率证据不足不再转去解释无关的应用排行。
+- 新增 7 项真实提示词输出契约测试：先复现 5 项失败，修改后补充速率重定向测试并复现其失败。全量 JVM **362 项，0 failure/error**；Debug 与仪器测试 APK 构建、双变体 Lint 通过，Lint 各 0 错误、35 个既有警告。
+- 这些测试验证发送给模型的指令/数据边界，不证明真实模型一定遵守，也不等于诊断准确率提升。没有读取 Key、调用真实模型服务、执行仪器测试、推送或发布；真实回答效果仍需使用代表性报告与问题核对。
+- 独立审查发现速率任务仍继承了后台排行/Scene 操作/主要耗电字段的旧指令。扩展 L2 回归并先复现失败后，将这些指令限定为归因任务，速率字段改为实测速率；审查复核没有剩余重要问题。
+
+## 长对话、Root 采集与 CI 整合（2026-10-02）
+
+- 基线 `ec83969`，分支 `codex/performance-root-ci`。长对话改用带稳定 UI 标识的 LazyColumn，初始最近 30 条、每次加载 30 条，内存与加密归档统一最近 100 条；阅读历史时不自动跟随新消息，提供返回最新入口。聊天页面及发送前检查从 MainActivity 拆到 AgentChatScreen。
+- Root/普通硬件命令并行排空 stdout/stderr，采集输出限长；超时、取消、线程中断均清理进程/流，取消后不进入降级命令。界面提供停止读取，并阻止失效任务写回新会话状态。
+- 中英文诊断统一结论、证据、样本与下一步；来源失败、覆盖缺口、未知原文和原始电量窗口保留，不把缺少证据表述为没有异常。
+- 新增 GitHub PR/push JVM、双变体 Lint、Preview/仪器测试 APK 检查，以及独立 Android 16 模拟器任务。工作流仅完成静态检查，尚未推送或在 GitHub 运行；细节见 CI.md。
+- 本地全量 JVM 355 项通过（0 failure/error）；Debug 与仪器测试 APK 构建成功，Debug/Release Lint 各 0 错误、35 个警告。最终审查后的复验以本节后续记录为准。
+- 当前 adb 无设备、无 AVD、无系统镜像。仪器测试仅编译，未执行；Root 授权/OEM 输出、长对话滚动与字体放大、停止读取/旋转仍须上机确认。未调用真实模型服务、未覆盖手机正式版、未发布。
+- 最终审查后复验：同一全量命令退出 0，63 个 JVM 套件共 355 项，0 failure/error；双变体 Lint 仍各 0 错误、35 警告，新增长对话与双语诊断 UI 测试已编译。审查修正自动滚动反馈、失效 L2 测试假设、懒加载离屏断言及测试会话隔离；模拟器配置启用软键盘。
 
 审计日期：2026-09-16，实机记录核对至 2026-09-10。本次未发布、未覆盖手机正式版、未调用真实模型服务；经用户授权在手机安装独立 Preview 执行测试。
 
@@ -146,6 +202,166 @@ $env:ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"
 
 报告路径：`app/build/reports/tests/testDebugUnitTest/index.html`、`app/build/test-results/testDebugUnitTest/`、`app/build/reports/lint-results-debug.html` 和 `lint-results-release.html`。生成报告不提交 Git。
 
-## 通用发布检查
+## 发布前门槛
 
-每次发布都必须逐项评估 [TECH_DEBT](TECH_DEBT.md) 的 P1 风险，完成与声明支持范围相称的设备/权限/配置变更测试，递增版本，用发布密钥生成 APK/AAB，验证签名和 SHA-256，记录实际模型服务验证范围，并对照发行标签更新 README/CHANGELOG。未关闭项必须在测试记录或发布说明中披露并由维护者明确接受，不能把预览构建或未测能力包装成已验证结果。v0.2.0 的具体决定与残余风险见本文件顶部正式发布验证。
+关闭 [TECH_DEBT](TECH_DEBT.md) 的 P1 项；完成独立设备/权限/配置变更测试；递增版本；用发布密钥生成 APK/AAB；验证签名和 SHA-256；记录实际模型服务验证范围；对照发行标签更新 README/CHANGELOG。不把本轮预览 APK 当作已审定的下一公开版本。
+# Chat reliability — 2026-10-02
+
+Source baseline: `7756a7b`, source version `0.3.0` / `versionCode 5`. Implementation on `codex/chat-reliability`.
+
+Validated with Android Studio JBR, installed SDK 36.1 and cached Gradle dependencies:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug --offline --console=plain
+```
+
+- 332 JVM tests; 0 failures, 0 errors, 0 skipped.
+- Debug preview APK and Android test APK built successfully.
+- Debug lint: 0 errors, 34 warnings.
+- Encrypted archive: provider/scope round-trip, last-100 retention, seven-day expiry, malformed/truncated/oversized archives, ciphertext tampering, failed encryption preserving prior history, and deletion on clear.
+- Behavioral regressions reproduced before their fixes: queued clear must precede a subsequent restore; cancellation during lazy output-stream acquisition must send zero body bytes. Both pass after correction.
+- Transport contracts: separate OpenAI-compatible/Anthropic authentication, successful connection cleanup and HTTP failure without reading or echoing an error body. No real service was contacted.
+
+Limitations: `adb devices -l` reported no devices. Android Keystore, OEM atomic replacement, process termination/rotation, keyboard/layout and real network cancellation remain device checks. Saves run asynchronously; the UI shows saving/errors, and killing the process before completion can lose the latest change. Retention is enforced when reopening history; no background service deletes an unused archive at an exact seven-day wall-clock instant. A stopped request may already have reached the provider; retry can incur another request. Drafts and report objects are not restored, so retry uses current report choices.
+
+## Earlier validation
+
+## Diagnostic verification — local phase A (2026-10-02)
+
+Task 6 connects the local Compose flow without a model Key: retained-summary preview → baseline → one manually confirmed adjustment/rollback note → current-diagnostic retest preview → original values/refusal reasons → close/delete. Synthetic instrumentation fixtures cover UNKNOWN declarations, affirmative declarations unable to supply missing windows, explicit old-retest removal, damaged-archive clear authorization, saving/failed-save indicators, and bounded lazy scrolling at 320dp / 1.5x font with a focused text field/IME. They use a temporary test archive and synthetic AES key, never a personal archive.
+
+Required offline validation (Android Studio JBR, cached Gradle):
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug :app:lintRelease --offline --console=plain
+```
+
+Preimplementation test compilation failed at the expected missing `VerificationPanel` / `onOpenVerification` APIs. Compilation after implementation succeeds. This is test-first compile evidence, **not instrumentation runtime RED/GREEN**. No device/emulator install or connected test is authorized or performed; layout, IME, Keystore lifecycle, and real OEM report handling remain pending device checks. Production statistics bounds are unknown, so no real adjustment-effect measurement is claimed. AI explanation/model evaluation is deferred.
+
+Both full offline runs succeeded: 484 JVM tests, 0 failures/errors/skips, and debug preview / Android test APKs built. Final targeted build and lint after switching dialog sizing to `LocalWindowInfo` succeeded; debug and release lint each report 0 errors / 35 existing warnings. Unit XML and lint HTML/XML remain under the report paths documented above.
+
+## Diagnostic verification — optional explanation (2026-10-02)
+
+Task 7 implements a separate request with a fixed system prompt and one untrusted user payload, without chat history or the full device snapshot. Its explicit scope preview requests credentials only on confirmed send. All free-text title/scenario/change/rollback/side-effect notes default off; the exact UTF-8 attachment limit is 16 KiB with rejection rather than truncation. Model explanations remain in memory and never enter either archive. Local gates remain visible and errors do not modify the verification record; lexical capability filtering is reused without a semantic safety guarantee.
+
+TDD evidence: the first focused payload/controller run executed 6 tests and failed 5 against minimal API scaffolds (missing notes projection, local reasons, byte boundary, credential failure, provider execution). A later queued-deletion regression failed at `expected 0 provider calls, actual 1`, before the pre-worker identity/revision/capability/language check. Final focused tests pass 9/9. Late-reply tests assert an active request and run fake provider work before withholding publication, then invalidate selected id/deletion/revision/cancel/dispose; separate tests cover capability/language changes, expired/no key, oversize and duplicate click.
+
+Final offline command above succeeded: **493 JVM tests, 0 failures/errors/skips**; debug APK and Android test APK built; debug and release lint each **0 errors, 35 existing warnings**. Python `-B -X utf8 -m unittest discover -s scripts/ai_eval -p test_*.py -v` passes **14/14**. The good/bad synthetic evaluation fixtures cover all 14 ids, preserve 14 manual PENDING verdicts, and include Chinese/English overlapping-window answers falsely claiming causal savings that remain lexical CLEAR.
+
+`VerificationExplanationProviderTest` uses Android's org.json with injected fake post and synthetic credentials. It asserts both request protocols, no history, separated system/user roles, 401/429, missing/expired key, unknown provider/protocol, empty/invalid/oversized response and cancellation. `VerificationExplanationUiTest` uses fake credentials/provider/executors and asserts preview before credential access/post, opt-in notes, no-key/read-failure errors and visible local gate. These **compile only**; neither protocol nor Compose instrumentation was executed on a device. No real Key was read, no provider was called, and no device install, live eval, push or release was performed. Keystore/OEM lifecycle, actual layout/IME, runtime JSON behavior and model compliance remain pending separate authorized checks. A cancelled accepted request may still be processed by the provider.
+
+## Diagnostic verification — final review fixes (2026-10-03)
+
+The final offline command above completed successfully: **500 JVM tests in 75 suites, 0 failures/errors/skips**, debug and Android test APKs built, debug/release lint each **0 errors / 35 existing warnings**. The bundled Python runtime ran `-B -X utf8 -m unittest discover -s scripts/ai_eval -p test_*.py -v`: **14/14 passed**.
+
+Two real synthetic projector → controller → encrypted store flows first failed at retest save with `LIMIT`, after baseline and manual change saved. The complete 20-group fixture (`com.example.app01` through `20`, all nine finite PARSED app metrics plus overall power, production-shaped unknown bounds) now persists all **181 metrics** in both summaries; the plaintext record is **26,083 bytes**. An absent selected target reserves its slot and retains at most **19 other groups / 172 retest metrics**, with no invented target value; that record is **25,462 bytes**. Reopened records equal the original projected summaries, including values, units, statuses, windows, context and fingerprints.
+
+The schema v1 compact metric section uses an explicit marker and bounded package/window dictionaries; stable enum string IDs remain. A golden intermediate-preview v1 archive still decodes, reloads encrypted and remains editable. This is preview-format compatibility, not a released-format migration claim; no real device archive was accessed. Strict UTF-8, negative/unknown references, unknown markers, dictionary/metric counts and trailing garbage remain bounded/rejected. The existing exact **49,152-byte** record acceptance / **49,153-byte** rejection and 20-record / 1 MiB bounds, retention, tamper, key failure, clear and tombstone tests remain passing.
+
+Additional regressions cover a mismatched map-key/window source and bilingual tiny nonzero raw values/rates/deltas/percentages. The new failed-baseline Back → visibly unsaved list entry → reopen Compose regression **compiled only**, along with the existing instrumentation suite; device execution and visual/IME/Keystore/OEM checks remain pending. No real Key, network/model call, device/install command, push or release occurred in this fix wave.
+
+### Main-project delivery verification (2026-10-03)
+
+After the approved branch was locally synchronized to `D:/AndroidPersonalAgent`, the same full offline command succeeded again (33 seconds): **500 JVM tests / 0 failures, errors or skips**, both APKs built, and the Python tool suite passed **14/14**. This delivery-directory lint run reported **0 errors / 36 warnings per variant**, versus 35 in the isolated checkout. Report comparison identified only availability warnings for the unchanged device-marketing-name dependency and Kotlin Compose plugin; the two dependency configuration files have no feature-branch changes. No dependency upgrade or warning suppression was made. Actual instrumentation/device/model execution remains pending.
+
+## 0.3.1 候选代码留存（2026-10-10）
+
+用户确认本轮只整理和保留下一正式版本，不立即发布。配置更新为 `0.3.1` / `versionCode 6`，Debug 显示 `0.3.1-preview`。发布时间与剩余验收见 [RELEASE_0.3.1](RELEASE_0.3.1.md)。
+
+在当前 Android Studio 副本 `C:/Users/ROG/Documents/APA/work/current` 上重新运行：
+
+```powershell
+./gradlew.bat testDebugUnitTest lintDebug lintRelease assembleDebug assembleDebugAndroidTest --offline --console=plain
+& 'C:/Users/ROG/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe' -B -X utf8 -m unittest discover -s scripts/ai_eval -p 'test_*.py' -v
+```
+
+- Gradle `BUILD SUCCESSFUL`；95 个 JVM 套件、750 项测试，0 failures/errors/skips。
+- Python 离线评测工具单测 18 项通过，不调用真实模型。
+- Debug Lint：0 错误、35 警告；Release Lint：0 错误、33 警告。
+- Debug 与 AndroidTest APK 编译成功；APK 元数据确认 `versionCode 6`、`versionName 0.3.1-preview`。
+- 预览 APK：`app/build/outputs/apk/debug/APA-v0.3.1-debug.apk`，SHA-256 `20588E2CCA56A8FD7C6261276C1C74CBDA94E1E0AC698CCA1863CA7255DBAB5D`。
+- `git diff --check` 通过。此轮未安装手机、未执行真机／真实模型测试、未生成签名正式 APK、未创建正式标签或 GitHub Release。
+
+## K60 Pro 报告兼容修复（2026-10-10）
+
+- 只读检查用户手机当天报告的 ZIP 结构和白名单字段：`actual drain: 962-1006`，同窗口 `Computed drain: 1.00`；硬件附件为 `bootlog_copy.txt`，UFS 厂商字段为 `SAMSUNG`、规格为 4.0。原始归档和日志正文没有存入仓库。
+- 区间值之前回退到 1.0 mAh，导致错误速率、排行分母和冲突提示。六项新增回归先全部失败，修复后通过；区间保留上下限，占比保留范围，超过总量上限才标记冲突，复测标量归档不保存区间端点为精确值。
+- 复制版 bootlog／文本厂商端到端测试先因缺少硬件段落失败，再修复；RAM 厂商／类型没有找到可识别证据，保持未知。
+- 独立只读审查无阻断问题，提醒科学计数法负指数会被区间检查拒绝；新增 `1e-3` 回归先失败后修复。
+- 最终命令：`testDebugUnitTest lintDebug lintRelease assembleDebug assembleDebugAndroidTest assembleRelease --offline --console=plain`，使用现有本地正式签名配置。`BUILD SUCCESSFUL`；96 套件、758 项 JVM 测试，0 failures/errors/skips；Debug Lint 0 错误／35 警告，Release Lint 0 错误／33 警告。
+- 最终正式 APK SHA-256：`0E5FCF70593DF70010882207B38257E436529ADD86C61509CE2F22F1C19F4344`；签名验证通过，发布证书不变。
+- `adb install -r` 在 K60 Pro 成功，保留应用数据；MainActivity 冷启动 `Status: ok`，安装版本 0.3.1 / versionCode 6。未在手机 Download 保留 APK，未公开发布。
+- 用户原报告的重新导入、厂商实际页面和新 AI 回答仍需人工复测；本轮没有执行仪器测试或真实模型评测，不能把安装启动视为完整验收。
+
+### K60 Pro 身份匹配补验（2026-10-10）
+
+- 用户反馈修复后仍显示报告无法匹配。定位为标准标题 `SYSTEM PROPERTIES (getprop)` 未被识别，导致身份白名单为空；新增嵌套 ZIP 回归先失败后通过，覆盖匹配／不匹配、序列号排除及段落外型号不被读取。
+- 使用生产提取器、身份匹配和耗电／硬件解析器读取用户提供的完整 `bugreport-2026-10-10-175802.zip`，端到端验证通过：本机身份匹配、三星 UFS 4.0、实际耗电 962–1006 mAh；RAM 厂商仍无证据。原始报告没有加入 Git。
+- 同一全量 Gradle 命令通过：759 项 JVM 测试，0 failures/errors；Debug/Release Lint 与三个 APK 编译通过。
+- 签名验证通过，证书不变；最终 APK SHA-256 `44C409A53A0EEF5BBED7F118F472B487B42909034A8308A35C68CF179E92ECCA`。K60 Pro 覆盖安装成功，启动 `Status: ok`，保留数据，不在手机 Download 放安装包。
+- 手机界面需重新导入原 ZIP 并确认“是本机报告”；未执行自动化仪器测试或真实模型评测，不把解析器验收替代人工页面验收。
+
+### 通用硬件状态文案（2026-10-10）
+
+- 用户截图确认三星 UFS 4.0、SM8550 和 walt 已显示。缺失的 RAM 厂商／类型提示改为“未知（当前读取结果未提供）”，未获得硬件读取结果时显示“未读取”；中英文设备页与分享卡片共用逻辑，适用于所有机型。
+- `testDebugUnitTest assembleRelease --offline --console=plain` 通过，759 项测试、0 failures。正式签名验证通过，K60 Pro 覆盖安装成功并冷启动 `Status: ok`，保留数据。
+- 最新 APK SHA-256：`349BF193CBB9D7C78CC1CDB9A79205C3353F0F010DAF82272C5E19AC72865140`。本轮只改显示状态，没有新增 RAM 厂商数据来源，未公开发布。
+
+### 通用报告 RAM 来源补充（2026-10-10）
+
+- 新增主报告／板级附件冒号 DDR 字段回归先因未生成硬件段落失败，修复后通过。解析器从主报告和 `dumpstate_board.txt` 提取已有硬件白名单，同时支持 DDR 字段冒号与下划线写法，不按机型推测厂商。
+- `testDebugUnitTest lintDebug lintRelease assembleRelease --offline --console=plain` 成功；760 项 JVM 测试，0 failures/errors。完整用户 ZIP 的生产解析器复测通过：本机匹配、三星 UFS 4.0、962–1006 mAh；RAM 厂商仍为空，不能宣称解决这台设备的 RAM 识别。
+- 签名验证、K60 Pro 覆盖安装和冷启动通过，保留应用数据，手机 Download 未放安装包。APK SHA-256：`FBD5163D3F028499E6C4AE879EDEA4F92776C6016F939D5E32D9DB784F02DDAA`。未执行仪器测试或真实模型调用，未公开发布。
+
+### K60 Pro RAM 实际根因与更正（2026-10-10）
+
+- 重新检查启动日志发现 `B - 1247450 - Manufacturer ID = 0xff, Device Type = 0x8`，前文有关报告未提供 RAM 字段的判断错误：扫描规则要求同一行存在 DDR 字样，漏掉无 DDR 前缀的配对记录。
+- 新增三个来源的实际形状回归先失败后通过。仅接受完整高通启动记录前缀与配对数值，将模式寄存器厂商编号独立标记，避免混用扩展 JEDEC 编号。生产解析器对用户原始 ZIP 验收通过：RAM 美光 (Micron)／LPDDR5、三星 UFS 4.0、本机身份匹配、实际耗电 962–1006 mAh。类型码不推断 LPDDR5X 营销规格；原日志正文与个人信息未加入 Git。
+- `testDebugUnitTest lintDebug lintRelease assembleRelease --offline --console=plain` 通过，761 项 JVM 测试，0 failures/errors。正式签名验证通过、K60 Pro 覆盖安装成功、冷启动 `Status: ok`。需重新导入报告更新硬件缓存，实际页面尚待用户确认。
+- 最新 APK SHA-256：`CF307BD750EE8775FA0B571E9F5A90C9E4C911760B761D8567BCF0330CBC805F`。保留数据，手机 Download 未放 APK，未公开发布。
+
+### 跨厂商 RAM 报告格式补充（2026-10-10）
+
+- 按公开源码补充一加十进制 DDR 节点／MANU、三星 DDRV 和高通十进制配对记录。厂商编号与类型按来源解析，未知编号保留；不从 DSF 版本推断类型。来源和覆盖边界见 HARDWARE_REPORT_COMPATIBILITY.md。
+- 正向样例先失败后通过；启动日志 NUL 拼号回归先失败后修复。白名单节点的 4 KiB 读取上限、取消、越界编号、乱码及无关组件有回归覆盖。
+- 最终 testDebugUnitTest、lintDebug、lintRelease、assembleDebug、assembleDebugAndroidTest、assembleRelease 全部通过：767 项 JVM 测试，0 failures/errors；两种 Lint 均 0 错误。未运行仪器测试。
+- 最终构建生产解析器复测用户 K60 Pro 原 ZIP 通过：本机身份匹配、美光 RAM／LPDDR5、三星 UFS 4.0、实际耗电 962–1006 mAh。一加、三星为源码格式合成样例，尚无这些品牌真机报告验收。
+- 正式签名验证通过，原证书不变。APK SHA-256：43429A0DEBB2023C82EBD2DF8F8087E755B6D84FFDD60DC6411DD0F8BC98D79B。K60 Pro 覆盖安装成功、冷启动 Status: ok，保留数据；手机 Download 未放安装包，未公开发布。
+
+### K60 报告精简与口径解释（2026-10-10）
+
+- 共享 UID 名称与包名最多显示前三项和总数，完整包名复制仍保留；中文报告及中英文卡片均精简。应用总量与后台排行显示 UID，避免把分身／其他用户的同名应用混为一项。
+- 原 K60 报告的 QQ UID 10292 总量 44.0 mAh；UID 99910292 总量 27.5 mAh、后台 24.7 mAh，89.8% 属于后者，未改动数值。小米服务的前台 2.16 mAh／后台 0.112 mAh 不足以解释总量 158 mAh，修正原先“前台主导”结论；状态计时不再推导耗电占比。
+- 保留续航区间并明确为本周期含待机的满电外推，非连续亮屏或当前剩余续航。独立实际 ZIP 验收通过：两个 QQ UID 区分、区间／占比不变、共享组压缩、未截断；无标签解析生成报告 2719 字符。实际页面仍需重新导入后人工验收。
+- 新增两个回归先失败后修复；全量 769 项 JVM 测试通过，0 failures/errors，Debug/Release Lint 0 错误，Debug／仪器／签名 Release APK 构建通过。未运行仪器测试。本轮优化展示与解释，未宣称 91 秒导入耗时已改善。
+- 原正式签名核验通过；APK SHA-256：73F2290E8B4ADC5D955CE919A36B28AD549A6E85D0FDAC01141C53D6778A344A。K60 Pro 覆盖安装成功，启动 Status: ok，保留数据，不往手机 Download 放安装包；未公开发布。
+
+### Agent 长按输入菜单退出（2026-10-10）
+
+- 根因：聊天页缺少输入框外触摸清焦点处理；K60 真机测试先失败（点击标题外部后 Focused 仍为 true），修复后通过。保留原生长按／粘贴与选择；父级在 Initial 阶段观察外部触摸而不消费子控件事件，清焦点并隐藏键盘。返回在输入框聚焦时退出编辑。
+- AgentInputDismissUiTest 在 K60 Pro 实际运行通过：长按、外部点击退出、草稿保留、再次输入、键盘收起后返回不离开聊天页。红米阻止 ActivityScenario 后台启动，测试采用项目已有的显式前台 ComponentActivity 启动方式；最初锁屏／通知栏阻挡的两次等待已中止，不计为通过。
+- 全量 769 项 JVM 测试、Debug/Release Lint 与正式包构建通过；正式签名核验通过。最终测试 APK 的构建与设备执行通过，不将其视为全量仪器测试验收。
+- 正式包 SHA-256：676C10DB59EDCBCD0668BFF5DCDCCC55795101D4D51BFB9AFE63C180274F9E03。K60 正式版覆盖安装 Success、冷启动 Status: ok，数据保留，未在手机 Download 留 APK，未公开发布。
+
+### Agent 长按菜单退出动画调整（2026-10-11）
+
+- 菜单打开时第一次外部触摸仅取消原生菜单协程会话，不同时清焦点或隐藏键盘；第二次外部触摸退出编辑。保持原生剪贴板菜单，草稿不清空。
+- 771 项 JVM 测试通过，0 failures/errors；Debug/Release Lint 与仪器 APK、正式签名 Release APK 构建通过。新增测试验证会话关闭、重复打开及页面退出清理，更新真机测试断言。
+- 当前 adb 未检测到设备，本次未运行真机仪器测试，菜单退出动画的实际流畅度尚待手机验收；未安装、未更新手机 Download。旧正式包保留，新包另存 APA-v0.3.1-paste-menu-test.apk。
+
+### 小米 15 非诊断二进制段落（2026-10-12）
+
+- 用户外层 ZIP 为 176,147,096 字节，包含嵌套 bugreport ZIP；主文本为 186,695,363 字节，其中约 2,948,033 个 NUL。原生产提取器返回 UNSUPPORTED_FORMAT / signature=zip;text=nul_limit。主要 NUL 位于非白名单 Wi-Fi 服务，不能把它当作整个诊断报告无效。
+- 新增嵌套非白名单服务与污染数值回归先失败。服务标记支持含 `/` 与 `:` 的 Binder 实例名，以退出上一诊断段落；NUL 密度仅统计诊断白名单原始字符数，含 NUL 的诊断行不拼接、不保留，并标记该来源 TRUNCATED。修正旧测试中删除 NUL 后重建数字的期待。大小、取消、嵌套深度、路径和段落上限保持。
+- 最终 Release 生产类以默认配置复测原 ZIP 成功：Xiaomi / 24129PN74C / API 36；132 个合并应用条目，其中 120 个带耗电值、106 个有包名映射；周期 7,361,185 ms，实际耗电 1426 mAh。batterystats 与 packages 均未截断；唤醒锁时长仍为 NOT_PARSED。
+- 生产硬件解析读出 DDR MR Manufacturer ID 0x6（SK hynix）、Qualcomm Device Type 0x8（LPDDR5 类型码）、MICRON UFS 4.0。类型码不推断 LPDDR5X 营销规格；异机报告不覆盖当前手机硬件缓存。
+- 同一 Release 生产类复测 iQOO 原 ZIP 仍成功；775 项 JVM 测试 0 failures/errors/skips，Debug/Release Lint 0 错误；Debug、仪器及原签名 Release 包构建通过。未将原始报告加入仓库、未调用模型、未执行小米 15 实机界面测试。
+
+### iQOO V2425A 大报告导入（2026-10-12）
+
+- 用户原 ZIP 的主报告为 208,572,166 字节。原生产提取器在 192 MiB 限制下返回 ENTRY_TOO_LARGE；临时仅扩大限制虽可导入，但约 35 MB Battery History 占满 12 MiB 保留段落，实际耗电统计未读出。
+- 两项新增回归先失败后通过：超过旧限制的有界流式文本；长历史流水后仍保留统计汇总。默认主报告／总量限制改为 256 MiB，逐行跳过不被诊断解析器消费的 Battery History，其他行长、段落、条目、取消、路径与解压限制保留。
+- 设备页新增导入拒绝、异常和取消提示；成功但没有可识别硬件字段时说明可在 Agent 查看耗电诊断，不把缺少厂商数据当作导入失败。
+- 最终 Release 生产类使用默认限制复测原 ZIP 成功：vivo / V2425A / API 36；182 个耗电条目、157 个有包名映射；耗电窗口 61,137,458 ms，实际耗电 1096 mAh。batterystats 汇总为 998,086 字符，未截断。packages 仍达 10 MiB 限制并保持 TRUNCATED；唤醒锁时长 NOT_PARSED，不能宣称完整归因。
+- 当前提取器未读出 RAM／UFS 厂商字段；扫描原报告没有找到现有明确厂商／编号格式，不能据此推断厂商或硬件质量。报告容量值 2556 mAh 不用于证明锁容、健康度或完整电池容量。
+- 773 项 JVM 测试，0 failures/errors/skips；Debug Lint 0 错误 / 35 警告，Release Lint 0 错误 / 33 警告；Debug、仪器与正式签名 Release APK 构建通过。签名配置沿用主项目，不读取或输出凭据。原始报告未加入仓库，未请求模型、未安装手机、未运行设备仪器测试、未发布。

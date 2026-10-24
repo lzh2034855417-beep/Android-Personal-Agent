@@ -7,6 +7,8 @@ import android.provider.Settings
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasText
@@ -21,14 +23,25 @@ import androidx.test.espresso.Espresso
 import androidx.test.platform.app.InstrumentationRegistry
 import com.aegis.apa.agent.ApiKeyStore
 import com.aegis.apa.agent.ApiSession
+import com.aegis.apa.localization.AppLanguage
+import com.aegis.apa.localization.AppLanguageStore
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import org.junit.Before
 
 class StabilityUiTest {
     @get:Rule val rule = createAndroidComposeRule<MainActivity>()
+
+    @Before fun isolateConversationAndLanguage() {
+        if (AppLanguageStore.load(rule.activity) != AppLanguage.ZH_CN) setLanguage(AppLanguage.ZH_CN)
+        val session = androidx.lifecycle.ViewModelProvider(rule.activity)[MainSessionViewModel::class.java]
+        rule.waitUntil(15_000) { !session.conversationLoading.value && !session.conversationSaving.value }
+        rule.runOnUiThread { session.clearConversation() }
+        rule.waitUntil(15_000) { !session.conversationSaving.value }
+    }
 
     @Test fun draftAndReportSelectionSurvivePageChangesAndRecreation() {
         rule.waitUntil(15_000) { sampleLabel() != null }
@@ -46,17 +59,17 @@ class StabilityUiTest {
         }
         rule.onNodeWithText("Agent").performClick()
         rule.onNodeWithText("选择报告").performClick()
-        rule.onNodeWithText("Level 2").performScrollTo().performClick()
+        // No Root has been verified in this emulator fixture. Persist the always-available L0.
+        rule.onNodeWithText("Level 0").performScrollTo().performClick()
         rule.onNode(hasSetTextAction()).performTextInput("尚未发送的内测草稿")
         Espresso.closeSoftKeyboard()
         rule.onNodeWithText("能力").performClick()
         rule.onNodeWithText("Agent").performClick()
         rule.onNode(hasSetTextAction()).assertTextContains("尚未发送的内测草稿")
-        rule.onNodeWithText("● Level 2").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("● Level 0").performScrollTo().assertIsDisplayed()
         rule.activityRule.scenario.recreate()
         rule.onNode(hasSetTextAction()).assertTextContains("尚未发送的内测草稿")
-        rule.onNodeWithText("● Level 2").performScrollTo().assertIsDisplayed()
-        rule.onNodeWithText("当前证据不足，暂不建议限制或冻结任何应用。").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("● Level 0").performScrollTo().assertIsDisplayed()
     }
 
     @Test fun recreationEndsPendingAnalysisWithoutReplayingIt() {
@@ -80,6 +93,8 @@ class StabilityUiTest {
         rule.waitUntil(15_000) { sampleLabel() != null }
         rule.runOnUiThread { ApiSession.update(null) }
         rule.onNodeWithText("Agent").performClick()
+        rule.onNodeWithText("选择报告").performClick()
+        rule.onNodeWithText("Level 0").performScrollTo().performClick()
         rule.onNode(hasSetTextAction()).performTextInput("本地会话恢复测试")
         rule.onNodeWithText("发送").performClick()
         rule.waitUntil(15_000) {
@@ -87,9 +102,15 @@ class StabilityUiTest {
         }
         Espresso.closeSoftKeyboard()
         rule.activityRule.scenario.recreate()
-        rule.onNodeWithText("本地会话恢复测试").assertExists()
+        val restoredSession = androidx.lifecycle.ViewModelProvider(rule.activity)[MainSessionViewModel::class.java]
+        rule.waitUntil(15_000) { !restoredSession.conversationLoading.value && !restoredSession.conversationSaving.value }
+        rule.runOnIdle {
+            // A long reply can virtualize the earlier question; inspect persisted state, not offscreen semantics.
+            assertTrue(restoredSession.messages.value.any { it.content == "本地会话恢复测试" })
+        }
         rule.onNodeWithText("LOCAL BASELINE", substring = true).assertExists()
         rule.onNodeWithText("清空").performClick()
+        rule.waitUntil(15_000) { !restoredSession.conversationSaving.value }
         rule.activityRule.scenario.recreate()
         rule.onNodeWithText("本地会话恢复测试").assertDoesNotExist()
         rule.onNodeWithText("LOCAL BASELINE", substring = true).assertDoesNotExist()
@@ -120,6 +141,102 @@ class StabilityUiTest {
         rule.onNodeWithText("APA ${BuildConfig.VERSION_NAME} · ${BuildConfig.BUILD_TYPE}").assertIsDisplayed()
     }
 
+    @Test fun settingsSwitchesToEnglishAndPersistsAcrossRecreation() {
+        val originalLanguage = AppLanguageStore.load(rule.activity)
+        try {
+            setLanguage(AppLanguage.ZH_CN)
+            rule.onNodeWithText("设置").performClick()
+            rule.onNodeWithText("中文").performScrollTo().assertIsSelected()
+            rule.onNodeWithText("English")
+                .performScrollTo()
+                .assertIsNotSelected()
+                .performClick()
+
+            listOf("Device", "Agent", "Capabilities", "Apps", "Settings").forEach { label ->
+                rule.onNodeWithText(label).assertIsDisplayed()
+            }
+            rule.onNodeWithText("English").performScrollTo().assertIsSelected()
+
+            rule.activityRule.scenario.recreate()
+            rule.onNodeWithText("Settings").assertIsDisplayed()
+            rule.onNodeWithText("English").performScrollTo().assertIsSelected()
+        } finally {
+            setLanguage(originalLanguage)
+        }
+    }
+
+    @Test fun switchingBackToChinesePreservesConversation() {
+        val originalLanguage = AppLanguageStore.load(rule.activity)
+        try {
+            setLanguage(AppLanguage.EN)
+            rule.runOnUiThread {
+                val session = androidx.lifecycle.ViewModelProvider(rule.activity)[MainSessionViewModel::class.java]
+                session.messages.value = listOf(
+                    com.aegis.apa.agent.AgentConversationMessage(
+                        role = com.aegis.apa.agent.MessageRole.USER,
+                        content = "language-switch-history"
+                    )
+                )
+            }
+            rule.onNodeWithText("Settings").performClick()
+            rule.onNodeWithText("中文").performScrollTo().performClick()
+
+            rule.onNodeWithText("设备").assertIsDisplayed()
+            rule.onNodeWithText("设置").assertIsDisplayed()
+            rule.onNodeWithText("Agent").performClick()
+            rule.onNodeWithText("language-switch-history").assertIsDisplayed()
+        } finally {
+            setLanguage(originalLanguage)
+        }
+    }
+
+    @Test fun englishModeLocalizesEveryPrimaryScreen() {
+        val originalLanguage = AppLanguageStore.load(rule.activity)
+        try {
+            setLanguage(AppLanguage.EN)
+
+            rule.onNodeWithText("Device overview").assertIsDisplayed()
+            rule.onNodeWithText("设备概览").assertDoesNotExist()
+
+            rule.onNodeWithText("Apps").performClick()
+            rule.onNodeWithText("App detection").assertIsDisplayed()
+            rule.onNodeWithText("应用检测").assertDoesNotExist()
+
+            rule.onNodeWithText("Capabilities").performClick()
+            rule.onNodeWithText("Capability center").assertIsDisplayed()
+            rule.onNodeWithText("能力中心").assertDoesNotExist()
+
+            rule.onNodeWithText("Agent").performClick()
+            rule.onNodeWithText("What would you like to know about your phone today?")
+                .assertIsDisplayed()
+            rule.onNodeWithText("今天想了解手机什么？").assertDoesNotExist()
+
+            rule.onNodeWithText("Settings").performClick()
+            rule.onNodeWithText("Settings & privacy").assertIsDisplayed()
+            rule.onNodeWithText("设置与隐私").assertDoesNotExist()
+        } finally {
+            setLanguage(originalLanguage)
+        }
+    }
+
+    private fun setLanguage(language: AppLanguage) {
+        rule.runOnUiThread { AppLanguageStore.save(rule.activity, language) }
+        rule.activityRule.scenario.recreate()
+    }
+
+    @Test fun agentAllowsAllDeviceReportsToBeDeselected() {
+        rule.waitUntil(15_000) { sampleLabel() != null }
+        rule.onNodeWithText("Agent").performClick()
+        rule.onNodeWithText("选择报告").performClick()
+
+        rule.onNodeWithText("未附带报告").assertIsDisplayed()
+        rule.onNodeWithText("Level 0").performScrollTo().performClick()
+        rule.onNodeWithText("● Level 0").performScrollTo().performClick()
+
+        rule.onNodeWithText("未附带报告").assertIsDisplayed()
+        rule.onNodeWithText("● Level 0").assertDoesNotExist()
+    }
+
     @Test fun localAnalysisCollectsNewSampleAtSendTime() {
         rule.waitUntil(15_000) { sampleLabel() != null }
         val oldTimestamp = requireNotNull(sampleLabel()).substringAfter("最近采样：")
@@ -128,6 +245,8 @@ class StabilityUiTest {
             // Keep this regression fully local, irrespective of the user's saved provider.
             rule.runOnUiThread { ApiSession.update(null) }
             rule.onNodeWithText("Agent").performClick()
+            rule.onNodeWithText("选择报告").performClick()
+            rule.onNodeWithText("Level 0").performScrollTo().performClick()
             SystemClock.sleep(1_100)
             rule.onNode(hasSetTextAction()).performTextInput("检查设备")
             rule.onNodeWithText("发送").performClick()
@@ -159,6 +278,13 @@ class StabilityUiTest {
         rule.onNodeWithText("选择报告").performClick()
         rule.onNodeWithText("系统耗电诊断").performScrollTo().assertIsDisplayed()
         rule.onNodeWithText("附加诊断摘要").performScrollTo().assertIsDisplayed().assertIsEnabled()
+        rule.onNodeWithText("移除").performScrollTo().assertIsDisplayed().assertIsEnabled()
+        rule.onNodeWithText("辅助：粗略续航测量").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("采样：", substring = true).assertDoesNotExist()
+        rule.onNodeWithText("来源：", substring = true).assertDoesNotExist()
+        rule.onNodeWithText("本地结论（不联网也可用）").assertDoesNotExist()
+        rule.onNodeWithText("耗电总量排行").assertDoesNotExist()
+        rule.onNodeWithText("后台异常嫌疑").assertDoesNotExist()
         rule.onNodeWithText("导入 Scene CSV").assertDoesNotExist()
     }
 

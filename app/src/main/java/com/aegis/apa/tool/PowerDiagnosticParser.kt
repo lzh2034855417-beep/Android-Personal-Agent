@@ -93,6 +93,7 @@ object PowerDiagnosticParser {
             fields = mapOf(
                 EvidenceField.UID_PACKAGES to fieldStatus(byName["packages"], packagesByUid.isNotEmpty()),
                 EvidenceField.POWER_MAH to fieldStatus(byName["batterystats"], EvidenceField.POWER_MAH in batteryEvidence.parsedFields),
+                EvidenceField.OVERALL_POWER_MAH to fieldStatus(byName["batterystats"], batteryDrainWindow != null),
                 EvidenceField.FOREGROUND_TIME to fieldStatus(byName["batterystats"], EvidenceField.FOREGROUND_TIME in batteryEvidence.parsedFields),
                 EvidenceField.WAKELOCK_TIME to fieldStatus(byName["batterystats"], EvidenceField.WAKELOCK_TIME in batteryEvidence.parsedFields),
                 EvidenceField.WAKEUP_ALARMS to fieldStatus(byName["alarm"], EvidenceField.WAKEUP_ALARMS in alarmEvidence.parsedFields),

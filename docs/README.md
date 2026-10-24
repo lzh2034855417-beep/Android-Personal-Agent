@@ -18,6 +18,8 @@
 - [架构与信任边界](ARCHITECTURE.md)
 - [数据含义与未知值规范](DATA_MODEL.md)
 - [测试与未验收项](TESTING.md) · [技术债](TECH_DEBT.md)
+- [CI 检查范围](CI.md) · [硬件报告兼容范围](HARDWARE_REPORT_COMPATIBILITY.md)
+- [离线回答评测工具](ai-evals/README.md) · [0.3.1 发布记录](RELEASE_0.3.1.md)
 - [后续方向](../ROADMAP.md) · [更新记录](../CHANGELOG.md)
 
 复现已发布 APK 请切换对应标签；架构、技术债和测试记录均注明其记录范围，不应直接当成当前安装版的能力清单。旧设计与实施草稿已从当前目录移除，需要追溯时查看 Git 历史。

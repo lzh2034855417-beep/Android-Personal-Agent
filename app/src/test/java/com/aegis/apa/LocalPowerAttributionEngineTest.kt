@@ -8,6 +8,7 @@ import com.aegis.apa.model.DiagnosticInputSource
 import com.aegis.apa.model.PowerDiagnosticSnapshot
 import com.aegis.apa.model.PowerVerdictType
 import com.aegis.apa.model.SystemPowerEvidence
+import com.aegis.apa.model.BatteryDrainWindowEvidence
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -15,6 +16,94 @@ import org.junit.Test
 import java.time.Instant
 
 class LocalPowerAttributionEngineTest {
+    @Test
+    fun smallForegroundBreakdownCannotExplainMostOfTotalPower() {
+        val verdict = LocalPowerAttributionEngine.attribute(snapshotFor(AppPowerEvidence(
+            uid = 10181, packageNames = listOf("com.xiaomi.xmsf"), estimatedPowerMah = 158.0,
+            foregroundPowerMah = 2.16, backgroundPowerMah = 0.112)))
+        assertTrue(!verdict.totalConsumption.single().reason.contains("前台耗电占主要部分"))
+    }
+
+    @Test fun highBackgroundPowerWarnsWithoutRequiringRestrictionEvidence() {
+        val verdict = LocalPowerAttributionEngine.attribute(snapshotFor(AppPowerEvidence(
+            uid = 10123, packageNames = listOf("com.tencent.mm"),
+            estimatedPowerMah = 300.0, backgroundPowerMah = 280.0
+        )))
+        val warning = verdict.backgroundSuspects.single()
+        assertEquals(AdviceLevel.OBSERVE, warning.maxAdviceLevel)
+        assertTrue(warning.reason.contains("后台耗电偏高"))
+        assertTrue(warning.reason.contains("待核查"))
+        assertTrue(warning.sceneAction == null)
+    }
+
+    @Test fun conflictingWechatPowerCannotAuthorizeRestrictionEvenWithWakeLock() {
+        val verdict = LocalPowerAttributionEngine.attribute(snapshotFor(AppPowerEvidence(
+            uid = 10123, packageNames = listOf("com.tencent.mm"),
+            estimatedPowerMah = 3148.0, backgroundPowerMah = 2953.0,
+            wakeLockDurationMillis = 24 * 60_000L
+        )).copy(system = SystemPowerEvidence(batteryDrainWindow =
+            BatteryDrainWindowEvidence(152 * 60_000L, 7500.0, 1845.0, true))))
+        val warning = verdict.backgroundSuspects.single()
+        assertEquals(AdviceLevel.OBSERVE, warning.maxAdviceLevel)
+        assertEquals(DiagnosticConfidence.LOW, warning.confidence)
+        assertTrue(warning.reason.contains("统计口径"))
+        assertTrue(warning.facts.any { it.contains("1845.0") })
+        assertTrue(warning.sceneAction == null)
+        assertTrue(verdict.totalConsumption.isEmpty())
+        assertTrue(verdict.backgroundConsumption.isEmpty())
+    }
+
+    @Test fun backgroundLargerThanAppTotalNeverCountsAsCorroboratedEvidence() {
+        val verdict = LocalPowerAttributionEngine.attribute(snapshotFor(AppPowerEvidence(
+            uid = 10123, packageNames = listOf("app.invalid"),
+            estimatedPowerMah = 300.0, backgroundPowerMah = 400.0,
+            wakeLockDurationMillis = 24 * 60_000L
+        )))
+        assertEquals(AdviceLevel.OBSERVE, verdict.backgroundSuspects.single().maxAdviceLevel)
+        assertTrue(verdict.backgroundSuspects.single().reason.contains("统计口径"))
+    }
+
+    @Test
+    fun standaloneWakeLockRemainsVisibleWithoutBecomingAnAnomaly() {
+        val verdict = LocalPowerAttributionEngine.attribute(snapshotFor(AppPowerEvidence(
+            uid = 10123, packageNames = listOf("com.tencent.mm"),
+            wakeLockDurationMillis = 24 * 60_000L
+        )))
+        assertTrue(verdict.backgroundSuspects.isEmpty())
+        val clue = verdict.schedulingObservations.single()
+        assertTrue(clue.facts.contains("持有唤醒锁约 24 分钟"))
+        assertEquals(AdviceLevel.OBSERVE, clue.maxAdviceLevel)
+        assertEquals(DiagnosticConfidence.LOW, clue.confidence)
+        assertTrue(clue.sceneAction == null)
+        assertTrue(clue.reason.contains("待验证"))
+    }
+
+    @Test
+    fun backgroundDrainAndUnalignedWakeupsAreCluesNotCorroboratedAnomaly() {
+        val verdict = LocalPowerAttributionEngine.attribute(snapshotFor(AppPowerEvidence(
+            uid = 10123, packageNames = listOf("com.tencent.mm"),
+            estimatedPowerMah = 300.0, backgroundPowerMah = 240.0,
+            wakeupCount = 500, alarmCount = 700, jobCount = 200
+        )))
+        assertEquals(AdviceLevel.OBSERVE, verdict.backgroundSuspects.single().maxAdviceLevel)
+        assertTrue(verdict.backgroundSuspects.single().sceneAction == null)
+        val clue = verdict.schedulingObservations.single()
+        assertTrue(clue.facts.any { it.contains("后台耗电 240.0 mAh") })
+        assertTrue(clue.facts.contains("真实唤醒累计 500 次"))
+        assertTrue(clue.facts.contains("后台任务累计 200 次"))
+        assertTrue(clue.reason.contains("不与本次耗电窗口混合归因"))
+        assertEquals(AdviceLevel.OBSERVE, clue.maxAdviceLevel)
+    }
+
+    @Test
+    fun smallWakeLockDoesNotGenerateAnExtraClue() {
+        val verdict = LocalPowerAttributionEngine.attribute(snapshotFor(AppPowerEvidence(
+            uid = 10123, packageNames = listOf("com.tencent.mm"),
+            wakeLockDurationMillis = 60_000L
+        )))
+        assertTrue(verdict.schedulingObservations.isEmpty())
+    }
+
     @Test
     fun mahAloneRanksConsumptionWithoutAccusingBackgroundActivity() {
         val verdict = LocalPowerAttributionEngine.attribute(
@@ -191,7 +280,7 @@ class LocalPowerAttributionEngineTest {
             )
         )
 
-        assertTrue(verdict.totalConsumption.single().reason.contains("前台使用成本"))
+        assertTrue(verdict.totalConsumption.single().reason.contains("时长不等于耗电占比"))
         assertTrue(verdict.backgroundSuspects.isEmpty())
     }
 

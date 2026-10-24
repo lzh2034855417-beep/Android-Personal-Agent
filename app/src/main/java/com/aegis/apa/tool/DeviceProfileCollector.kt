@@ -1,11 +1,60 @@
 package com.aegis.apa.tool
 
+import com.aegis.apa.localization.AppLanguage
 import java.util.Locale
-import java.util.concurrent.TimeUnit
 
 enum class DeviceProfileAccess {
     STANDARD,
     ROOT
+}
+
+enum class HardwareSupplySource {
+    ROOT_SYSFS,
+    ANDROID_BUGREPORT,
+    COMBINED
+}
+
+data class HardwareSupplyInfo(
+    val ramVendor: String? = null,
+    val ramType: String? = null,
+    val storageVendor: String? = null,
+    val storageModel: String? = null,
+    val storageSpec: String? = null,
+    val source: HardwareSupplySource
+) {
+    val hasDetails: Boolean
+        get() = listOf(ramVendor, ramType, storageVendor, storageModel, storageSpec)
+            .any { !it.isNullOrBlank() }
+
+    fun mergeMissingFrom(fallback: HardwareSupplyInfo?): HardwareSupplyInfo {
+        val usesFallback = fallback != null && (
+            (ramVendor == null && fallback.ramVendor != null) ||
+                (ramType == null && fallback.ramType != null) ||
+                (storageVendor == null && fallback.storageVendor != null) ||
+                (storageModel == null && fallback.storageModel != null) ||
+                (storageSpec == null && fallback.storageSpec != null)
+            )
+        return copy(
+            ramVendor = ramVendor ?: fallback?.ramVendor,
+            ramType = ramType ?: fallback?.ramType,
+            storageVendor = storageVendor ?: fallback?.storageVendor,
+            storageModel = storageModel ?: fallback?.storageModel,
+            storageSpec = storageSpec ?: fallback?.storageSpec,
+            source = if (usesFallback && fallback?.source != source) HardwareSupplySource.COMBINED else source
+        )
+    }
+}
+
+internal fun normalizeStorageVendor(raw: String?): String? = when (val value = raw?.trim()?.takeIf(String::isNotEmpty)) {
+    null -> null
+    else -> when (value.replace(" ", "").lowercase(Locale.ROOT)) {
+        "skhynix", "hynix" -> "SK hynix"
+        "samsung" -> "Samsung"
+        "micron" -> "Micron"
+        "toshiba", "kioxia" -> "Kioxia"
+        "xbstor" -> "飞存闪拓 (XBSTOR)"
+        else -> value
+    }
 }
 
 data class CpuPolicyProfile(
@@ -34,12 +83,16 @@ data class DeviceProfileSnapshot(
     val cpuPolicies: List<CpuPolicyProfile>,
     val thermalSensors: List<ThermalSensorProfile>,
     val access: DeviceProfileAccess,
+    val hardwareSupplyInfo: HardwareSupplyInfo? = null,
     val error: String? = null,
     val sampledAtInstant: java.time.Instant = java.time.Instant.now()
 ) {
     val sampledAt: String get() = com.aegis.apa.model.SampleTime.format(sampledAtInstant)
 
-    fun toReportText(): String = buildString {
+    fun toReportText(language: AppLanguage = AppLanguage.ZH_CN): String =
+        if (language == AppLanguage.EN) toEnglishReportText() else toChineseReportText()
+
+    private fun toChineseReportText(): String = buildString {
         appendLine("调度档案：只读")
         appendLine("档案采样时间：$sampledAt（需手动重读）")
         appendLine("APA 未修改系统调度")
@@ -53,6 +106,11 @@ data class DeviceProfileSnapshot(
         appendLine("内核：${kernelVersion ?: "设备未提供"}")
         appendLine("CPU present：${cpuPresent ?: "设备未提供"}")
         appendLine("CPU online：${cpuOnline ?: "设备未提供"}")
+        hardwareSupplyInfo?.takeIf(HardwareSupplyInfo::hasDetails)?.let { hardware ->
+            appendLine("内存规格：${hardware.ramType ?: "设备未提供"}")
+            appendLine("存储厂商：${hardware.storageVendor ?: "设备未提供"}")
+            appendLine("存储型号：${hardware.storageModel ?: "设备未提供"}")
+        }
         if (cpuPolicies.isEmpty()) {
             appendLine("CPU 策略：设备未提供")
         } else {
@@ -78,8 +136,57 @@ data class DeviceProfileSnapshot(
         error?.let { appendLine("采集提示：$it") }
     }
 
-    private fun formatFrequency(valueKhz: Long?): String =
-        valueKhz?.let { String.format(Locale.US, "%.0f MHz", it / 1_000.0) } ?: "未知"
+    private fun toEnglishReportText(): String = buildString {
+        appendLine("Scheduling profile: Read-only")
+        appendLine("Profile sample time: $sampledAt (refresh manually)")
+        appendLine("APA did not modify system scheduling")
+        appendLine("Access: ${if (access == DeviceProfileAccess.ROOT) "Root read-only" else "Standard access"}")
+        appendLine("Device: ${publicDeviceName(manufacturer = manufacturer, modelCode = model)}")
+        appendLine("SoC: ${soc ?: "Unavailable"}")
+        appendLine("Android: ${androidVersion ?: "Unavailable"}")
+        appendLine("System build: ${buildVersion ?: "Unavailable"}")
+        appendLine("Kernel: ${kernelVersion ?: "Unavailable"}")
+        appendLine("CPU present: ${cpuPresent ?: "Unavailable"}")
+        appendLine("CPU online: ${cpuOnline ?: "Unavailable"}")
+        hardwareSupplyInfo?.takeIf(HardwareSupplyInfo::hasDetails)?.let { hardware ->
+            appendLine("RAM specification: ${hardware.ramType ?: "Unavailable"}")
+            appendLine("Storage vendor: ${hardware.storageVendor ?: "Unavailable"}")
+            appendLine("Storage model: ${hardware.storageModel ?: "Unavailable"}")
+        }
+        if (cpuPolicies.isEmpty()) {
+            appendLine("CPU policies: Unavailable")
+        } else {
+            appendLine("CPU policies:")
+            cpuPolicies.forEach { policy ->
+                appendLine(
+                    "- ${policy.name} · CPU ${policy.cpus.joinToString(",")} · " +
+                        "${formatFrequency(policy.minFrequencyKhz, "Unknown")}–${formatFrequency(policy.maxFrequencyKhz, "Unknown")} · " +
+                        "${policy.governor ?: "governor unavailable"}"
+                )
+            }
+        }
+        if (thermalSensors.isEmpty()) {
+            appendLine("Thermal sensors: Unavailable")
+        } else {
+            appendLine("Thermal sensors:")
+            thermalSensors.forEach { sensor ->
+                appendLine("- ${sensor.type}: ${String.format(Locale.US, "%.1f", sensor.temperatureCelsius)}°C")
+            }
+        }
+        error?.let { appendLine("Collection note: ${collectionErrorEnglish(it)}") }
+    }
+
+    private fun formatFrequency(valueKhz: Long?, unavailable: String = "未知"): String =
+        valueKhz?.let { String.format(Locale.US, "%.0f MHz", it / 1_000.0) } ?: unavailable
+
+    private fun collectionErrorEnglish(value: String): String = value.split('；').joinToString(" ") { note ->
+        when {
+            note.contains("截断") -> "Output was truncated or incomplete."
+            note.contains("超时") -> "Collection timed out."
+            note.contains("失败") || note.contains("拒绝") -> "Collection failed or access was denied."
+            else -> "Some profile data was unavailable."
+        }
+    }
 }
 
 data class ChipSchedulingDetails(
@@ -143,6 +250,39 @@ object DeviceProfileParser {
             .filter { it.startsWith("THERMAL=") }
             .mapNotNull(::parseThermalSensor)
             .toList()
+        val sysfsDdrType = raw.lineSequence()
+            .firstOrNull { it.startsWith("DDR_TYPE_HEX=") }
+            ?.substringAfter('=')
+            ?.trim()
+            ?.let(::decodeDdrType)
+        val storage = raw.lineSequence()
+            .firstOrNull { it.startsWith("STORAGE=") }
+            ?.substringAfter('=')
+            ?.split('|', limit = 2)
+        val sysfsHardware = HardwareSupplyInfo(
+            ramVendor = raw.lineSequence().firstOrNull { it.startsWith("DDR_VENDOR_HEX=") }
+                ?.substringAfter('=')?.let(::deviceTreeDdrVendorFromId),
+            ramType = sysfsDdrType,
+            storageVendor = normalizeStorageVendor(storage?.getOrNull(0)),
+            storageModel = storage?.getOrNull(1)?.trim()?.ifEmpty { null },
+            source = HardwareSupplySource.ROOT_SYSFS
+        ).takeIf(HardwareSupplyInfo::hasDetails)
+        val bugReportHardware = HardwareSupplyInfo(
+            ramVendor = DDR_VENDOR_NAME.find(raw)?.groupValues?.get(1)?.let(::ramVendorFromName)
+                ?: DDR_MR_MANUFACTURER_ID.find(raw)?.groupValues?.get(1)?.let(::modeRegisterDdrVendorFromId)
+                ?: DDR_MANUFACTURER_ID.find(raw)?.groupValues?.get(1)?.let(::ddrVendorFromId),
+            ramType = DDR_QUALCOMM_DEVICE_TYPE.find(raw)?.groupValues?.get(1)?.let(::decodeQualcommDdrType)
+                ?: DDR_DEVICE_TYPE.find(raw)?.groupValues?.get(1)?.let(::decodeDdrType),
+            storageVendor = UFS_INQUIRY_ID.find(raw)?.groupValues?.get(1)?.let {
+                if (it.matches(Regex("(?i)(?:0x)?[0-9a-f]+"))) ufsVendorFromId(it) else normalizeStorageVendor(it)
+            },
+            storageSpec = UFS_SPEC_VERSION.find(raw)?.groupValues?.get(1)?.let { "UFS ${it.trim()}" },
+            source = HardwareSupplySource.ANDROID_BUGREPORT
+        ).takeIf(HardwareSupplyInfo::hasDetails)
+        val hardwareSupplyInfo = when {
+            sysfsHardware != null -> sysfsHardware.mergeMissingFrom(bugReportHardware)
+            else -> bugReportHardware
+        }
 
         return DeviceProfileSnapshot(
             model = values["MODEL"],
@@ -157,8 +297,99 @@ object DeviceProfileParser {
             cpuPolicies = policies,
             thermalSensors = thermalSensors,
             access = access,
+            hardwareSupplyInfo = hardwareSupplyInfo,
             error = error
         )
+    }
+
+    private fun deviceTreeDdrVendorFromId(raw: String): String? {
+        val id = normalizedSupplierId(raw) ?: return null
+        // Mode-register manufacturer IDs, not the extended bootlog IDs below.
+        // Linux drivers/memory/jedec_ddr.h: Samsung=1, Hynix=6, Micron=255.
+        return when (id.trimStart('0')) {
+            "1" -> "三星 (Samsung)"
+            "6" -> "海力士 (SK hynix)"
+            "FF" -> "美光 (Micron)"
+            else -> ddrVendorFromId(raw)
+        }
+    }
+
+    private fun ramVendorFromName(raw: String): String? = when (raw.lowercase(Locale.ROOT)) {
+        "samsung" -> "三星 (Samsung)"
+        "hynix" -> "海力士 (SK hynix)"
+        "micron" -> "美光 (Micron)"
+        "nanya" -> "南亚 (Nanya)"
+        "winbond" -> "华邦 (Winbond)"
+        "elpida" -> "Elpida"
+        "qimonda" -> "Qimonda"
+        "esmt" -> "ESMT"
+        else -> null
+    }
+
+    private fun modeRegisterDdrVendorFromId(raw: String): String? {
+        val id = raw.removePrefix("0x").removePrefix("0X").toIntOrNull(16)?.takeIf { it in 1..255 } ?: return null
+        return when (id) {
+            1 -> ramVendorFromName("Samsung")
+            2 -> ramVendorFromName("Qimonda")
+            3 -> ramVendorFromName("Elpida")
+            5 -> ramVendorFromName("Nanya")
+            6 -> ramVendorFromName("Hynix")
+            8 -> ramVendorFromName("Winbond")
+            9 -> ramVendorFromName("ESMT")
+            255 -> ramVendorFromName("Micron")
+            else -> "DDR MR ID 0x${id.toString(16).uppercase(Locale.ROOT)}"
+        }
+    }
+
+    private fun decodeQualcommDdrType(raw: String): String? = when (raw.removePrefix("0x").removePrefix("0X").toIntOrNull(16)) {
+        1 -> "LPDDR1"
+        2 -> "LPDDR2"
+        3 -> "DDR2"
+        4 -> "DDR3"
+        5 -> "LPDDR3"
+        6 -> "LPDDR4"
+        7 -> "LPDDR4X"
+        8 -> "LPDDR5"
+        9 -> "LPDDR5X"
+        else -> null
+    }
+
+    private fun ddrVendorFromId(raw: String): String? {
+        val id = normalizedSupplierId(raw) ?: return null
+        return when (id.trimStart('0')) {
+            "1CE" -> "三星 (Samsung)"
+            "1AD" -> "海力士 (SK hynix)"
+            "12C" -> "美光 (Micron)"
+            else -> "JEDEC ID 0x$id"
+        }
+    }
+
+    private fun ufsVendorFromId(raw: String): String? {
+        val id = normalizedSupplierId(raw) ?: return null
+        return when (id.trimStart('0')) {
+            "1" -> "Samsung"
+            "6" -> "SK hynix"
+            "FF" -> "Micron"
+            else -> "UFS inquiry ID 0x$id"
+        }
+    }
+
+    private fun normalizedSupplierId(raw: String): String? = normalizeHexId(raw)
+        .takeIf { it.matches(Regex("[0-9A-F]{1,8}")) && it.any { digit -> digit != '0' } }
+
+    private fun normalizeHexId(raw: String): String = raw.trim()
+        .removePrefix("0x")
+        .removePrefix("0X")
+        .uppercase(Locale.ROOT)
+        .padStart(4, '0')
+
+    private fun decodeDdrType(raw: String): String? = when (normalizeHexId(raw).trimStart('0').ifEmpty { "0" }) {
+        "3" -> "LPDDR3"
+        "5" -> "LPDDR4"
+        "7" -> "LPDDR4X"
+        "8" -> "LPDDR5"
+        "9" -> "LPDDR5X"
+        else -> null
     }
 
     private fun parsePolicy(line: String): CpuPolicyProfile? {
@@ -182,12 +413,39 @@ object DeviceProfileParser {
         val milliCelsius = fields.getOrNull(1)?.trim()?.toLongOrNull() ?: return null
         return ThermalSensorProfile(type, milliCelsius / 1_000.0)
     }
+
+    private val DDR_DEVICE_TYPE = Regex(
+        "\\bDDR[\\s_]+Device[\\s_]+Type\\s*[:=]\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)\\b",
+        RegexOption.IGNORE_CASE
+    )
+    private val DDR_MR_MANUFACTURER_ID = Regex(
+        "\\bDDR MR Manufacturer ID\\s*=\\s*(0x[0-9a-f]+)\\b", RegexOption.IGNORE_CASE
+    )
+    private val DDR_VENDOR_NAME = Regex(
+        "\\bDDR Vendor Name\\s*=\\s*(Samsung|Hynix|Micron|Nanya|Winbond|Elpida|Qimonda|ESMT)\\b", RegexOption.IGNORE_CASE
+    )
+    private val DDR_QUALCOMM_DEVICE_TYPE = Regex(
+        "\\bDDR Qualcomm Device Type\\s*=\\s*(0x[0-9a-f]+)\\b", RegexOption.IGNORE_CASE
+    )
+    private val DDR_MANUFACTURER_ID = Regex(
+        "\\bDDR[\\s_]+Manufacturer[\\s_]+ID\\s*[:=]\\s*(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)\\b",
+        RegexOption.IGNORE_CASE
+    )
+    private val UFS_INQUIRY_ID = Regex(
+        "UFS\\s+INQUIRY\\s+ID\\s*[-:=]\\s*(SAMSUNG|SK\\s*HYNIX|HYNIX|MICRON|KIOXIA|TOSHIBA|XBSTOR|0x[0-9A-Fa-f]+|[0-9A-Fa-f]+)\\b",
+        RegexOption.IGNORE_CASE
+    )
+    private val UFS_SPEC_VERSION = Regex(
+        "UFS\\s+Spec\\s+Version\\s*[-:=]\\s*([0-9]+(?:\\.[0-9]+)?)",
+        RegexOption.IGNORE_CASE
+    )
 }
 
 data class ProfileCommandResult(
     val exitCode: Int?,
     val output: String,
-    val timedOut: Boolean = false
+    val timedOut: Boolean = false,
+    val truncated: Boolean = false
 ) {
     val succeeded: Boolean
         get() = !timedOut && exitCode == 0
@@ -195,42 +453,75 @@ data class ProfileCommandResult(
 
 fun interface ProfileCommandRunner {
     fun run(command: List<String>): ProfileCommandResult
+
+    fun run(
+        command: List<String>,
+        cancellationRequested: () -> Boolean = { false }
+    ): ProfileCommandResult {
+        checkCollectionCancellation(cancellationRequested)
+        val result = run(command)
+        checkCollectionCancellation(cancellationRequested)
+        return result
+    }
 }
 
 object SystemProfileCommandRunner : ProfileCommandRunner {
-    override fun run(command: List<String>): ProfileCommandResult {
+    override fun run(command: List<String>): ProfileCommandResult = run(command) { false }
+
+    override fun run(command: List<String>, cancellationRequested: () -> Boolean): ProfileCommandResult {
+        checkCollectionCancellation(cancellationRequested)
         val process = runCatching {
             ProcessBuilder(command)
                 .redirectErrorStream(true)
                 .start()
         }.getOrElse { error ->
+            checkCollectionCancellation(cancellationRequested)
             return ProfileCommandResult(exitCode = null, output = error.message.orEmpty())
         }
-
-        if (!process.waitFor(10, TimeUnit.SECONDS)) {
-            process.destroyForcibly()
-            return ProfileCommandResult(exitCode = null, output = "", timedOut = true)
-        }
-
+        val result = collectProcessOutput(process, 10_000, 128 * 1024, cancellationRequested)
         return ProfileCommandResult(
-            exitCode = process.exitValue(),
-            output = process.inputStream.bufferedReader().use { it.readText() }
+            exitCode = result.exitCode.takeUnless { result.timedOut },
+            output = result.output,
+            timedOut = result.timedOut,
+            truncated = result.truncated
         )
     }
 }
 
 object DeviceProfileCollector {
+    fun readHardware(
+        preferRoot: Boolean,
+        runner: ProfileCommandRunner = SystemProfileCommandRunner,
+        cancellationRequested: () -> Boolean = { false }
+    ): HardwareSupplyInfo? = readWithScript(preferRoot, runner, cancellationRequested, hardwareCollectionScript)
+        .hardwareSupplyInfo
+
+    fun readScheduling(
+        preferRoot: Boolean,
+        runner: ProfileCommandRunner = SystemProfileCommandRunner,
+        cancellationRequested: () -> Boolean = { false }
+    ): DeviceProfileSnapshot = readWithScript(preferRoot, runner, cancellationRequested,
+        identityCollectionScript + "\n" + schedulingCollectionScript)
+
     fun read(
         preferRoot: Boolean,
-        runner: ProfileCommandRunner = SystemProfileCommandRunner
+        runner: ProfileCommandRunner = SystemProfileCommandRunner,
+        cancellationRequested: () -> Boolean = { false }
+    ): DeviceProfileSnapshot = readWithScript(preferRoot, runner, cancellationRequested, collectionScript)
+
+    private fun readWithScript(
+        preferRoot: Boolean, runner: ProfileCommandRunner,
+        cancellationRequested: () -> Boolean, script: String
     ): DeviceProfileSnapshot {
+        checkCollectionCancellation(cancellationRequested)
         if (preferRoot) {
-            val rootResult = runner.run(listOf("su", "-c", collectionScript))
+            val rootResult = runner.run(listOf("su", "-c", script), cancellationRequested)
+            checkCollectionCancellation(cancellationRequested)
             if (rootResult.succeeded) {
                 return DeviceProfileParser.parse(
                     raw = rootResult.output,
                     access = DeviceProfileAccess.ROOT,
-                    error = emptyOutputWarning(rootResult.output)
+                    error = outputWarnings(rootResult)
                 )
             }
 
@@ -239,22 +530,25 @@ object DeviceProfileCollector {
             } else {
                 "Root 读取失败或被拒绝，已回退标准权限"
             }
-            return readStandard(runner, rootWarning)
+            return readStandard(runner, rootWarning, cancellationRequested, script)
         }
 
-        return readStandard(runner, null)
+        return readStandard(runner, null, cancellationRequested, script)
     }
 
     private fun readStandard(
         runner: ProfileCommandRunner,
-        priorWarning: String?
+        priorWarning: String?,
+        cancellationRequested: () -> Boolean,
+        script: String
     ): DeviceProfileSnapshot {
-        val result = runner.run(listOf("sh", "-c", collectionScript))
+        checkCollectionCancellation(cancellationRequested)
+        val result = runner.run(listOf("sh", "-c", script), cancellationRequested)
+        checkCollectionCancellation(cancellationRequested)
         val error = when {
             result.timedOut -> listOfNotNull(priorWarning, "标准权限读取超时").joinToString("；")
             !result.succeeded -> listOfNotNull(priorWarning, "标准权限采集失败").joinToString("；")
-            result.output.isBlank() -> listOfNotNull(priorWarning, "设备未返回调度档案数据").joinToString("；")
-            else -> priorWarning
+            else -> listOfNotNull(priorWarning, outputWarnings(result)).joinToString("；").ifBlank { null }
         }
         return DeviceProfileParser.parse(
             raw = result.output.takeIf { result.succeeded }.orEmpty(),
@@ -263,10 +557,12 @@ object DeviceProfileCollector {
         )
     }
 
-    private fun emptyOutputWarning(output: String): String? =
-        "设备未返回调度档案数据".takeIf { output.isBlank() }
+    private fun outputWarnings(result: ProfileCommandResult): String? = listOfNotNull(
+        "设备未返回调度档案数据".takeIf { result.output.isBlank() },
+        "输出过长或不完整，已截断".takeIf { result.truncated }
+    ).joinToString("；").ifBlank { null }
 
-    private val collectionScript = """
+    private val identityCollectionScript = """
         printf 'MANUFACTURER=%s\n' "${'$'}(getprop ro.product.manufacturer)"
         printf 'MODEL=%s\n' "${'$'}(getprop ro.product.model)"
         printf 'DEVICE=%s\n' "${'$'}(getprop ro.product.device)"
@@ -276,6 +572,32 @@ object DeviceProfileCollector {
         printf 'KERNEL=%s\n' "${'$'}(uname -r)"
         printf 'CPU_PRESENT=%s\n' "${'$'}(cat /sys/devices/system/cpu/present 2>/dev/null)"
         printf 'CPU_ONLINE=%s\n' "${'$'}(cat /sys/devices/system/cpu/online 2>/dev/null)"
+    """.trimIndent()
+
+    private val hardwareCollectionScript = """
+        ddr_vendor=/proc/device-tree/memory/ddr_manufacturer_id
+        if [ -r "${'$'}ddr_vendor" ]; then
+          printf 'DDR_VENDOR_HEX=%s\n' "${'$'}(od -An -tx1 "${'$'}ddr_vendor" 2>/dev/null | tr -d ' \n')"
+        fi
+        ddr_type=/proc/device-tree/memory/ddr_device_type
+        if [ -r "${'$'}ddr_type" ]; then
+          printf 'DDR_TYPE_HEX=%s\n' "${'$'}(od -An -tx1 "${'$'}ddr_type" 2>/dev/null | tr -d ' \n')"
+        fi
+        for block in sda sdb sdc sdd sde sdf; do
+          vendor_path=/sys/block/${'$'}block/device/vendor
+          model_path=/sys/block/${'$'}block/device/model
+          if [ -r "${'$'}vendor_path" ]; then
+            vendor="${'$'}(cat "${'$'}vendor_path" 2>/dev/null | tr -d '\r\n')"
+            model="${'$'}(cat "${'$'}model_path" 2>/dev/null | tr -d '\r\n')"
+            if [ -n "${'$'}vendor" ]; then
+              printf 'STORAGE=%s|%s\n' "${'$'}vendor" "${'$'}model"
+              break
+            fi
+          fi
+        done
+    """.trimIndent()
+
+    private val schedulingCollectionScript = """
         for p in /sys/devices/system/cpu/cpufreq/policy*; do
           [ -d "${'$'}p" ] || continue
           name="${'$'}{p##*/}"
@@ -296,4 +618,7 @@ object DeviceProfileCollector {
           esac
         done
     """.trimIndent()
+
+    private val collectionScript = listOf(identityCollectionScript, hardwareCollectionScript, schedulingCollectionScript)
+        .joinToString("\n")
 }
