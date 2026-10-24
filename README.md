@@ -1,95 +1,53 @@
 # Android Personal Agent（APA）
 
-用手机实际提供的数据，解释电池、发热和资源状态的 Android 开源实验项目。
+看懂手机的耗电、发热与硬件信息。免费开源，无需注册，基础功能不需要 Root 或模型 API Key。
 
-[![Android CI](https://github.com/lzh2034855417-beep/Android-Personal-Agent/actions/workflows/android-ci.yml/badge.svg)](https://github.com/lzh2034855417-beep/Android-Personal-Agent/actions/workflows/android-ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/lzh2034855417-beep/Android-Personal-Agent)](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases/latest)
-[![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)](#开发与验证)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![最新版](https://img.shields.io/github/v/release/lzh2034855417-beep/Android-Personal-Agent)](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases/latest)
+[![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)](docs/USAGE.md)
+[![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[下载最新版 APK](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases/latest) · [English](README_EN.md) · [文档索引](docs/README.md) · [路线图](ROADMAP.md) · [架构审计](docs/ARCHITECTURE.md) · [数据规范](docs/DATA_MODEL.md) · [技术债](docs/TECH_DEBT.md) · [测试](docs/TESTING.md)
+**[下载最新版 APK](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases/latest)** · [使用指南](docs/USAGE.md) · [隐私说明](docs/PRIVACY.md) · [English](README_EN.md)
 
-> 当前稳定版为 `0.2.0`。下载 APK 和查看对应更新说明，请前往 [GitHub Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases)。
+## 可以用来做什么
 
-## 能做什么
+| 你想了解的事 | APA 提供什么 |
+| --- | --- |
+| 手机现在是什么状态？ | 查看电量、温度、内存、存储和设备信息 |
+| 哪些应用耗电多？ | 导入系统报告，查看耗电总量、后台线索和统计窗口 |
+| 这段时间掉电多快？ | 用系统报告里的有效统计，或做一次拔电后的粗略续航观察 |
+| RAM／存储是谁家的？ | 从可读取的硬件字段识别厂商；没有可靠字段就显示未知 |
+| 看完报告还是不明白？ | 使用本地解释；也可自行配置模型服务，让 AI 解释所选摘要 |
 
-- **免 Key 本地查看**：设备、屏幕、电池即时状态、内存和存储；本地规则解释与可预览的 PNG 分享卡片。
-- **设备识别**：保留系统型号，优先精确机型映射和离线名称库；展示名称来源，未知型号不猜商品名。
-- **Agent 对话**：自行配置模型服务 Key 后，主动发送问题与报告；没有 Key 时使用有限的本地规则。
-- **普通用户系统报告诊断**：无需 Root，优先导入 Android 系统 Bug Report 做应用耗电归因；两点式续航测量折叠为辅助工具，只回答区间平均掉电速度。
-- **系统耗电诊断**：用户主动以 Root 只读采集系统耗电、唤醒、任务、Doze 和温控线索，翻译成证据、置信度与手动 Scene 建议。
-- **分级能力**：普通 API 可独立使用；Usage Access、Shizuku、Root 均为可选项。
+耗电排行高不等于异常，单次温度或电量读数也不能证明故障。APA 会说明数据不足的地方，不会自动清理、冻结应用或修改系统。
 
-APA 不会执行模型建议，也不修改系统调度、自动清理或刷机。单次快照不能判断真实电池寿命或确定是否该换电池。
+## 下载与安装
 
-## 快速使用
+1. 打开 **[Releases](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases/latest)**，在 **Assets** 下载 `APA-v版本号-release.apk`。
+2. 在 Android 手机上打开 APK，按系统提示允许这次安装。`Source code` 压缩包是源码，不是安装包。
+3. 打开 APA，先到“设备”页查看信息。已有正式版优先覆盖安装；若提示签名不一致，先反馈，不要急着卸载，以免丢失本地记录。
 
-1. 安装 APK，打开“设备”查看本地数据，无需 Key 或 Root。
-2. 在“Agent”选择报告并提问。没有有效配置时，结果来自本地规则，不是云端大模型。
-3. 如需在线分析，进入“设置”，选择服务商，输入自己的 Key，点击“加密保存 7 天”，回到 Agent 主动发送。
-4. 分享本地报告时，先检查“预览分享卡片”，再选择分享应用。
+支持 **Android 8.0 及以上**。当前正式版为 **[0.3.1](https://github.com/lzh2034855417-beep/Android-Personal-Agent/releases/tag/v0.3.1)**；可读数据取决于手机系统、权限和报告内容。
 
-当前配置目录包含 DeepSeek、OpenAI、Anthropic、MiMo、Kimi；具体默认模型和接口见 [CloudProviderCatalog](app/src/main/java/com/aegis/apa/agent/CloudLlmProvider.kt)。默认字符串不保证账号可用，本轮未请求真实服务验证。
+## 第一次使用
 
-### 系统耗电诊断
+**只看设备信息：** 打开 APA → 设备，无需额外配置。
 
-要回答“哪个应用或系统项造成耗电”，普通用户应先打开 **APA → Agent → 选择报告 → 系统耗电诊断 → 导入系统报告**。两点式测量位于折叠的“辅助：粗略续航测量”中，只适合回答“这段时间掉电多快”：先拔掉充电器，开始后可退出 APA，正常使用至少 30 分钟，再回来结束。APA 仅在本机保存一个起点；进程回收或手机重启后仍可恢复，但必须由用户确认期间是否充过电，恢复后的结果固定标为“粗略”。充过电或不确定时本次作废。它不能证明哪个应用造成耗电。
+**想查应用耗电：** Agent → 导入系统报告 → 选择手机生成的 Bug Report ZIP／TXT → 查看分析并提问。找不到报告入口时，点“怎么生成系统报告”，或看[详细步骤](docs/USAGE.md#导入系统报告)。
 
-Root 用户也可执行下面的只读诊断。续航速度和应用归因是两类不同证据，APA 不再用一张即时电池快照替代它们。
+**想用在线 AI：** 设置 → 选择模型服务 → 填入自己的 API Key 并保存 → 回到 Agent，检查附加内容后发送。模型服务可能单独收费；不配置也能使用本地功能。
 
-普通用户可在报告面板展开“怎么生成系统报告”。部分小米 / Redmi / POCO 可在系统拨号盘输入 `*#*#284#*#*` 后等待生成 Bug Report ZIP；其他 Android 可开启开发者选项，在设置中搜索“获取错误报告”或“提交错误报告”并生成互动式报告。OEM 菜单和保存位置可能不同。系统报告可能包含敏感内容，请勿公开上传；APA 只在本机提取诊断白名单段落，原始文件不会发送给模型。
+## 常见问题
 
-打开 **APA → Agent → 选择报告 → 系统耗电诊断 → 开始只读诊断**，按系统提示授予 Root。APA 依次读取固定白名单中的 `batterystats`、`power`、`alarm`、`jobscheduler`、`deviceidle`、`thermalservice`、内核唤醒源和包名/UID 映射；单项不支持、超时或权限不足时仍保留其他结果。
+**没有 Root 能用吗？** 能。设备查看、系统报告导入和粗略续航观察不需要 Root。Root 只读诊断是可选入口；Shizuku 目前只有安装检测和跳转。
 
-报告把系统事实、解释、置信度和建议分开。只有一类证据时只建议观察；系统、电话、短信、桌面、支付和 Root 管理器不会成为冻结候选。所有 Scene 冻结、后台限制或性能限制都需要用户手动操作，一次只改一项并观察一个完整周期。成功导入或采集后，APA 会为下一次提问自动附加不超过 16 KiB 的中文诊断摘要，用户可在发送前取消；原始系统报告和 Root 输出不会发送，也不保存在会话中。
+**为什么某个厂商或数值显示未知？** 系统可能没有提供，或报告格式尚未识别。APA 不按手机型号猜厂商，也不保证所有机型都读到同样多的信息。
 
-## 能力等级与限制
+**系统报告会上传吗？** 原始系统报告和 Root 原始输出不会发给模型。在线提问时，所选摘要和允许发送的对话内容会直接发给你配置的服务商；发送前请检查附件。详见[隐私说明](docs/PRIVACY.md)。
 
-| 等级 | 当前实现 | 不代表什么 |
-| --- | --- | --- |
-| Level 0 | 普通 API 快照；可选 Usage Access 当天应用前台时长估算 | 不是专业健康检测；前台时长不是亮屏时间 |
-| Level 1 | Shizuku 安装检测和跳转 | 尚未连接 Binder 服务或取得高级能力 |
-| Level 2 | 已知 Root 线索、主动读取部分电池节点/CPU 档案 | 不保证所有机型兼容；检测到管理器不代表已授权 |
+## 反馈与参与
 
-应用列表受系统包可见性限制。Root 报告需手动重读并保留独立采样时间。本地分析目前主要消费基础快照，选择高级等级不代表本地规则已分析所有附件。
+遇到问题请[提交反馈](https://github.com/lzh2034855417-beep/Android-Personal-Agent/issues/new/choose)，附手机型号、Android 版本、APA 版本、复现步骤和脱敏截图。**不要公开完整系统报告、API Key 或设备唯一标识。**
 
-## 数据和隐私
+这是个人维护的开源项目，欢迎真实使用反馈和代码贡献。[后续方向](ROADMAP.md) · [贡献指南](CONTRIBUTING.md) · [开发与构建](docs/DEVELOPMENT.md) · [全部文档](docs/README.md)
 
-- 打开应用及 Activity 恢复时，**自动在本机采集/刷新**基础设备与可见应用数据；开启 Usage Access 后还读取使用事件。这与发送范围是两件事。
-- **点击在线发送**才请求所选模型服务；没有 APA 中转服务器。本次请求包含基础快照、所选 Level 报告、可选应用报告，以及成功导入或采集后自动选中且仍可取消的系统耗电诊断摘要。
-- 续航观察的确定性回答在本机生成，不会因为配置了模型 Key 就自动把精确观察时间和电量轨迹发送给模型服务。
-- Level 0 的使用习惯排行有独立发送开关，默认关闭；开启系统 Usage Access 不等于选择发送。基础报告不含高级档案推导的硬件等级。展开“选择报告”可查看发送范围，历史回答可能引用之前的数据，清空对话可移除这些历史。
-- 系统耗电诊断成功后只自动选中经过限长的人类可读摘要；界面会明确显示附加状态，用户可取消。原始系统报告与 Root 输出始终留在本机读取过程并在解析后释放。不同服务商之间不转发历史。同服务商最多携带最近 12 条允许发送的消息，可能包含之前回答中的数据。
-- Key 按服务商用 Android Keystore AES/GCM 加密保存，默认本机有效期 7 天；过期不等于撤销服务商签发的 Key。
-- `allowBackup=false` 已设置；旧版云备份、Android 31+ 云备份及设备迁移均显式排除凭据偏好文件。真实 OEM 恢复行为仍待验证。
-- 本次会话大部分由 ViewModel 在内存保存：Agent 草稿、报告选择、对话和结构化耗电诊断可跨切页及配置重建保留；页面滚动位置分别保存。进行中的续航辅助测量只在独立本地偏好中保存一个起点和已检测到的充电标记，不保存轨迹、不进入系统备份，也不是长期数据库；恢复后改用墙上时钟计算并固定降级为用户确认的粗略结果。彻底退出、强制停止或清除任务后，不保证恢复其余会话。重建时正在进行的分析或采集会中断并提示手动重试，不自动重复发送。
-
-请勿在 Issues、日志或截图中公开 Key、账号信息或唯一设备标识。模型输出仅供参考；涉及维修和系统修改需独立核实。
-
-## 开发与验证
-
-Android 8.0 / API 26+；当前 compile SDK 36.1、target SDK 36。Gradle/插件版本固定在仓库；使用可运行该 wrapper 的 Android Studio JBR/JDK（本地验证使用 Android Studio 自带 JBR），并安装对应 Android SDK。
-
-```powershell
-$env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'
-$env:ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"
-.\gradlew.bat testDebugUnitTest lintDebug lintRelease assembleDebug assembleDebugAndroidTest
-```
-
-macOS/Linux 使用 `./gradlew` 执行相同任务。首次构建需要下载依赖；仅在已有缓存时加 `--offline`。
-
-- Debug：`com.aegis.apa.preview` / APA Preview，APK：`app/build/outputs/apk/debug/APA-v0.2.0-debug.apk`，安装后显示版本 `0.2.0-preview`。
-- Release：`com.aegis.apa` / APA。预览版和正式版可同时存在，数据互不合并。
-- Debug 构建和 Lint/单元测试不需要发布密钥。APK/AAB 正式打包要求本地完整签名配置，不能把 Key 提交到 Git。
-- 本地 `keystore.properties` 使用 `storeFile`、`storePassword`、`keyAlias`、`keyPassword`；可用 `-Papa.signingProperties=本地文件` 指定替代配置，PowerShell 中整项加引号。相对 storeFile 按 app 模块目录解析。
-- 发布维护者运行 `assembleRelease`，必须另做版本递增、签名/校验值核验和设备测试；详见[测试说明](docs/TESTING.md)。
-
-## 项目状态与协作
-
-本项目由一名中国大陆本科生出于兴趣维护，欢迎 Android、Kotlin、系统工具及模型应用方向的贡献。问题与建议优先提交 [Issues](https://github.com/lzh2034855417-beep/Android-Personal-Agent/issues)。
-
-反馈请附品牌/型号、Android/API、构建类型与版本、权限状态、复现步骤、期望/实际结果和脱敏截图。改代码前阅读 [DATA_MODEL](docs/DATA_MODEL.md)，PR 附测试结果与未测限制。下一阶段优先关闭 [TECH_DEBT](docs/TECH_DEBT.md) 中 P1 项，再扩展 Shizuku、流式回答和持久化。
-
-## 许可证
-
-[MIT](LICENSE)；第三方说明见 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md)。
+正式 APK 的源码以对应发布标签为准；默认分支与开发分支可能和安装版不同。[MIT 许可证](LICENSE) · [第三方说明](THIRD_PARTY_NOTICES.md)

@@ -11,15 +11,7 @@
 
 ## 本地验证
 
-项目要求 Android 8.0 / API 26+，使用仓库中的 Gradle Wrapper。当前维护环境使用 Java 21 和 Android SDK 36.1。
-
-```powershell
-$env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'
-$env:ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"
-.\gradlew.bat testDebugUnitTest lintDebug lintRelease assembleDebug assembleDebugAndroidTest '-Papa.signingProperties=missing-local-signing.properties'
-```
-
-macOS/Linux 使用 `./gradlew` 执行同一组任务。正式签名材料不进入仓库，贡献者不需要发布密钥。
+源码版本选择、环境、命令和签名说明统一放在[开发与构建](docs/DEVELOPMENT.md)。复现安装版问题时先切换对应发布标签；默认分支不一定与 APK 相同。贡献者不需要发布密钥。
 
 ## Pull Request 要求
 
