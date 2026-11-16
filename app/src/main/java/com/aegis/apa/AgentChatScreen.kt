@@ -114,14 +114,21 @@ fun AgentChatScreen(
     var isReportPickerExpanded by state.reportPickerExpanded
     var userMessage by state.draft
     val chatScrollState = rememberLazyListState(state.firstVisibleIndex, state.firstVisibleOffset)
-    val visibleMessages = messages.takeLast(state.visibleMessageCount).asReversed()
+    var previousTimelineKeys by remember { mutableStateOf<List<Any>>(emptyList()) }
+    val loadedBoundary = previousTimelineKeys.filterIsInstance<Long>().lastOrNull()
+    val loadedBoundaryIndex = if (!state.followLatest && loadedBoundary != null)
+        messages.indexOfFirst { it.displayId == loadedBoundary } else -1
+    // New replies must not evict history the reader already explicitly loaded.
+    val effectiveVisibleCount = if (loadedBoundaryIndex >= 0)
+        maxOf(state.visibleMessageCount, messages.size - loadedBoundaryIndex)
+        else state.visibleMessageCount
+    val visibleMessages = messages.takeLast(effectiveVisibleCount).asReversed()
     val timelineKeys = buildList<Any> {
         if (isOnlineAnalyzing) add("pending")
         if (messages.isEmpty()) add("empty")
         addAll(visibleMessages.map { it.displayId })
-        if (state.visibleMessageCount < messages.size) add("older")
+        if (effectiveVisibleCount < messages.size) add("older")
     }
-    var previousTimelineKeys by remember { mutableStateOf<List<Any>>(emptyList()) }
     if (previousTimelineKeys != timelineKeys) {
         val oldIndex = chatScrollState.firstVisibleItemIndex
         val oldOffset = chatScrollState.firstVisibleItemScrollOffset
@@ -132,6 +139,9 @@ fun AgentChatScreen(
             // If the anchor itself was evicted, let LazyColumn clamp to retained content.
             if (!state.followLatest && newIndex >= 0 && newIndex != oldIndex) {
                 chatScrollState.requestScrollToItem(newIndex, oldOffset)
+            }
+            if (!state.followLatest && effectiveVisibleCount > state.visibleMessageCount) {
+                state.visibleMessageCount = effectiveVisibleCount
             }
             previousTimelineKeys = timelineKeys
         }
@@ -388,7 +398,7 @@ fun AgentChatScreen(
                 }
             }
 
-            if (state.visibleMessageCount < messages.size) item(key = "older") {
+            if (effectiveVisibleCount < messages.size) item(key = "older") {
                 TextButton(onClick = { state.followLatest = false; state.visibleMessageCount += 30 }) {
                     Text(if (appLanguage == AppLanguage.EN) "Load older messages" else "加载更早消息")
                 }

@@ -75,6 +75,12 @@ class AgentChatTimelineUiTest {
         val after = rule.onNodeWithText(text(50)).fetchSemanticsNode().boundsInRoot
         assertEquals("Reader anchor: index $beforeIndex -> ${state.firstVisibleIndex}, offset $beforeOffset -> ${state.firstVisibleOffset}", before.top, after.top, 1f)
         assertEquals(before.left, after.left, 1f)
+        // Appending must retain the oldest loaded row without auto-loading older rows.
+        rule.onNodeWithTag("chat_timeline").performScrollToNode(hasText(text(40)))
+        rule.onNodeWithText(text(40)).assertIsDisplayed()
+        assertThrows(AssertionError::class.java) {
+            rule.onNodeWithTag("chat_timeline").performScrollToNode(hasText(text(39)))
+        }
         rule.onNodeWithText("Latest messages").performClick()
 
         rule.onNodeWithText(text(100)).assertIsDisplayed()
