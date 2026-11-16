@@ -8,7 +8,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.performClick
 import com.aegis.apa.model.BatteryObservationAnalyzer
 import com.aegis.apa.model.BatteryObservationPoint
-import com.aegis.apa.ui.theme.AndroidPersonalAgentTheme
+import com.aegis.apa.LocalizedTestTheme as AndroidPersonalAgentTheme
 import java.time.Instant
 import org.junit.Rule
 import org.junit.Test

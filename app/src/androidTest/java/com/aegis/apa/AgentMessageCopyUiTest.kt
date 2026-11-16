@@ -8,7 +8,7 @@ import androidx.compose.ui.test.performClick
 import com.aegis.apa.agent.AgentConversationMessage
 import com.aegis.apa.agent.MessageRole
 import com.aegis.apa.model.PowerDiagnosticSnapshot
-import com.aegis.apa.ui.theme.AndroidPersonalAgentTheme
+import com.aegis.apa.LocalizedTestTheme as AndroidPersonalAgentTheme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test

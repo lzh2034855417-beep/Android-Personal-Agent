@@ -1,13 +1,18 @@
 package com.aegis.apa
 
+import android.view.ActionMode
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
-/** Cancels the native menu's suspended session without cancelling the editor. */
+/** Closes the native editing menu without clearing editor focus. */
 internal class ChatTextMenuSession {
     private var active: Job? = null
+    private var nativeMode: ActionMode? = null
+
+    fun nativeStarted(mode: ActionMode) { nativeMode = mode }
+    fun nativeFinished(mode: ActionMode) { if (nativeMode === mode) nativeMode = null }
 
     suspend fun show(nativeMenu: suspend () -> Unit) = coroutineScope {
         val session = launch(start = CoroutineStart.UNDISPATCHED) { nativeMenu() }
@@ -20,6 +25,11 @@ internal class ChatTextMenuSession {
     }
 
     fun dismiss(): Boolean {
+        nativeMode?.let { mode ->
+            nativeMode = null
+            mode.finish()
+            return true
+        }
         val session = active?.takeIf { it.isActive } ?: return false
         active = null
         session.cancel()

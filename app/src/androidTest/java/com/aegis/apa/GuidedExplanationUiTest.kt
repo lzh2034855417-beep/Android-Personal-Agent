@@ -84,7 +84,7 @@ class GuidedExplanationUiTest {
     @Test fun explicitStopRejectsQueuedRequestAndRetryNeedsNewPreview() {
         show(); preview(); send(); scroll("guided-explanation-stop"); rule.onNodeWithTag("guided-explanation-stop").performClick()
         rule.runOnIdle { worker.drain(); assertNull(owner.explanationState.value.text); assertEquals(1, reads) }
-        rule.onNodeWithText("the remote service may have received", substring = true).assertExists()
+        rule.onNodeWithTag("guided-explanation-error").assertTextContains("the remote service may have received", substring = true)
         preview(); send(); rule.runOnIdle { worker.drain(); assertEquals(2, reads) }
         rule.onNodeWithText("Fixture optional explanation").assertExists()
     }

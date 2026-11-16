@@ -37,7 +37,7 @@ class PowerDiagnosticPanelUiTest {
 
         rule.onNodeWithText("Conclusion").assertExists()
         rule.onNodeWithText("Total consumption").assertExists()
-        rule.onNodeWithText("Background anomaly suspects").assertExists()
+        rule.onNodeWithText("Background risks to check").assertExists()
         rule.onNodeWithText("Next step").assertExists()
         rule.onNodeWithText("Copy all package names").performScrollTo().performClick()
 

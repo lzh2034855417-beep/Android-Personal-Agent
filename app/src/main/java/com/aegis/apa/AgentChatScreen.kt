@@ -82,8 +82,9 @@ fun AgentChatScreen(
     val appLanguage = LocalAppLanguage.current
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
+    var inputFocused by remember { mutableStateOf(false) }
     val nativeMenu = LocalTextContextMenuToolbarProvider.current
-    val menuSession = remember(nativeMenu) { ChatTextMenuSession() }
+    val menuSession = rememberChatTextMenuSession { inputFocused }
     val dismissibleMenu = remember(nativeMenu, menuSession) {
         nativeMenu?.let { delegate ->
             object : TextContextMenuProvider {
@@ -93,7 +94,6 @@ fun AgentChatScreen(
             }
         }
     }
-    var inputFocused by remember { mutableStateOf(false) }
     var inputBounds by remember { mutableStateOf<Rect?>(null) }
     var pageOrigin by remember { mutableStateOf(Offset.Zero) }
     fun dismissInput() {
@@ -114,6 +114,38 @@ fun AgentChatScreen(
     var isReportPickerExpanded by state.reportPickerExpanded
     var userMessage by state.draft
     val chatScrollState = rememberLazyListState(state.firstVisibleIndex, state.firstVisibleOffset)
+    var previousTimelineKeys by remember { mutableStateOf<List<Any>>(emptyList()) }
+    val loadedBoundary = previousTimelineKeys.filterIsInstance<Long>().lastOrNull()
+    val loadedBoundaryIndex = if (!state.followLatest && loadedBoundary != null)
+        messages.indexOfFirst { it.displayId == loadedBoundary } else -1
+    // New replies must not evict history the reader already explicitly loaded.
+    val effectiveVisibleCount = if (loadedBoundaryIndex >= 0)
+        maxOf(state.visibleMessageCount, messages.size - loadedBoundaryIndex)
+        else state.visibleMessageCount
+    val visibleMessages = messages.takeLast(effectiveVisibleCount).asReversed()
+    val timelineKeys = buildList<Any> {
+        if (isOnlineAnalyzing) add("pending")
+        if (messages.isEmpty()) add("empty")
+        addAll(visibleMessages.map { it.displayId })
+        if (effectiveVisibleCount < messages.size) add("older")
+    }
+    if (previousTimelineKeys != timelineKeys) {
+        val oldIndex = chatScrollState.firstVisibleItemIndex
+        val oldOffset = chatScrollState.firstVisibleItemScrollOffset
+        val anchorKey = previousTimelineKeys.getOrNull(oldIndex)
+        val newIndex = timelineKeys.indexOf(anchorKey)
+        SideEffect {
+            // Keep the retained message at the same offset when a new row is inserted.
+            // If the anchor itself was evicted, let LazyColumn clamp to retained content.
+            if (!state.followLatest && newIndex >= 0 && newIndex != oldIndex) {
+                chatScrollState.requestScrollToItem(newIndex, oldOffset)
+            }
+            if (!state.followLatest && effectiveVisibleCount > state.visibleMessageCount) {
+                state.visibleMessageCount = effectiveVisibleCount
+            }
+            previousTimelineKeys = timelineKeys
+        }
+    }
     val colors = androidx.compose.material3.MaterialTheme.colorScheme
     val isOnlineMode = ApiSession.apiKey.isNotBlank()
     val usableBatteryObservation = batteryObservationResult?.takeIf { it.isUsableEvidence }
@@ -324,7 +356,7 @@ fun AgentChatScreen(
                 }
             }
 
-            items(messages.takeLast(state.visibleMessageCount).asReversed(), key = { it.displayId }) { message ->
+            items(visibleMessages, key = { it.displayId }) { message ->
                 val copyText = AgentMessageCopyPolicy.copyText(message)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -366,7 +398,7 @@ fun AgentChatScreen(
                 }
             }
 
-            if (state.visibleMessageCount < messages.size) item(key = "older") {
+            if (effectiveVisibleCount < messages.size) item(key = "older") {
                 TextButton(onClick = { state.followLatest = false; state.visibleMessageCount += 30 }) {
                     Text(if (appLanguage == AppLanguage.EN) "Load older messages" else "加载更早消息")
                 }

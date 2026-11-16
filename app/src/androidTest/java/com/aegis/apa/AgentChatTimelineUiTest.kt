@@ -58,8 +58,12 @@ class AgentChatTimelineUiTest {
         loadOlder()
         rule.onNodeWithTag("chat_timeline").performScrollToNode(hasText(text(50)))
         rule.onNodeWithText(text(50)).assertIsDisplayed()
-        val before = rule.onNodeWithText(text(50)).fetchSemanticsNode().boundsInRoot
         rule.runOnIdle { assertFalse(state.followLatest) }
+        // Let the follow-latest padding transition settle before measuring the anchor.
+        rule.waitForIdle()
+        val before = rule.onNodeWithText(text(50)).fetchSemanticsNode().boundsInRoot
+        val beforeIndex = state.firstVisibleIndex
+        val beforeOffset = state.firstVisibleOffset
 
         // Mirror the bounded session update while keeping identities of retained messages.
         rule.runOnIdle {
@@ -69,8 +73,14 @@ class AgentChatTimelineUiTest {
 
         rule.onNodeWithText(text(50)).assertIsDisplayed()
         val after = rule.onNodeWithText(text(50)).fetchSemanticsNode().boundsInRoot
-        assertEquals(before.top, after.top, 1f)
+        assertEquals("Reader anchor: index $beforeIndex -> ${state.firstVisibleIndex}, offset $beforeOffset -> ${state.firstVisibleOffset}", before.top, after.top, 1f)
         assertEquals(before.left, after.left, 1f)
+        // Appending must retain the oldest loaded row without auto-loading older rows.
+        rule.onNodeWithTag("chat_timeline").performScrollToNode(hasText(text(40)))
+        rule.onNodeWithText(text(40)).assertIsDisplayed()
+        assertThrows(AssertionError::class.java) {
+            rule.onNodeWithTag("chat_timeline").performScrollToNode(hasText(text(39)))
+        }
         rule.onNodeWithText("Latest messages").performClick()
 
         rule.onNodeWithText(text(100)).assertIsDisplayed()

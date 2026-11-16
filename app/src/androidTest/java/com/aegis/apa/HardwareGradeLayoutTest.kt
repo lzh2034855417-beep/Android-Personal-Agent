@@ -26,7 +26,7 @@ import com.aegis.apa.tool.DeviceProfileAccess
 import com.aegis.apa.tool.HardwareSupplyInfo
 import com.aegis.apa.tool.HardwareSupplySource
 import com.aegis.apa.tool.DeviceProfileSnapshot
-import com.aegis.apa.ui.theme.AndroidPersonalAgentTheme
+import com.aegis.apa.LocalizedTestTheme as AndroidPersonalAgentTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -44,8 +44,8 @@ class HardwareSupplyLayoutTest {
             )
         )
 
-        rule.onNodeWithText("RAM：16GB · 三星 (Samsung)").performScrollTo().assertIsDisplayed()
-        rule.onNodeWithText("ROM：512GB · SK hynix").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("RAM：16GB · 三星 (Samsung)", substring = true).performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("ROM：512GB · SK hynix", substring = true).performScrollTo().assertIsDisplayed()
     }
 
     @Test fun overviewMergesDeviceCardWithoutRepeatingIdentity() {
@@ -71,8 +71,8 @@ class HardwareSupplyLayoutTest {
         rule.onNodeWithText("项目机型映射").assertDoesNotExist()
         rule.onNodeWithText("供应信息").assertDoesNotExist()
         rule.onNodeWithText("内存与存储").assertDoesNotExist()
-        rule.onNodeWithText("RAM：16GB · 待读取").performScrollTo().assertIsDisplayed()
-        rule.onNodeWithText("ROM：512GB · 待读取").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("RAM：16GB · 未读取", substring = true).performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("ROM：512GB · 未读取", substring = true).performScrollTo().assertIsDisplayed()
     }
 
     @Test fun pendingSupplierBadgeOffersLocalBugReportImport() {
@@ -176,8 +176,8 @@ class HardwareSupplyLayoutTest {
             onReadScheduling = { schedulingReads++ }
         )
 
-        rule.onNodeWithText("RAM：16GB · 三星 (Samsung)").performScrollTo().assertIsDisplayed()
-        rule.onNodeWithText("ROM：512GB · SK hynix").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("RAM：16GB · 三星 (Samsung)", substring = true).performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("ROM：512GB · SK hynix", substring = true).performScrollTo().assertIsDisplayed()
         rule.onNodeWithTag("read_hardware_information").performScrollTo().performClick()
         rule.runOnIdle {
             assertEquals(1, hardwareReads)

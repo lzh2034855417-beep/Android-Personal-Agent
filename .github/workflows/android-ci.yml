@@ -6,6 +6,11 @@ on:
       - main
   pull_request:
   workflow_dispatch:
+    inputs:
+      instrumentation_only:
+        description: Run Android 16 instrumentation instead of the normal source checks
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -16,6 +21,7 @@ concurrency:
 
 jobs:
   verify:
+    if: github.event_name != 'workflow_dispatch' || !inputs.instrumentation_only
     name: Test, lint and build
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -54,3 +60,105 @@ jobs:
           assembleDebug
           assembleDebugAndroidTest
           -Papa.signingProperties=missing-ci-signing.properties
+
+  instrumentation:
+    name: Instrumentation on Android 16
+    if: github.event_name == 'workflow_dispatch' && inputs.instrumentation_only
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      ANDROID_SERIAL: emulator-5554
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Set up Java 21
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd
+      - name: Use one Android configuration directory
+        run: |
+          mkdir -p "$RUNNER_TEMP/apa-android/avd"
+          printf 'ANDROID_USER_HOME=%s\nANDROID_EMULATOR_HOME=%s\nANDROID_AVD_HOME=%s\n' \
+            "$RUNNER_TEMP/apa-android" "$RUNNER_TEMP/apa-android" \
+            "$RUNNER_TEMP/apa-android/avd" >> "$GITHUB_ENV"
+      - name: Install compile SDK and Android 16 emulator image
+        run: >-
+          sdkmanager "platforms;android-36.1" "build-tools;36.0.0" "platform-tools"
+          "emulator" "system-images;android-36;google_apis;x86_64"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb
+      - name: Build preview and test APKs
+        run: >-
+          bash ./gradlew --no-daemon --console=plain
+          :app:assembleDebug :app:assembleDebugAndroidTest
+          -Papa.signingProperties=missing-ci-signing.properties
+      - name: Create and boot the same AVD
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          mkdir -p "$ANDROID_AVD_HOME" ci-emulator
+          test -c /dev/kvm
+          sudo setfacl -m "u:$(id -un):rw" /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -accel-check
+          printf 'no\n' | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd \
+            --force --name apa-ci --device pixel_6 --path "$ANDROID_AVD_HOME/apa-ci.avd" \
+            --package 'system-images;android-36;google_apis;x86_64'
+          test -s "$ANDROID_AVD_HOME/apa-ci.ini"
+          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx apa-ci
+          "$ANDROID_HOME/emulator/emulator" -avd apa-ci -port 5554 \
+            -accel on -no-window -no-audio -no-boot-anim -no-snapshot \
+            -gpu software > ci-emulator/emulator.log 2>&1 &
+          emulator_pid=$!
+          booted=false
+          for attempt in $(seq 1 150); do
+            if ! kill -0 "$emulator_pid" 2>/dev/null; then
+              echo "::error::Android emulator exited before boot completed"
+              tail -n 100 ci-emulator/emulator.log
+              exit 1
+            fi
+            state=$(timeout 5 "$ANDROID_HOME/platform-tools/adb" -s "$ANDROID_SERIAL" \
+              shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
+            if [ "$state" = "1" ]; then
+              booted=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$booted" != true ]; then
+            echo "::error::Android emulator did not finish booting"
+            tail -n 100 ci-emulator/emulator.log
+            exit 1
+          fi
+          "$ANDROID_HOME/platform-tools/adb" shell input keyevent 82
+          "$ANDROID_HOME/platform-tools/adb" shell settings put secure show_ime_with_hard_keyboard 1
+          "$ANDROID_HOME/platform-tools/adb" shell settings put global window_animation_scale 0
+          "$ANDROID_HOME/platform-tools/adb" shell settings put global transition_animation_scale 0
+          "$ANDROID_HOME/platform-tools/adb" shell settings put global animator_duration_scale 0
+      - name: Run connected instrumentation tests
+        timeout-minutes: 20
+        run: >-
+          bash ./gradlew --no-daemon --console=plain :app:connectedDebugAndroidTest
+          -Papa.signingProperties=missing-ci-signing.properties
+      - name: Collect diagnostics and stop the emulator
+        if: always()
+        run: |
+          mkdir -p ci-emulator
+          timeout 15 "$ANDROID_HOME/platform-tools/adb" -s "$ANDROID_SERIAL" devices -l > ci-emulator/devices.txt 2>&1 || true
+          timeout 15 "$ANDROID_HOME/platform-tools/adb" -s "$ANDROID_SERIAL" logcat -d > ci-emulator/logcat.txt 2>&1 || true
+          timeout 15 "$ANDROID_HOME/platform-tools/adb" -s "$ANDROID_SERIAL" emu kill || true
+      - name: Upload instrumentation reports and diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: instrumentation-reports
+          path: |
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+            ci-emulator/
+          if-no-files-found: warn
+          retention-days: 14
