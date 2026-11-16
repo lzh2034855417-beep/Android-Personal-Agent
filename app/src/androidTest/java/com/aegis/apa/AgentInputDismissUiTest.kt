@@ -47,7 +47,10 @@ class AgentInputDismissUiTest {
         }
         }
         val input = rule.onNode(hasSetTextAction())
+        input.performClick()
         input.performTouchInput { longClick() }
+        instrumentation.waitForIdleSync()
+        instrumentation.uiAutomation.waitForIdle(100, 5_000)
         input.assertIsFocused()
         rule.onNodeWithTag("agent_chat_header").performTouchInput { click(topLeft + androidx.compose.ui.geometry.Offset(8f, 8f)) }
         // Closing the menu must not also collapse the keyboard and resize the page.

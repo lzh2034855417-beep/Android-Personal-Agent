@@ -3,6 +3,8 @@ package com.aegis.apa
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.SharedPreferences
+import com.aegis.apa.localization.AppLanguage
+import com.aegis.apa.localization.withAppLanguage
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.test.junit4.StateRestorationTester
@@ -25,7 +27,7 @@ class SettingsStateTest {
     @Test fun restoredProviderLoadsItsOwnCredentialSlot() {
         val base = InstrumentationRegistry.getInstrumentation().targetContext
         val isolatedName = "page_state_test_apa_api_credentials"
-        val isolatedContext = object : ContextWrapper(base) {
+        val isolatedContext = object : ContextWrapper(base.withAppLanguage(AppLanguage.ZH_CN)) {
             override fun getSharedPreferences(name: String, mode: Int): SharedPreferences =
                 base.getSharedPreferences("page_state_test_$name", mode)
         }

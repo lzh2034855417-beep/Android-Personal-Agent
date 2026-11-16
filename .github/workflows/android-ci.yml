@@ -106,7 +106,7 @@ jobs:
           sudo setfacl -m "u:$(id -un):rw" /dev/kvm
           "$ANDROID_HOME/emulator/emulator" -accel-check
           printf 'no\n' | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd \
-            --force --name apa-ci --path "$ANDROID_AVD_HOME/apa-ci.avd" \
+            --force --name apa-ci --device pixel_6 --path "$ANDROID_AVD_HOME/apa-ci.avd" \
             --package 'system-images;android-36;google_apis;x86_64'
           test -s "$ANDROID_AVD_HOME/apa-ci.ini"
           "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx apa-ci

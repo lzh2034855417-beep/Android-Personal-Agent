@@ -13,6 +13,7 @@ import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -109,7 +110,7 @@ class StabilityUiTest {
             assertTrue(restoredSession.messages.value.any { it.content == "本地会话恢复测试" })
         }
         rule.onNodeWithText("LOCAL BASELINE", substring = true).assertExists()
-        rule.onNodeWithText("清空").performClick()
+        rule.onNodeWithContentDescription("清空").performClick()
         rule.waitUntil(15_000) { !restoredSession.conversationSaving.value }
         rule.activityRule.scenario.recreate()
         rule.onNodeWithText("本地会话恢复测试").assertDoesNotExist()
@@ -208,7 +209,7 @@ class StabilityUiTest {
 
             rule.onNodeWithText("Agent").performClick()
             rule.onNodeWithText("What would you like to know about your phone today?")
-                .assertIsDisplayed()
+                .performScrollTo().assertIsDisplayed()
             rule.onNodeWithText("今天想了解手机什么？").assertDoesNotExist()
 
             rule.onNodeWithText("Settings").performClick()

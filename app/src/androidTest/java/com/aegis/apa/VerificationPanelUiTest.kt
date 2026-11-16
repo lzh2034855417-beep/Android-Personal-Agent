@@ -219,6 +219,7 @@ class VerificationPanelUiTest {
         }
         detail("verification-close-completed")
         rule.onNodeWithTag("verification-close-completed").performClick()
+        detail("verification-close-completed")
         rule.onNodeWithTag("verification-close-completed").assertIsNotEnabled()
         detail("verification-retry-save")
         rule.onNodeWithText("Retry save").assertExists()

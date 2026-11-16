@@ -45,7 +45,10 @@ class GuidedDiagnosticUiTest {
         }
         rule.onNodeWithTag("verification-form-list").performScrollToNode(hasTestTag("verification-preview"))
         rule.onNodeWithTag("verification-preview").performClick()
-        if (fixed) rule.onNodeWithText("This guide verifies power only, not heat.", substring = true).assertExists()
+        if (fixed) {
+            rule.onNodeWithTag("verification-form-list").performScrollToNode(hasText("This guide verifies power only, not heat.", substring = true))
+            rule.onNodeWithText("This guide verifies power only, not heat.", substring = true).assertExists()
+        }
         rule.onNodeWithTag("verification-save-sample").performClick()
         rule.runOnIdle { assertEquals(if (fixed) target else VerificationTarget.Overall, submitted) }
     }
@@ -126,7 +129,9 @@ class GuidedDiagnosticUiTest {
         rule.onNodeWithTag("guided-preview-reviewed").performClick(); rule.onNodeWithTag("guided-confirm-sample").assertIsNotEnabled()
         rule.onNodeWithTag("guided-replace-two").performClick(); rule.onNodeWithTag("guided-confirm-sample").performClick()
         rule.runOnIdle { assertEquals(listOf("one", "three"), controller.state.session!!.samples.map { it.id }) }
-        scroll("guided-section-facts"); rule.onNodeWithText("Battery sensor temperature", substring = true).assertExists()
+        scroll("guided-section-facts")
+        rule.onNodeWithTag("guided-fact-one:temperature").assertTextContains("Battery sensor temperature", substring = true)
+        rule.onNodeWithTag("guided-fact-three:temperature").assertTextContains("Battery sensor temperature", substring = true)
         scroll("guided-section-next"); rule.onNodeWithTag("guided-primary-action").assertExists()
         rule.runOnIdle { assertFalse(controller.state.assessment!!.primaryAction.kind == GuidedActionKind.OPEN_VERIFICATION) }
     }

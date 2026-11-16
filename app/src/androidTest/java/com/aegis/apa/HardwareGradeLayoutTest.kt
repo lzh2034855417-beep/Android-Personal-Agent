@@ -26,7 +26,7 @@ import com.aegis.apa.tool.DeviceProfileAccess
 import com.aegis.apa.tool.HardwareSupplyInfo
 import com.aegis.apa.tool.HardwareSupplySource
 import com.aegis.apa.tool.DeviceProfileSnapshot
-import com.aegis.apa.ui.theme.AndroidPersonalAgentTheme
+import com.aegis.apa.LocalizedTestTheme as AndroidPersonalAgentTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
