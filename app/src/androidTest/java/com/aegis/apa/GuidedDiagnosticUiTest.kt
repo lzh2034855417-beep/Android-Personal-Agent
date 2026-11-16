@@ -33,8 +33,10 @@ class GuidedDiagnosticUiTest {
         val now = Instant.parse("2026-10-01T10:00:00Z")
         val snapshot = PowerDiagnosticSnapshot(now, 10, mapOf("batterystats" to DiagnosticSourceResult("batterystats", DiagnosticSourceStatus.AVAILABLE)),
             listOf(AppPowerEvidence(10123, listOf("com.example.app"), estimatedPowerMah = 10.0)),
-            SystemPowerEvidence(batteryDrainWindow = BatteryDrainWindowEvidence(3_600_000, 5000.0, 10.0, true)), emptyList())
+            SystemPowerEvidence(batteryDrainWindow = BatteryDrainWindowEvidence(3_600_000, 5000.0, 10.0, true)), emptyList(),
+            inputSource = DiagnosticInputSource.BUGREPORT)
         val target = VerificationTarget.AppGroup(listOf("com.example.app"))
+        assertNotNull(verificationSummary(snapshot, target, verificationInitialContext(snapshot)))
         var submitted: VerificationTarget? = null
         rule.setContent { CompositionLocalProvider(LocalAppLanguage provides AppLanguage.EN) { AndroidPersonalAgentTheme {
             VerificationSampleForm(snapshot, null, true, {}, { value, _, _ -> submitted = value }, fixedTarget = if (fixed) target else null)
@@ -74,6 +76,7 @@ class GuidedDiagnosticUiTest {
     private fun malformedTimeEdit(tag: String) {
         show(GuidedScenario.IDLE_DRAIN)
         scroll(tag); rule.onNodeWithTag(tag).performTextReplacement("2026-10-01T10:00:00Z")
+        androidx.test.espresso.Espresso.closeSoftKeyboard()
         scroll("guided-confirm-answers"); rule.onNodeWithTag("guided-confirm-answers").performClick()
         scroll("guided-primary-action"); rule.onNodeWithTag("guided-primary-action").performClick()
         lateinit var oldKey: GuidedSessionKey

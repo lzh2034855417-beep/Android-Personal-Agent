@@ -1,6 +1,14 @@
 package com.aegis.apa
 
 import androidx.compose.ui.test.*
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.foundation.text.contextmenu.provider.LocalTextContextMenuToolbarProvider
+import androidx.compose.foundation.text.contextmenu.provider.TextContextMenuProvider
+import androidx.compose.foundation.text.contextmenu.provider.TextContextMenuDataProvider
+import java.util.concurrent.atomic.AtomicBoolean
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -16,6 +24,7 @@ class AgentInputDismissUiTest {
     @get:Rule val rule = createEmptyComposeRule()
 
     @Test fun outsideTapDismissesLongPressWithoutClearingDraft() {
+        val menuOpen = AtomicBoolean(false)
         val state = AgentPageState()
         state.draft.value = "保留草稿"
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -28,6 +37,17 @@ class AgentInputDismissUiTest {
             activity != null
         }
         instrumentation.runOnMainSync { activity!!.setContent {
+            val nativeMenu = LocalTextContextMenuToolbarProvider.current
+            val observedMenu = remember(nativeMenu) { nativeMenu?.let { delegate ->
+                object : TextContextMenuProvider {
+                    override suspend fun showTextContextMenu(dataProvider: TextContextMenuDataProvider) {
+                        menuOpen.set(true)
+                        try { delegate.showTextContextMenu(dataProvider) }
+                        finally { menuOpen.set(false) }
+                    }
+                }
+            } }
+            CompositionLocalProvider(LocalTextContextMenuToolbarProvider provides observedMenu) {
             AndroidPersonalAgentTheme {
                 AgentChatScreen(
                     state = state, messages = emptyList(),
@@ -46,14 +66,18 @@ class AgentInputDismissUiTest {
             }
         }
         }
+        }
+        try {
         val input = rule.onNode(hasSetTextAction())
         input.performClick()
-        input.performTouchInput { longClick() }
-        instrumentation.waitForIdleSync()
-        instrumentation.uiAutomation.waitForIdle(100, 5_000)
+        // The center of a wide editor is blank, not the short draft text.
+        input.performTouchInput { longClick(Offset(width * 0.1f, center.y)) }
+        org.junit.Assert.assertFalse(input.fetchSemanticsNode().config[SemanticsProperties.TextSelectionRange].collapsed)
+        rule.waitUntil(5_000) { menuOpen.get() }
         input.assertIsFocused()
         rule.onNodeWithTag("agent_chat_header").performTouchInput { click(topLeft + androidx.compose.ui.geometry.Offset(8f, 8f)) }
-        // Closing the menu must not also collapse the keyboard and resize the page.
+        // Closing the actual native menu must not also collapse the keyboard and resize the page.
+        rule.waitUntil(5_000) { !menuOpen.get() }
         input.assertIsFocused()
         rule.runOnIdle { assertEquals("保留草稿", state.draft.value) }
         rule.onNodeWithTag("agent_chat_header").performTouchInput { click(topLeft + androidx.compose.ui.geometry.Offset(8f, 8f)) }
@@ -68,7 +92,9 @@ class AgentInputDismissUiTest {
         input.assertIsNotFocused()
         rule.onNodeWithTag("agent_chat_header").assertExists()
         rule.runOnIdle { org.junit.Assert.assertTrue(state.draft.value.contains("继续输入")) }
-        instrumentation.runOnMainSync { activity!!.finish() }
+        } finally {
+            instrumentation.runOnMainSync { activity!!.finish() }
+        }
     }
 }
 

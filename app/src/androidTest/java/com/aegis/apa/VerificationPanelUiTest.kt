@@ -65,7 +65,7 @@ class VerificationPanelUiTest {
         detail("verification-result-1")
         rule.onNodeWithText("Numeric comparison unavailable", substring = true).assertExists()
         detail("verification-rollback-detail")
-        rule.onNodeWithText("Enable sync again", substring = true).assertExists()
+        rule.onNodeWithTag("verification-rollback-detail").assertTextContains("Enable sync again", substring = true)
         detail("verification-close-completed")
         rule.onNodeWithTag("verification-close-completed").performClick()
         assertEquals(VerificationState.CLOSED, controller.state.records.single().state)
