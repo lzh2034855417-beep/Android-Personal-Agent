@@ -82,8 +82,9 @@ fun AgentChatScreen(
     val appLanguage = LocalAppLanguage.current
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
+    var inputFocused by remember { mutableStateOf(false) }
     val nativeMenu = LocalTextContextMenuToolbarProvider.current
-    val menuSession = remember(nativeMenu) { ChatTextMenuSession() }
+    val menuSession = rememberChatTextMenuSession { inputFocused }
     val dismissibleMenu = remember(nativeMenu, menuSession) {
         nativeMenu?.let { delegate ->
             object : TextContextMenuProvider {
@@ -93,7 +94,6 @@ fun AgentChatScreen(
             }
         }
     }
-    var inputFocused by remember { mutableStateOf(false) }
     var inputBounds by remember { mutableStateOf<Rect?>(null) }
     var pageOrigin by remember { mutableStateOf(Offset.Zero) }
     fun dismissInput() {
@@ -114,6 +114,28 @@ fun AgentChatScreen(
     var isReportPickerExpanded by state.reportPickerExpanded
     var userMessage by state.draft
     val chatScrollState = rememberLazyListState(state.firstVisibleIndex, state.firstVisibleOffset)
+    val visibleMessages = messages.takeLast(state.visibleMessageCount).asReversed()
+    val timelineKeys = buildList<Any> {
+        if (isOnlineAnalyzing) add("pending")
+        if (messages.isEmpty()) add("empty")
+        addAll(visibleMessages.map { it.displayId })
+        if (state.visibleMessageCount < messages.size) add("older")
+    }
+    var previousTimelineKeys by remember { mutableStateOf<List<Any>>(emptyList()) }
+    if (previousTimelineKeys != timelineKeys) {
+        val oldIndex = chatScrollState.firstVisibleItemIndex
+        val oldOffset = chatScrollState.firstVisibleItemScrollOffset
+        val anchorKey = previousTimelineKeys.getOrNull(oldIndex)
+        val newIndex = timelineKeys.indexOf(anchorKey)
+        SideEffect {
+            // Keep the retained message at the same offset when a new row is inserted.
+            // If the anchor itself was evicted, let LazyColumn clamp to retained content.
+            if (!state.followLatest && newIndex >= 0 && newIndex != oldIndex) {
+                chatScrollState.requestScrollToItem(newIndex, oldOffset)
+            }
+            previousTimelineKeys = timelineKeys
+        }
+    }
     val colors = androidx.compose.material3.MaterialTheme.colorScheme
     val isOnlineMode = ApiSession.apiKey.isNotBlank()
     val usableBatteryObservation = batteryObservationResult?.takeIf { it.isUsableEvidence }
@@ -324,7 +346,7 @@ fun AgentChatScreen(
                 }
             }
 
-            items(messages.takeLast(state.visibleMessageCount).asReversed(), key = { it.displayId }) { message ->
+            items(visibleMessages, key = { it.displayId }) { message ->
                 val copyText = AgentMessageCopyPolicy.copyText(message)
                 Row(
                     modifier = Modifier.fillMaxWidth(),

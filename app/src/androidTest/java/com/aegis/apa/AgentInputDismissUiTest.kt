@@ -1,13 +1,10 @@
 package com.aegis.apa
 
 import androidx.compose.ui.test.*
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.remember
+import android.view.ActionMode
+import android.view.Window
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.foundation.text.contextmenu.provider.LocalTextContextMenuToolbarProvider
-import androidx.compose.foundation.text.contextmenu.provider.TextContextMenuProvider
-import androidx.compose.foundation.text.contextmenu.provider.TextContextMenuDataProvider
 import java.util.concurrent.atomic.AtomicBoolean
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.activity.ComponentActivity
@@ -36,18 +33,21 @@ class AgentInputDismissUiTest {
             }
             activity != null
         }
-        instrumentation.runOnMainSync { activity!!.setContent {
-            val nativeMenu = LocalTextContextMenuToolbarProvider.current
-            val observedMenu = remember(nativeMenu) { nativeMenu?.let { delegate ->
-                object : TextContextMenuProvider {
-                    override suspend fun showTextContextMenu(dataProvider: TextContextMenuDataProvider) {
-                        menuOpen.set(true)
-                        try { delegate.showTextContextMenu(dataProvider) }
-                        finally { menuOpen.set(false) }
-                    }
+        instrumentation.runOnMainSync {
+            val window = activity!!.window
+            val delegate = requireNotNull(window.callback)
+            window.callback = object : Window.Callback by delegate {
+                override fun onActionModeStarted(mode: ActionMode) {
+                    delegate.onActionModeStarted(mode)
+                    if (mode.type == ActionMode.TYPE_FLOATING) menuOpen.set(true)
                 }
-            } }
-            CompositionLocalProvider(LocalTextContextMenuToolbarProvider provides observedMenu) {
+                override fun onActionModeFinished(mode: ActionMode) {
+                    if (mode.type == ActionMode.TYPE_FLOATING) menuOpen.set(false)
+                    delegate.onActionModeFinished(mode)
+                }
+            }
+        }
+        instrumentation.runOnMainSync { activity!!.setContent {
             AndroidPersonalAgentTheme {
                 AgentChatScreen(
                     state = state, messages = emptyList(),
@@ -66,17 +66,15 @@ class AgentInputDismissUiTest {
             }
         }
         }
-        }
         try {
         val input = rule.onNode(hasSetTextAction())
         input.performClick()
-        // The center of a wide editor is blank, not the short draft text.
         input.performTouchInput { longClick(Offset(width * 0.1f, center.y)) }
         org.junit.Assert.assertFalse(input.fetchSemanticsNode().config[SemanticsProperties.TextSelectionRange].collapsed)
         rule.waitUntil(5_000) { menuOpen.get() }
         input.assertIsFocused()
         rule.onNodeWithTag("agent_chat_header").performTouchInput { click(topLeft + androidx.compose.ui.geometry.Offset(8f, 8f)) }
-        // Closing the actual native menu must not also collapse the keyboard and resize the page.
+        // Closing the real native menu must not also collapse the keyboard and resize the page.
         rule.waitUntil(5_000) { !menuOpen.get() }
         input.assertIsFocused()
         rule.runOnIdle { assertEquals("保留草稿", state.draft.value) }
